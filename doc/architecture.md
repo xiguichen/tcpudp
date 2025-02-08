@@ -1,35 +1,36 @@
+## Client Side Revert UDP data
 
-### Localhost read thread
+### LocalHost read thread
 
 @startuml
-Client -> LocalhostPort1 : UDP data 1
-LocalhostPort1 -> Queue1: UDP data 1
-Client -> LocalhostPort1 : UDP data 2
-LocalhostPort1 -> Queue1: UDP data 2
+Client -> LocalHostPort1 : UDP data 1
+LocalHostPort1 -> Queue1: UDP data 1
+Client -> LocalHostPort1 : UDP data 2
+LocalHostPort1 -> Queue1: UDP data 2
 ... More UDP data ...
-Client -> LocalhostPort1 : UDP data n
-LocalhostPort1 -> Queue1: UDP data n
+Client -> LocalHostPort1 : UDP data n
+LocalHostPort1 -> Queue1: UDP data n
 @enduml
 
-### Localhost write thread
+### LocalHost write thread
 
 @startuml
 
-Queue1 -> RemotehostPort2: UDP data 1
-Queue1 -> RemotehostPort2: UDP data 2
+Queue1 -> RemoteHostPort2: Reverted UDP data 1
+Queue1 -> RemoteHostPort2: Reverted UDP data 2
 ... More UDP data ...
-Queue1 -> RemotehostPort2: UDP data n
+Queue1 -> RemoteHostPort2: Reverted UDP data n
 
 @enduml
 
-### Remotehost read thread
+### RemoteHost read thread
 
 @startuml
 
-RemotehostPort2 -> Queue2: UDP data 1
-RemotehostPort2 -> Queue2: UDP data 2
+RemoteHostPort2 -> Queue2: UDP data 1
+RemoteHostPort2 -> Queue2: UDP data 2
 ... More UDP data ...
-RemotehostPort2 -> Queue2: UDP data n
+RemoteHostPort2 -> Queue2: UDP data n
 
 @enduml
 
@@ -37,12 +38,12 @@ RemotehostPort2 -> Queue2: UDP data n
 
 @startuml
 
-Queue2 -> LocalhostPort1: UDP data 1
-LocalhostPort1 -> Client: UDP data 1
-Queue2 -> LocalhostPort1: UDP data 2
-LocalhostPort1 -> Client: UDP data 2
+Queue2 -> LocalHostPort1: Reverted UDP data 1
+LocalHostPort1 -> Client: Reverted UDP data 1
+Queue2 -> LocalHostPort1: Reverted UDP data 2
+LocalHostPort1 -> Client: Reverted UDP data 2
 ... More UDP data ...
-Queue2 -> LocalhostPort1: UDP data n
-LocalhostPort1 -> Client: UDP data n
+Queue2 -> LocalHostPort1: Reverted UDP data n
+LocalHostPort1 -> Client: Reverted UDP data n
 
 @enduml
