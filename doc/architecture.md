@@ -1,43 +1,43 @@
-## Client (Behind NAT) Side Revert UDP data
+## Client Side (Behind NAT)
 
 @startuml
 
 participant Client 
-participant LocalHostPort1
+participant LocalHostUdpPort1
 queue Queue1
-participant PeerHostPort2
+participant PeerTCPPort
 queue Queue2
 
 group LocolHostReadThread
-    Client -> LocalHostPort1 : UDP data 1
-    LocalHostPort1 -> Queue1: UDP data 1
-    Client -> LocalHostPort1 : UDP data 2
-    LocalHostPort1 -> Queue1: UDP data 2
+    Client -> LocalHostUdpPort1 : UDP data 1
+    LocalHostUdpPort1 -> Queue1: UDP data 1
+    Client -> LocalHostUdpPort1 : UDP data 2
+    LocalHostUdpPort1 -> Queue1: UDP data 2
     ... More UDP data ...
-    Client -> LocalHostPort1 : UDP data n
-    LocalHostPort1 -> Queue1: UDP data n
+    Client -> LocalHostUdpPort1 : UDP data n
+    LocalHostUdpPort1 -> Queue1: UDP data n
 end
 
 group LoclHostWriteThread
-    Queue1 -> PeerHostPort2: Reverted UDP data 1
-    Queue1 -> PeerHostPort2: Reverted UDP data 2
-    ... More UDP data ...
-    Queue1 -> PeerHostPort2: Reverted UDP data n
+    Queue1 -> PeerTCPPort: TCP data 1
+    Queue1 -> PeerTCPPort: TCP data 2
+    ... More TCP data ...
+    Queue1 -> PeerTCPPort: TCP data n
 end
 
 group PeerHostReadThread
-    PeerHostPort2 -> Queue2: UDP data 1
-    PeerHostPort2 -> Queue2: UDP data 2
-    ... More UDP data ...
-    PeerHostPort2 -> Queue2: UDP data n
+    PeerTCPPort -> Queue2: TCP data 1
+    PeerTCPPort -> Queue2: TCP data 2
+    ... More TCP data ...
+    PeerTCPPort -> Queue2: TCP data n
 end
 
 
 group PeerHostWriteThread
-    Queue2 -> Client: Reverted UDP data 1
-    Queue2 -> Client: Reverted UDP data 2
+    Queue2 -> Client: UDP data 1
+    Queue2 -> Client: UDP data 2
     ... More UDP data ...
-    Queue2 -> Client: Reverted UDP data n
+    Queue2 -> Client: UDP data n
 end
 
 @enduml
