@@ -3,4 +3,5 @@ cmake_minimum_required(VERSION 3.10)
 # export json for lsp
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_subdirectory(reverse)
+add_subdirectory(client)
+
