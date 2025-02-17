@@ -2,6 +2,7 @@
 #define CLIENT_H
 
 #include <string>
+#include <memory>
 #include "SocketManager.h"
 
 class Client {
@@ -13,9 +14,10 @@ private:
     int localHostUdpPort;
     int peerTcpPort;
     std::string peerAddress;
-    SocketManager socketManager;
+    std::shared_ptr<SocketManager> socketManager;
 
     void loadConfig(const std::string& configFile);
 };
 
 #endif // CLIENT_H
+

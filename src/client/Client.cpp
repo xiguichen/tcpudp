@@ -1,21 +1,25 @@
 #include "Client.h"
 #include <fstream>
-#include <json/json.h> // Assuming you have a JSON library
+#include <nlohmann/json.hpp> // Include the nlohmann/json library
 
-Client::Client(const std::string& configFile) {
+using json = nlohmann::json;
+
+Client::Client(const std::string& configFile)
+{
     loadConfig(configFile);
-    socketManager = SocketManager(localHostUdpPort, peerTcpPort, peerAddress);
+    socketManager = std::make_shared<SocketManager>(localHostUdpPort, peerTcpPort, peerAddress);
 }
 
 void Client::loadConfig(const std::string& configFile) {
     std::ifstream file(configFile);
-    Json::Value config;
+    json config;
     file >> config;
-    localHostUdpPort = config["localHostUdpPort"].asInt();
-    peerTcpPort = config["peerTcpPort"].asInt();
-    peerAddress = config["peerAddress"].asString();
+    localHostUdpPort = config["localHostUdpPort"].get<int>();
+    peerTcpPort = config["peerTcpPort"].get<int>();
+    peerAddress = config["peerAddress"].get<std::string>();
 }
 
 void Client::configure() {
-    socketManager.manageSockets();
+    socketManager->manageSockets();
 }
+
