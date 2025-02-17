@@ -10,6 +10,7 @@
 class SocketManager {
 public:
     SocketManager(int udpPort, int tcpPort, const std::string& address);
+    ~SocketManager(); // Destructor declaration
     void manageSockets();
     void cleanupResources();
 
