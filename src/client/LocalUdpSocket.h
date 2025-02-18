@@ -8,8 +8,8 @@ class LocalUdpSocket {
 public:
     LocalUdpSocket(int port);
     void bind(int port);
-    void send(const std::string& data);
-    std::string receive();
+    void send(const std::vector<char>& data);
+    std::vector<char> receive();
 
 private:
     int socketFd;

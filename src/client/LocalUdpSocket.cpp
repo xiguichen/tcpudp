@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <vector>
 
 LocalUdpSocket::LocalUdpSocket(int port) {
     socketFd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -15,11 +16,18 @@ void LocalUdpSocket::bind(int port) {
     ::bind(socketFd, (struct sockaddr*)&localAddress, sizeof(localAddress));
 }
 
-void LocalUdpSocket::send(const std::string& data) {
-    // Send data
+void LocalUdpSocket::send(const std::vector<char>& data) {
+    ::sendto(socketFd, data.data(), data.size(), 0, (struct sockaddr*)&localAddress, sizeof(localAddress));
 }
 
-std::string LocalUdpSocket::receive() {
-    // Receive data
-    return "";
+std::vector<char> LocalUdpSocket::receive() {
+    std::vector<char> buffer(1024); // Adjust buffer size as needed
+    socklen_t addrLen = sizeof(localAddress);
+    ssize_t bytesReceived = ::recvfrom(socketFd, buffer.data(), buffer.size(), 0, (struct sockaddr*)&localAddress, &addrLen);
+    if (bytesReceived > 0) {
+        buffer.resize(bytesReceived); // Resize to actual data received
+    } else {
+        buffer.clear(); // Clear buffer if no data received or error
+    }
+    return buffer;
 }

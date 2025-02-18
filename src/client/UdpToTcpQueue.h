@@ -2,16 +2,16 @@
 #define UDPTOTCPQUEUE_H
 
 #include <queue>
-#include <string>
+#include <vector>
 #include <mutex>
 
 class UdpToTcpQueue {
 public:
-    void enqueue(const std::string& data);
-    std::string dequeue();
+    void enqueue(const std::vector<char>& data);
+    std::vector<char> dequeue();
 
 private:
-    std::queue<std::string> queue;
+    std::queue<std::vector<char>> queue;
     std::mutex mtx;
 };
 
