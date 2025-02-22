@@ -6,32 +6,40 @@
 participant ClientPeer1
 participant ClientPeer2
 participant SocketManager
-participant TCPSocketReaderThread1
-participant TCPSocketReaderThread2
-participant WriterThread1
-participant WriterThread2
+participant SocketMap
+participant TcpToQueueThread1
+participant TcpToQueueThread2
+participant UdpToQueueThread1
+participant UdpToQueueThread2
 
+SocketManager -> SocketManager: Create socket and bind to port 5001
 SocketManager -> SocketManager: Listen for incoming TCP connections
 
 ClientPeer1 -> SocketManager: TCP connection request
 SocketManager -> ClientPeer1: Accept connection
-SocketManager -> TCPSocketReaderThread1: Start new reader thread for ClientPeer1
-SocketManager -> WriterThread1: Start new write thread for ClientPeer1
+SocketManager -> SocketManager: Create a new socket for UDP connection
+SocketManager -> SocketMap: Map TCP socket and UDP socket
+SocketManager -> TcpToQueueThread1: Start new thread for ClientPeer1
+SocketManager -> UdpToQueueThread1: Start new thread for ClientPeer1
 
 ClientPeer2 -> SocketManager: TCP connection request
 SocketManager -> ClientPeer2: Accept connection
-SocketManager -> TCPSocketReaderThread2: Start new reader thread for ClientPeer2
-SocketManager -> WriterThread2: Start new write thread for ClientPeer2
+SocketManager -> SocketManager: Create a new socket for UDP connection
+SocketManager -> SocketMap: Map TCP socket and UDP socket
+SocketManager -> TcpToQueueThread2: Start new thread for ClientPeer2
+SocketManager -> UdpToQueueThread2: Start new thread for ClientPeer2
 
 @enduml
 
-### Reader thread for read data from TCP socket
+### Reader
+
+#### TcpToQueueThread for reading data from TCP socket
 @startuml
 
 participant TCPSocket
 queue TCPDataQueue
 
-group TCPSocketReaderThread
+group TcpToQueueThread
     loop Read from socket
         TCPSocket -> TCPSocket: Read data length
         TCPSocket -> TCPSocket: Read data based on length
@@ -41,75 +49,67 @@ end
 
 @enduml
 
-### Thread for send data received from TCP socket to UDP socket
 
-@startuml
-participant UDPSocket
-queue TCPDataQueue
-collections TCPToUDPSocketMap
-collections UDPToTCPSocketMap
-
-group TcpQueueToUdpSocketThread
-    loop Process data
-        TCPDataQueue -> TcpQueueToUdpSocketThread: Dequeue data
-        TcpQueueToUdpSocketThread -> TcpQueueToUdpSocketThread: Extract socket and data
-        alt Socket exists in TCPToUDPSocketMap
-            TcpQueueToUdpSocketThread -> TCPToUDPSocketMap: Retrieve mapped UDP socket
-            TcpQueueToUdpSocketThread -> UDPSocket: Use mapped UDP socket to send data via UDP
-        else
-            TcpQueueToUdpSocketThread -> UDPSocket: Create new UDP socket (udpSocket)
-            TcpQueueToUdpSocketThread -> TCPToUDPSocketMap: Map new UDP socket with existing TCP socket
-            TcpQueueToUdpSocketThread -> UDPToTCPSocketMap: Map new UDP socket to existing TCP socket
-            TcpQueueToUdpSocketThread -> UDPSocket: Use created UDP socket to send data via UDP
-            TcpQueueToUdpSocketThread -> TcpQueueToUdpSocketThread: Start UDPReaderThread for udpSocket
-        end
-    end
-end
-
-@enduml
-
-### Reader thread for read UDP data
+#### UdpToQueueThread for reading data from UDP socket
 
 @startuml
 
 participant UDPSocket
 queue UDPDataQueue
+collections UDPSocketAddressMap
 
-group UDPDataReaderThread
+group UdpToQueueThread
     loop Read from UDP socket
         UDPSocket -> UDPSocket: Read data
+        UDPSocket -> UDPSocketAddressMap: set socket address
         UDPSocket -> UDPDataQueue: Enqueue received data with socket information
     end
 end
 
 @enduml
 
-### Writer thread pool for handling UDP queue data
+
+### Writer
+
+#### TcpToUdpQueueThreadPool for sending data from TCP to UDP
 
 @startuml
 participant UDPSocket
-queue UDPDataQueue
-collections UDPToTCPSocketMap
+queue TCPDataQueue
+collections TCPToUDPSocketMap
+collections UDPSocketAddressMap
 
-group UDPQueueWriterThreadPool
-    loop Process data concurrently
-        UDPDataQueue -> UDPQueueWriterThreadPool: Dequeue data
-        UDPQueueWriterThreadPool -> UDPQueueWriterThreadPool: Extract socket and data
-        alt Socket exists in UDPToTCPSocketMap
-            UDPQueueWriterThreadPool -> UDPToTCPSocketMap: Retrieve mapped TCP socket
-            UDPQueueWriterThreadPool -> UDPSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
-        else
-            UDPQueueWriterThreadPool -> UDPQueueWriterThreadPool: Log error or handle missing mapping
-        end
+group TCPQueueToUDPThreadPool
+    loop Process data
+        TCPDataQueue -> TCPQueueToUDPThread: Dequeue data
+        TCPQueueToUDPThread -> TCPQueueToUDPThread: Extract socket and data
+        TCPQueueToUDPThread -> UDPSocketAddressMap: Retrieve socket address
+        TCPQueueToUDPThread -> TCPToUDPSocketMap: Retrieve mapped UDP socket
+        TCPQueueToUDPThread -> UDPSocket: Use mapped UDP socket to send data via UDP
     end
 end
 
 @enduml
 
-### Class and Method Definitions
-- **SocketManager**: Manages incoming TCP connections and starts reader and writer threads.
-- **ReaderThread**: Handles reading data from a socket and enqueuing it.
-- **WriterThread**: Handles dequeuing data and sending it to the appropriate socket.
+
+#### UdpQueueToTcpThreadPool for sending data from UDP to TCP
+
+@startuml
+participant TCPSocket
+queue UDPDataQueue
+collections UDPToTCPSocketMap
+
+group UdpQueueToTcpThreadPool
+    loop Process data concurrently
+        UDPDataQueue -> UdpQueueToTcpThreadPool: Dequeue data
+        UdpQueueToTcpThreadPool -> UdpQueueToTcpThreadPool: Extract socket and data
+        UdpQueueToTcpThreadPool -> UDPToTCPSocketMap: Retrieve mapped TCP socket
+        UdpQueueToTcpThreadPool -> TCPSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
+    end
+end
+
+@enduml
+
 
 ### Error Handling
 - Define specific error handling strategies for socket errors, data corruption, and missing mappings.
@@ -136,61 +136,3 @@ end
 - Unit test project is needed to test the server's functionality and performance. We will use Google Test for unit testing.
 - Manual testing is also needed to test the server's functionality and performance.
 
-### Class Diagram
-@startuml
-
-class SocketManager {
-    +void listenForConnections()
-    +void acceptConnection(ClientPeer)
-    +void startReaderThread(ClientPeer)
-    +void startWriterThread(ClientPeer)
-}
-
-class ReaderThread {
-    +void handleData(ClientPeer)
-}
-
-class WriterThread {
-    +void sendData(ClientPeer)
-}
-
-class TCPSocket {
-    +int readDataLength()
-    +char[] readData(int length)
-}
-
-class TCPDataQueue {
-    +void enqueueData(char[] data, TCPSocket socket)
-    +char[] dequeueData()
-}
-
-class UDPSocket {
-    +void sendData(char[] data)
-    +char[] readData()
-}
-
-class UDPDataQueue {
-    +void enqueueData(char[] data, UDPSocket socket)
-    +char[] dequeueData()
-}
-
-class TCPToUDPSocketMap {
-    +UDPSocket getMappedUDPSocket(TCPSocket socket)
-    +void mapSockets(TCPSocket tcpSocket, UDPSocket udpSocket)
-}
-
-class UDPToTCPSocketMap {
-    +TCPSocket getMappedTCPSocket(UDPSocket socket)
-    +void mapSockets(UDPSocket udpSocket, TCPSocket tcpSocket)
-}
-
-SocketManager -> ReaderThread
-SocketManager -> WriterThread
-ReaderThread -> TCPDataQueue
-WriterThread -> TCPDataQueue
-WriterThread -> UDPSocket
-UDPSocket -> UDPDataQueue
-UDPDataQueue -> UDPToTCPSocketMap
-UDPToTCPSocketMap -> TCPSocket
-
-@enduml
