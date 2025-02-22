@@ -1,13 +1,14 @@
 #ifndef UDP_TO_QUEUE_THREAD_H
 #define UDP_TO_QUEUE_THREAD_H
 
+#include <cstddef>
 class UdpToQueueThread {
 public:
     explicit UdpToQueueThread(int socket) : socket_(socket) {}
     void run();
 private:
-    void readFromUDPSocket();
-    void enqueueData();
+    size_t readFromUDPSocket(char* buffer, size_t bufferSize);
+    void enqueueData(char* data, size_t length);
 
     int socket_;
 };

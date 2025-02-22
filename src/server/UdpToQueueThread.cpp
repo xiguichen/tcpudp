@@ -5,30 +5,35 @@
 #include <vector>
 #include <sys/socket.h>
 #include <unistd.h>
+#include "UDPDataQueue.h"
 
 void UdpToQueueThread::run() {
     while (true) {
-        readFromUDPSocket();
-        enqueueData();
+        char buffer[1024];
+        ssize_t bytesRead = readFromUDPSocket(buffer, sizeof(buffer));
+        if (bytesRead > 0) {
+            enqueueData(buffer, bytesRead);
+        }
     }
 }
 
-void UdpToQueueThread::readFromUDPSocket() {
-    char buffer[1024];
+size_t UdpToQueueThread::readFromUDPSocket(char* buffer, size_t bufferSize) {
     sockaddr_in clientAddr;
     socklen_t clientAddrLen = sizeof(clientAddr);
 
-    ssize_t bytesRead = recvfrom(socket_, buffer, sizeof(buffer), 0, (struct sockaddr*)&clientAddr, &clientAddrLen);
+    ssize_t bytesRead = recvfrom(socket_, buffer, bufferSize, 0, (struct sockaddr*)&clientAddr, &clientAddrLen);
     if (bytesRead > 0) {
         std::cout << "Received data: " << std::string(buffer, bytesRead) << std::endl;
-        // Store the data for enqueuing
-        // This is a placeholder for actual data handling
+        
     } else {
         std::cerr << "Error reading from UDP socket" << std::endl;
     }
+return bytesRead;
 }
 
-void UdpToQueueThread::enqueueData() {
-    // Placeholder for enqueuing data logic
+void UdpToQueueThread::enqueueData(char* data, size_t length) {
+    std::vector<char> dataVector(data, data + length);
+    UDPDataQueue::getInstance().enqueue(socket_, dataVector);
     std::cout << "Data enqueued" << std::endl;
+
 }
