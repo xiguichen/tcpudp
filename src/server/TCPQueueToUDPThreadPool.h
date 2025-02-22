@@ -1,12 +1,12 @@
 #ifndef TCP_QUEUE_TO_UDP_THREAD_POOL_H
 #define TCP_QUEUE_TO_UDP_THREAD_POOL_H
 
-class TCPQueueToUDPThreadPool {
+class TcpQueueToUdpThreadPool {
 public:
     void run();
 private:
     void processData();
-    void sendDataViaUDP();
+    void sendDataViaUdp();
 };
 
 #endif // TCP_QUEUE_TO_UDP_THREAD_POOL_H

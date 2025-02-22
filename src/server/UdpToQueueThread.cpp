@@ -5,19 +5,19 @@
 #include <vector>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "UDPDataQueue.h"
+#include "UdpDataQueue.h"
 
 void UdpToQueueThread::run() {
     while (true) {
         char buffer[1024];
-        ssize_t bytesRead = readFromUDPSocket(buffer, sizeof(buffer));
+        ssize_t bytesRead = readFromUdpSocket(buffer, sizeof(buffer));
         if (bytesRead > 0) {
             enqueueData(buffer, bytesRead);
         }
     }
 }
 
-size_t UdpToQueueThread::readFromUDPSocket(char* buffer, size_t bufferSize) {
+size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     sockaddr_in clientAddr;
     socklen_t clientAddrLen = sizeof(clientAddr);
 
@@ -33,7 +33,7 @@ return bytesRead;
 
 void UdpToQueueThread::enqueueData(char* data, size_t length) {
     std::vector<char> dataVector(data, data + length);
-    UDPDataQueue::getInstance().enqueue(socket_, dataVector);
+    UdpDataQueue::getInstance().enqueue(socket_, dataVector);
     std::cout << "Data enqueued" << std::endl;
 
 }

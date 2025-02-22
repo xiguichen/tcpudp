@@ -4,7 +4,7 @@
 #include <map>
 #include <netinet/in.h>
 
-class UDPSocketAddressMap {
+class UdpSocketAddressMap {
 public:
     void setSocketAddress(int socket, sockaddr_in address);
     sockaddr_in getSocketAddress(int socket);

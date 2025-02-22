@@ -1,9 +1,9 @@
-#include "UDPSocketAddressMap.h"
+#include "UdpSocketAddressMap.h"
 
-void UDPSocketAddressMap::setSocketAddress(int socket, sockaddr_in address) {
+void UdpSocketAddressMap::setSocketAddress(int socket, sockaddr_in address) {
     addressMap[socket] = address;
 }
 
-sockaddr_in UDPSocketAddressMap::getSocketAddress(int socket) {
+sockaddr_in UdpSocketAddressMap::getSocketAddress(int socket) {
     return addressMap[socket];
 }

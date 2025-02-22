@@ -36,14 +36,14 @@ SocketManager -> UdpToQueueThread2: Start new thread for ClientPeer2
 #### TcpToQueueThread for reading data from TCP socket
 @startuml
 
-participant TCPSocket
-queue TCPDataQueue
+participant TcpSocket
+queue TcpDataQueue
 
 group TcpToQueueThread
     loop Read from socket
-        TCPSocket -> TCPSocket: Read data length
-        TCPSocket -> TCPSocket: Read data based on length
-        TCPSocket -> TCPDataQueue: Enqueue complete data packet with socket information
+        TcpSocket -> TcpSocket: Read data length
+        TcpSocket -> TcpSocket: Read data based on length
+        TcpSocket -> TcpDataQueue: Enqueue complete data packet with socket information
     end
 end
 
@@ -54,15 +54,15 @@ end
 
 @startuml
 
-participant UDPSocket
-queue UDPDataQueue
-collections UDPSocketAddressMap
+participant UdpSocket
+queue UdpDataQueue
+collections UdpSocketAddressMap
 
 group UdpToQueueThread
     loop Read from UDP socket
-        UDPSocket -> UDPSocket: Read data
-        UDPSocket -> UDPSocketAddressMap: set socket address
-        UDPSocket -> UDPDataQueue: Enqueue received data with socket information
+        UdpSocket -> UdpSocket: Read data
+        UdpSocket -> UdpSocketAddressMap: set socket address
+        UdpSocket -> UdpDataQueue: Enqueue received data with socket information
     end
 end
 
@@ -71,21 +71,21 @@ end
 
 ### Writer
 
-#### TCPQueueToUDPThreadPool for sending data from TCP to UDP
+#### TcpQueueToUdpThreadPool for sending data from TCP to UDP
 
 @startuml
-participant UDPSocket
-queue TCPDataQueue
-collections TCPToUDPSocketMap
-collections UDPSocketAddressMap
+participant UdpSocket
+queue TcpDataQueue
+collections TcpToUdpSocketMap
+collections UdpSocketAddressMap
 
-group TCPQueueToUDPThreadPool
+group TcpQueueToUdpThreadPool
     loop Process data
-        TCPDataQueue -> TCPQueueToUDPThread: Dequeue data
-        TCPQueueToUDPThread -> TCPQueueToUDPThread: Extract socket and data
-        TCPQueueToUDPThread -> UDPSocketAddressMap: Retrieve socket address
-        TCPQueueToUDPThread -> TCPToUDPSocketMap: Retrieve mapped UDP socket
-        TCPQueueToUDPThread -> UDPSocket: Use mapped UDP socket to send data via UDP
+        TcpDataQueue -> TcpQueueToUdpThread: Dequeue data
+        TcpQueueToUdpThread -> TcpQueueToUdpThread: Extract socket and data
+        TcpQueueToUdpThread -> UdpSocketAddressMap: Retrieve socket address
+        TcpQueueToUdpThread -> TcpToUdpSocketMap: Retrieve mapped UDP socket
+        TcpQueueToUdpThread -> UdpSocket: Use mapped UDP socket to send data via UDP
     end
 end
 
@@ -95,16 +95,16 @@ end
 #### UdpQueueToTcpThreadPool for sending data from UDP to TCP
 
 @startuml
-participant TCPSocket
-queue UDPDataQueue
-collections UDPToTCPSocketMap
+participant TcpSocket
+queue UdpDataQueue
+collections UdpToTcpSocketMap
 
 group UdpQueueToTcpThreadPool
     loop Process data concurrently
-        UDPDataQueue -> UdpQueueToTcpThreadPool: Dequeue data
+        UdpDataQueue -> UdpQueueToTcpThreadPool: Dequeue data
         UdpQueueToTcpThreadPool -> UdpQueueToTcpThreadPool: Extract socket and data
-        UdpQueueToTcpThreadPool -> UDPToTCPSocketMap: Retrieve mapped TCP socket
-        UdpQueueToTcpThreadPool -> TCPSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
+        UdpQueueToTcpThreadPool -> UdpToTcpSocketMap: Retrieve mapped TCP socket
+        UdpQueueToTcpThreadPool -> TcpSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
     end
 end
 
@@ -120,16 +120,16 @@ class SocketManager {
     +bindToPort(port: int)
     +listenForConnections()
     +acceptConnection()
-    +createUDPSocket()
+    +createUdpSocket()
     +mapSockets()
     +startTcpToQueueThread()
     +startUdpToQueueThread()
 }
 
 class SocketMap {
-    +mapTCPSocketToUDPSocket(tcpSocket, udpSocket)
-    +getMappedUDPSocket(tcpSocket)
-    +getMappedTCPSocket(udpSocket)
+    +mapTcpSocketToUdpSocket(tcpSocket, udpSocket)
+    +getMappedUdpSocket(tcpSocket)
+    +getMappedTcpSocket(udpSocket)
 }
 
 class TcpToQueueThread {
@@ -140,55 +140,55 @@ class TcpToQueueThread {
 
 class UdpToQueueThread {
     +run()
-    -readFromUDPSocket()
+    -readFromUdpSocket()
     -enqueueData()
 }
 
-class TCPQueueToUDPThreadPool {
+class TcpQueueToUdpThreadPool {
     +run()
     -processData()
-    -sendDataViaUDP()
+    -sendDataViaUdp()
 }
 
 class UdpQueueToTcpThreadPool {
     +run()
     -processDataConcurrently()
-    -sendDataViaTCP()
+    -sendDataViaTcp()
 }
 
-class TCPDataQueue {
+class TcpDataQueue {
     +enqueue(data)
     +dequeue()
 }
 
-class UDPDataQueue {
+class UdpDataQueue {
     +enqueue(data)
     +dequeue()
 }
 
-class UDPSocketAddressMap {
+class UdpSocketAddressMap {
     +setSocketAddress()
     +getSocketAddress()
 }
 
-class TCPToUDPSocketMap {
-    +retrieveMappedUDPSocket()
+class TcpToUdpSocketMap {
+    +retrieveMappedUdpSocket()
 }
 
-class UDPToTCPSocketMap {
-    +retrieveMappedTCPSocket()
+class UdpToTcpSocketMap {
+    +retrieveMappedTcpSocket()
 }
 
 SocketManager -> SocketMap
 SocketManager -> TcpToQueueThread
 SocketManager -> UdpToQueueThread
-TcpToQueueThread -> TCPDataQueue
-UdpToQueueThread -> UDPDataQueue
-TCPQueueToUDPThreadPool -> TCPDataQueue
-TCPQueueToUDPThreadPool -> UDPSocketAddressMap
-TCPQueueToUDPThreadPool -> TCPToUDPSocketMap
-UdpQueueToTcpThreadPool -> UDPDataQueue
-UdpQueueToTcpThreadPool -> UDPToTCPSocketMap
+TcpToQueueThread -> TcpDataQueue
+UdpToQueueThread -> UdpDataQueue
+TcpQueueToUdpThreadPool -> TcpDataQueue
+TcpQueueToUdpThreadPool -> UdpSocketAddressMap
+TcpQueueToUdpThreadPool -> TcpToUdpSocketMap
+UdpQueueToTcpThreadPool -> UdpDataQueue
+UdpQueueToTcpThreadPool -> UdpToTcpSocketMap
 
 @enduml
 

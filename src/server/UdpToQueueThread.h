@@ -7,7 +7,7 @@ public:
     explicit UdpToQueueThread(int socket) : socket_(socket) {}
     void run();
 private:
-    size_t readFromUDPSocket(char* buffer, size_t bufferSize);
+    size_t readFromUdpSocket(char* buffer, size_t bufferSize);
     void enqueueData(char* data, size_t length);
 
     int socket_;

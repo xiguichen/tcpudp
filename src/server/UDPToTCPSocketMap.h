@@ -3,21 +3,21 @@
 
 #include <map>
 
-class UDPToTCPSocketMap {
+class UdpToTcpSocketMap {
 public:
-    static UDPToTCPSocketMap& getInstance() {
-        static UDPToTCPSocketMap instance;
+    static UdpToTcpSocketMap& getInstance() {
+        static UdpToTcpSocketMap instance;
         return instance;
     }
 
     void mapSockets(int udpSocket, int tcpSocket);
-    int retrieveMappedTCPSocket(int udpSocket);
+    int retrieveMappedTcpSocket(int udpSocket);
 
 private:
-    UDPToTCPSocketMap() = default;
-    ~UDPToTCPSocketMap() = default;
-    UDPToTCPSocketMap(const UDPToTCPSocketMap&) = delete;
-    UDPToTCPSocketMap& operator=(const UDPToTCPSocketMap&) = delete;
+    UdpToTcpSocketMap() = default;
+    ~UdpToTcpSocketMap() = default;
+    UdpToTcpSocketMap(const UdpToTcpSocketMap&) = delete;
+    UdpToTcpSocketMap& operator=(const UdpToTcpSocketMap&) = delete;
 private:
     std::map<int, int> socketMap;
 };

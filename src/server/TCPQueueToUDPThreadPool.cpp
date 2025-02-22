@@ -1,13 +1,14 @@
-#include "TCPQueueToUDPThreadPool.h"
 
-void TCPQueueToUDPThreadPool::run() {
+#include "TcpQueueToUdpThreadPool.h"
+
+void TcpQueueToUdpThreadPool::run() {
     // Implementation of the run method
 }
 
-void TCPQueueToUDPThreadPool::processData() {
+void TcpQueueToUdpThreadPool::processData() {
     // Implementation of processing data
 }
 
-void TCPQueueToUDPThreadPool::sendDataViaUDP() {
+void TcpQueueToUdpThreadPool::sendDataViaUdp() {
     // Implementation of sending data via UDP
 }

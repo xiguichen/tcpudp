@@ -5,10 +5,10 @@
 #include <utility>
 #include <vector>
 
-class TCPDataQueue {
+class TcpDataQueue {
 public:
-    static TCPDataQueue& getInstance() {
-        static TCPDataQueue instance;
+    static TcpDataQueue& getInstance() {
+        static TcpDataQueue instance;
         return instance;
     }
 
@@ -18,10 +18,10 @@ public:
 private:
     std::queue<std::pair<int, std::vector<char>>> queue;
 
-    TCPDataQueue() = default;
-    ~TCPDataQueue() = default;
-    TCPDataQueue(const TCPDataQueue&) = delete;
-    TCPDataQueue& operator=(const TCPDataQueue&) = delete;
+    TcpDataQueue() = default;
+    ~TcpDataQueue() = default;
+    TcpDataQueue(const TcpDataQueue&) = delete;
+    TcpDataQueue& operator=(const TcpDataQueue&) = delete;
 };
 
 #endif // TCP_DATA_QUEUE_H

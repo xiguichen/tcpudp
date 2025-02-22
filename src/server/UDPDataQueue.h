@@ -5,10 +5,10 @@
 #include <utility>
 #include <vector>
 
-class UDPDataQueue {
+class UdpDataQueue {
 public:
-    static UDPDataQueue& getInstance() {
-        static UDPDataQueue instance;
+    static UdpDataQueue& getInstance() {
+        static UdpDataQueue instance;
         return instance;
     }
 
@@ -16,10 +16,10 @@ public:
     std::pair<int, std::vector<char>> dequeue();
 
 private:
-    UDPDataQueue() = default;
-    ~UDPDataQueue() = default;
-    UDPDataQueue(const UDPDataQueue&) = delete;
-    UDPDataQueue& operator=(const UDPDataQueue&) = delete;
+    UdpDataQueue() = default;
+    ~UdpDataQueue() = default;
+    UdpDataQueue(const UdpDataQueue&) = delete;
+    UdpDataQueue& operator=(const UdpDataQueue&) = delete;
 
     std::queue<std::pair<int, std::vector<char>>> queue;
 };

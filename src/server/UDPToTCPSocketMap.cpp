@@ -1,9 +1,9 @@
-#include "UDPToTCPSocketMap.h"
+#include "UdpToTcpSocketMap.h"
 
-void UDPToTCPSocketMap::mapSockets(int udpSocket, int tcpSocket) {
+void UdpToTcpSocketMap::mapSockets(int udpSocket, int tcpSocket) {
     socketMap[udpSocket] = tcpSocket;
 }
 
-int UDPToTCPSocketMap::retrieveMappedTCPSocket(int udpSocket) {
+int UdpToTcpSocketMap::retrieveMappedTcpSocket(int udpSocket) {
     return socketMap[udpSocket];
 }

@@ -3,9 +3,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include "TCPToUDPSocketMap.h"
-#include "UDPToTCPSocketMap.h"
-#include "TCPToQueueThread.h"
+#include "TcpToUdpSocketMap.h"
+#include "UdpToTcpSocketMap.h"
+#include "TcpToQueueThread.h"
 #include "UdpToQueueThread.h"
 
 SocketManager::SocketManager() : serverSocket(-1) {}
@@ -66,8 +66,8 @@ void SocketManager::acceptConnection() {
     }
 
     // Map the TCP and UDP sockets
-    UDPToTCPSocketMap::getInstance().mapSockets(udpSocket, clientSocket);
-    TCPToUDPSocketMap::getInstance().mapSockets(clientSocket, udpSocket);
+    UdpToTcpSocketMap::getInstance().mapSockets(udpSocket, clientSocket);
+    TcpToUdpSocketMap::getInstance().mapSockets(clientSocket, udpSocket);
 
     // Start threads for handling TCP and UDP data
     startTcpToQueueThread(clientSocket);
