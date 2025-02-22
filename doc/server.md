@@ -71,7 +71,7 @@ end
 
 ### Writer
 
-#### TcpToUdpQueueThreadPool for sending data from TCP to UDP
+#### TCPQueueToUDPThreadPool for sending data from TCP to UDP
 
 @startuml
 participant UDPSocket
@@ -110,6 +110,87 @@ end
 
 @enduml
 
+
+### Class Diagram
+
+@startuml
+
+class SocketManager {
+    +createSocket()
+    +bindToPort(port: int)
+    +listenForConnections()
+    +acceptConnection()
+    +createUDPSocket()
+    +mapSockets()
+    +startTcpToQueueThread()
+    +startUdpToQueueThread()
+}
+
+class SocketMap {
+    +mapTCPSocketToUDPSocket(tcpSocket, udpSocket)
+    +getMappedUDPSocket(tcpSocket)
+    +getMappedTCPSocket(udpSocket)
+}
+
+class TcpToQueueThread {
+    +run()
+    -readFromSocket()
+    -enqueueData()
+}
+
+class UdpToQueueThread {
+    +run()
+    -readFromUDPSocket()
+    -enqueueData()
+}
+
+class TCPQueueToUDPThreadPool {
+    +run()
+    -processData()
+    -sendDataViaUDP()
+}
+
+class UdpQueueToTcpThreadPool {
+    +run()
+    -processDataConcurrently()
+    -sendDataViaTCP()
+}
+
+class TCPDataQueue {
+    +enqueue(data)
+    +dequeue()
+}
+
+class UDPDataQueue {
+    +enqueue(data)
+    +dequeue()
+}
+
+class UDPSocketAddressMap {
+    +setSocketAddress()
+    +getSocketAddress()
+}
+
+class TCPToUDPSocketMap {
+    +retrieveMappedUDPSocket()
+}
+
+class UDPToTCPSocketMap {
+    +retrieveMappedTCPSocket()
+}
+
+SocketManager -> SocketMap
+SocketManager -> TcpToQueueThread
+SocketManager -> UdpToQueueThread
+TcpToQueueThread -> TCPDataQueue
+UdpToQueueThread -> UDPDataQueue
+TCPQueueToUDPThreadPool -> TCPDataQueue
+TCPQueueToUDPThreadPool -> UDPSocketAddressMap
+TCPQueueToUDPThreadPool -> TCPToUDPSocketMap
+UdpQueueToTcpThreadPool -> UDPDataQueue
+UdpQueueToTcpThreadPool -> UDPToTCPSocketMap
+
+@enduml
 
 ### Error Handling
 - Define specific error handling strategies for socket errors, data corruption, and missing mappings.
