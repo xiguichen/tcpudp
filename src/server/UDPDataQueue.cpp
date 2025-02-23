@@ -1,12 +1,12 @@
 #include "UdpDataQueue.h"
 
-void UdpDataQueue::enqueue(int socket, const std::vector<char>& data) {
+void UdpDataQueue::enqueue(int socket, const std::shared_ptr<std::vector<char>>& data) {
     queue.push(std::make_pair(socket, data));
 }
 
-std::pair<int, std::vector<char>> UdpDataQueue::dequeue() {
+std::pair<int, std::shared_ptr<std::vector<char>>> UdpDataQueue::dequeue() {
     if (queue.empty()) {
-        return std::make_pair(-1, std::vector<char>()); // Return an empty pair if the queue is empty
+        return std::make_pair(-1, std::make_shared<std::vector<char>>()); // Return an empty pair if the queue is empty
     }
     auto front = queue.front();
     queue.pop();

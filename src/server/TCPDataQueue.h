@@ -12,11 +12,11 @@ public:
         return instance;
     }
 
-    void enqueue(int socket, const std::vector<char>& data);
-    std::pair<int, std::vector<char>> dequeue();
+    void enqueue(int socket, const std::shared_ptr<std::vector<char>>& data);
+    std::pair<int, std::shared_ptr<std::vector<char>>> dequeue();
 
 private:
-    std::queue<std::pair<int, std::vector<char>>> queue;
+    std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
 
     TcpDataQueue() = default;
     ~TcpDataQueue() = default;

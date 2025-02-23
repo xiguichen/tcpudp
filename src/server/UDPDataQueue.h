@@ -2,6 +2,7 @@
 #define UDP_DATA_QUEUE_H
 
 #include <queue>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -12,8 +13,8 @@ public:
         return instance;
     }
 
-    void enqueue(int socket, const std::vector<char>& data);
-    std::pair<int, std::vector<char>> dequeue();
+    void enqueue(int socket, const std::shared_ptr<std::vector<char>>& data);
+    std::pair<int, std::shared_ptr<std::vector<char>>> dequeue();
 
 private:
     UdpDataQueue() = default;
@@ -21,7 +22,7 @@ private:
     UdpDataQueue(const UdpDataQueue&) = delete;
     UdpDataQueue& operator=(const UdpDataQueue&) = delete;
 
-    std::queue<std::pair<int, std::vector<char>>> queue;
+    std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
 };
 
 #endif // UDP_DATA_QUEUE_H

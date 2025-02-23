@@ -27,7 +27,7 @@ size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
 }
 
 void TcpToQueueThread::enqueueData(const char* data, size_t length) {
-    std::vector<char> dataVector(data, data + length);
+    auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
     TcpDataQueue::getInstance().enqueue(socket_, dataVector);
     std::cout << "Data enqueued" << std::endl;
 }

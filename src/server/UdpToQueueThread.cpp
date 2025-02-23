@@ -32,7 +32,7 @@ return bytesRead;
 }
 
 void UdpToQueueThread::enqueueData(char* data, size_t length) {
-    std::vector<char> dataVector(data, data + length);
+    auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
     UdpDataQueue::getInstance().enqueue(socket_, dataVector);
     std::cout << "Data enqueued" << std::endl;
 
