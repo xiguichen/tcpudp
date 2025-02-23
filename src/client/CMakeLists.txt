@@ -25,3 +25,6 @@ target_include_directories(client PRIVATE ${CMAKE_SOURCE_DIR}/third_party/json)
 
 # Link libraries if needed
 # target_link_libraries(client <libraries>)
+
+# Copy config.json to the build directory
+configure_file(config.json config.json COPYONLY)

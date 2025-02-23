@@ -20,8 +20,13 @@ void SocketManager::manageSockets() {
         try {
             while (running) {
                 std::vector<char> data = localUdpSocket.receive();
-                std::lock_guard<std::mutex> lock(mtx);
-                udpToTcpQueue.enqueue(data);
+                if(data.size() != 0)
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    std::cout << "Received data: length" << data.size() << std::endl;
+                    std::cout << "Received data: " << std::string(data.begin(), data.end()) << std::endl;
+                    udpToTcpQueue.enqueue(data);
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "LocalHostReadThread error: " << e.what() << std::endl;
@@ -34,8 +39,11 @@ void SocketManager::manageSockets() {
         try {
             while (running) {
                 std::vector<char> data = udpToTcpQueue.dequeue();
-                std::lock_guard<std::mutex> lock(mtx);
-                peerTcpSocket.send(data);
+                if(data.size())
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    peerTcpSocket.send(data);
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "LocalHostWriteThread error: " << e.what() << std::endl;
@@ -48,8 +56,11 @@ void SocketManager::manageSockets() {
         try {
             while (running) {
                 std::vector<char> data = peerTcpSocket.receive();
-                std::lock_guard<std::mutex> lock(mtx);
-                tcpToUdpQueue.enqueue(data);
+                if(data.size())
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    tcpToUdpQueue.enqueue(data);
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "PeerHostReadThread error: " << e.what() << std::endl;
@@ -62,8 +73,11 @@ void SocketManager::manageSockets() {
         try {
             while (running) {
                 std::vector<char> data = tcpToUdpQueue.dequeue();
-                std::lock_guard<std::mutex> lock(mtx);
-                localUdpSocket.send(data);
+                if(data.size())
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    localUdpSocket.send(data);
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "PeerHostWriteThread error: " << e.what() << std::endl;
