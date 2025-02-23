@@ -115,6 +115,12 @@ end
 
 @startuml
 
+class Configuration
+{
+    +getSocketAddress()
+    +getPortNumber()
+}
+
 class SocketManager {
     +createSocket()
     +bindToPort(port: int)
