@@ -7,6 +7,8 @@
 #include "UdpToTcpSocketMap.h"
 #include "TcpToQueueThread.h"
 #include "UdpToQueueThread.h"
+#include "UdpQueueToTcpThreadPool.h"
+#include "TcpQueueToUdpThreadPool.h"
 
 SocketManager::SocketManager() : serverSocket(-1) {}
 
@@ -92,3 +94,25 @@ void SocketManager::startUdpToQueueThread(int clientSocket) {
     });
     threads.push_back(std::move(thread));
 }
+void SocketManager::startTcpQueueToUdpThreadPool() {
+  for (int i = 0; i < 5; ++i) {
+      auto thread = std::thread([]() {
+          // Assuming TcpQueueToUdpThread is a class that handles the processing
+          TcpQueueToUdpThreadPool tcpQueueToUdpThreadPool;
+          tcpQueueToUdpThreadPool.run();
+      });
+      threads.push_back(std::move(thread));
+  }
+}
+
+void SocketManager::startUdpQueueToTcpThreadPool() {
+    for (int i = 0; i < 5; ++i) {
+        auto thread = std::thread([]() {
+            // Assuming UdpQueueToTcpThread is a class that handles the processing
+            UdpQueueToTcpThreadPool udpQueueToTcpThreadPool;
+            udpQueueToTcpThreadPool.run();
+        });
+        threads.push_back(std::move(thread));
+    }
+}
+

@@ -17,8 +17,10 @@ public:
     void acceptConnection();
     void startTcpToQueueThread(int clientSocket);
     void startUdpToQueueThread(int clientSocket);
+    void startTcpQueueToUdpThreadPool();
+    void startUdpQueueToTcpThreadPool();
 
-private:
+  private:
     int serverSocket;
     std::vector<std::thread> threads;
 };

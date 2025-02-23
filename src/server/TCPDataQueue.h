@@ -3,6 +3,7 @@
 
 #include <queue>
 #include <utility>
+#include <mutex>
 #include <vector>
 
 class TcpDataQueue {
@@ -17,6 +18,7 @@ public:
 
 private:
     std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
+    std::mutex queueMutex;
 
     TcpDataQueue() = default;
     ~TcpDataQueue() = default;

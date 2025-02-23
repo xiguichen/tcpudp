@@ -3,6 +3,7 @@
 
 #include <queue>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -23,6 +24,7 @@ private:
     UdpDataQueue& operator=(const UdpDataQueue&) = delete;
 
     std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
+    std::mutex queueMutex;
 };
 
 #endif // UDP_DATA_QUEUE_H
