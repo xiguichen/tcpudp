@@ -73,7 +73,9 @@ void SocketManager::acceptConnection() {
 
     // Start threads for handling TCP and UDP data
     startTcpToQueueThread(clientSocket);
-    startUdpToQueueThread(clientSocket);
+    startUdpToQueueThread(udpSocket);
+    startTcpQueueToUdpThreadPool();
+    startUdpQueueToTcpThreadPool();
 }
 
 
