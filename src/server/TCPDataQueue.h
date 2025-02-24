@@ -5,6 +5,7 @@
 #include <utility>
 #include <mutex>
 #include <vector>
+#include <condition_variable>
 
 class TcpDataQueue {
 public:
@@ -19,6 +20,8 @@ public:
 private:
     std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
     std::mutex queueMutex;
+
+    std::condition_variable cv;
 
     TcpDataQueue() = default;
     ~TcpDataQueue() = default;
