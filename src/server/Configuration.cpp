@@ -16,6 +16,6 @@ std::string Configuration::getSocketAddress() const {
 
 int Configuration::getPortNumber() const {
     // Placeholder implementation
-    return 5002;
+    return 7001;
 }
 
