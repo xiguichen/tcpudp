@@ -4,7 +4,7 @@
 
 ```json
 {
-  "localHostUdpPort": 5001,
+  "localHostUdpPort": 5002,
   "peerTcpPort": 6001,
   "peerAddress": "peer address"
 }
@@ -26,7 +26,7 @@ note right of LocalUdpSocket
   LocalUdpSocket is configurable via the config file.
 end note
 
-SocketManager -> LocalUdpSocket: Create socket s1 and bind s1 to port 5001
+SocketManager -> LocalUdpSocket: Create socket s1 and bind s1 to port 5002
 
 group LocalHostReadThread
     note right of LocalUdpSocket

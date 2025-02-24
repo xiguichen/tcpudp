@@ -2,7 +2,7 @@ import socket
 
 def udp_client():
     # Define the server address and port
-    server_address = ('localhost', 5001)
+    server_address = ('localhost', 5002)
 
     # Create a UDP socket
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:

@@ -15,7 +15,7 @@ participant client
 participant server 
 participant "server.py" as server_py
 
-client_py -> client : Send Hello, UDP 5001
+client_py -> client : Send Hello, UDP 5002
 client -> server: Send Hello, TCP 6001
 server -> server_py: Send Hello, TCP 7001
 server_py -> server: Send Hello

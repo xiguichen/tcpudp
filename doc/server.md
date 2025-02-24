@@ -12,7 +12,7 @@ participant TcpToQueueThread2
 participant UdpToQueueThread1
 participant UdpToQueueThread2
 
-SocketManager -> SocketManager: Create socket and bind to port 5001
+SocketManager -> SocketManager: Create socket and bind to port 5002
 SocketManager -> SocketManager: Listen for incoming TCP connections
 
 ClientPeer1 -> SocketManager: TCP connection request

@@ -1,5 +1,5 @@
 {
-  "localHostUdpPort": 5001,
+  "localHostUdpPort": 5002,
   "peerTcpPort": 6001,
   "peerAddress": "127.0.0.1"
 }
