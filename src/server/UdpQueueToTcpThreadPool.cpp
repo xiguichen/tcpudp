@@ -33,7 +33,7 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
 void UdpQueueToTcpThreadPool::sendDataViaTcp(int tcpSocket, const std::shared_ptr<std::vector<char>>& data) {
     if (tcpSocket != -1) {
         // Send data length first
-        int length = data->size();
+        int length = htonl(data->size());
         send(tcpSocket, &length, sizeof(length), 0);
 
         // Send the actual data

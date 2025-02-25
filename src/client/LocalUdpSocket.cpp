@@ -33,6 +33,8 @@ void LocalUdpSocket::bind(int port) {
 
 void LocalUdpSocket::send(const std::vector<char> &data) {
     std::cout << "Sending data" << std::endl;
+    std::cout << "Data Length: " << data.size() << std::endl;
+    std::cout << "Data: " << std::string(data.begin(), data.end()) << std::endl;
   ssize_t sentBytes =
       sendto(socketFd, data.data(), data.size(), 0,
              (struct sockaddr *)&localAddress, sizeof(localAddress));

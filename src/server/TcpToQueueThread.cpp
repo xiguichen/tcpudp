@@ -16,7 +16,31 @@ void TcpToQueueThread::run() {
 }
 
 size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
-    size_t bytesRead = recv(socket_, buffer, bufferSize, 0);
+    // First, read the length of the message
+    uint32_t messageLength = 0;
+    size_t lengthBytesRead = recv(socket_, &messageLength, sizeof(messageLength), 0);
+    if (lengthBytesRead != sizeof(messageLength)) {
+        if (lengthBytesRead == 0) {
+            std::cout << "Connection closed by peer" << std::endl;
+            close(socket_);
+        } else {
+            std::cerr << "Error reading message length from socket" << std::endl;
+        }
+        return 0;
+    }
+
+    // Convert message length from network byte order to host byte order
+    messageLength = ntohl(messageLength);
+    std::cout << "message length: " << messageLength << std::endl;
+
+    // Ensure the buffer is large enough
+    if (messageLength > bufferSize) {
+        std::cerr << "Buffer size is too small for the incoming message" << std::endl;
+        return 0;
+    }
+
+    // Now, read the actual message based on the length
+    size_t bytesRead = recv(socket_, buffer, messageLength, 0);
     if (bytesRead == 0) {
         std::cout << "Connection closed by peer" << std::endl;
         close(socket_);
