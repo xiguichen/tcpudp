@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
+#include <Socket.h>
 
 void TcpToQueueThread::run() {
     while (true) {
@@ -18,7 +19,7 @@ void TcpToQueueThread::run() {
 size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
     // First, read the length of the message
     uint32_t messageLength = 0;
-    size_t lengthBytesRead = recv(socket_, &messageLength, sizeof(messageLength), 0);
+    size_t lengthBytesRead = RecvTcpData(socket_, &messageLength, sizeof(messageLength), 0);
     if (lengthBytesRead != sizeof(messageLength)) {
         if (lengthBytesRead == 0) {
             std::cout << "Connection closed by peer" << std::endl;
@@ -40,7 +41,7 @@ size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
     }
 
     // Now, read the actual message based on the length
-    size_t bytesRead = recv(socket_, buffer, messageLength, 0);
+    size_t bytesRead = RecvTcpData(socket_, buffer, messageLength, 0);
     if (bytesRead == 0) {
         std::cout << "Connection closed by peer" << std::endl;
         close(socket_);

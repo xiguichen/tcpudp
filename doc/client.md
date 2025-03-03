@@ -57,10 +57,10 @@ group LocalHostWriteThread
       Ensure thread safety with locks.
       Log errors and exit thread on failure.
     end note
-    UdpToTcpQueue -> PeerTcpSocket: s2: TCP data 1
-    UdpToTcpQueue -> PeerTcpSocket: s2: TCP data 2
+    UdpToTcpQueue -> PeerTcpSocket: s2: TCP data 1 [Length, Data]
+    UdpToTcpQueue -> PeerTcpSocket: s2: TCP data 2 [Length, Data]
     ... More TCP data ...
-    UdpToTcpQueue -> PeerTcpSocket: s2: TCP data n
+    UdpToTcpQueue -> PeerTcpSocket: s2: TCP data n [Length, Data]
 end
 
 group PeerHostReadThread
@@ -68,10 +68,10 @@ group PeerHostReadThread
       Ensure thread safety with locks.
       Log errors and exit thread on failure.
     end note
-    PeerTcpSocket -> TcpToUdpQueue: s2: TCP data 1
-    PeerTcpSocket -> TcpToUdpQueue: s2: TCP data 2
+    PeerTcpSocket -> TcpToUdpQueue: s2: TCP data 1 [Length, Data]
+    PeerTcpSocket -> TcpToUdpQueue: s2: TCP data 2 [Length, Data]
     ... More TCP data ...
-    PeerTcpSocket -> TcpToUdpQueue: s2: TCP data n
+    PeerTcpSocket -> TcpToUdpQueue: s2: TCP data n [Length, Data]
 end
 
 group PeerHostWriteThread

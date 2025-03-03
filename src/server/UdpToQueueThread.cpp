@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include "UdpDataQueue.h"
+#include <Socket.h>
 
 void UdpToQueueThread::run() {
     while (true) {
@@ -21,7 +22,7 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     sockaddr_in clientAddr;
     socklen_t clientAddrLen = sizeof(clientAddr);
 
-    ssize_t bytesRead = recvfrom(socket_, buffer, bufferSize, 0, (struct sockaddr*)&clientAddr, &clientAddrLen);
+    ssize_t bytesRead = RecvUdpData(socket_, buffer, bufferSize, 0, (struct sockaddr*)&clientAddr, &clientAddrLen);
     if (bytesRead > 0) {
         std::cout << "Received data: " << std::string(buffer, bytesRead) << std::endl;
         

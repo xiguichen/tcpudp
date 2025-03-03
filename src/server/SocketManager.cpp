@@ -9,6 +9,7 @@
 #include "UdpToQueueThread.h"
 #include "UdpQueueToTcpThreadPool.h"
 #include "TcpQueueToUdpThreadPool.h"
+#include <Socket.h>
 
 SocketManager::SocketManager() : serverSocket(-1) {}
 
@@ -44,7 +45,7 @@ void SocketManager::bindToPort(int port) {
 }
 
 void SocketManager::listenForConnections() {
-    if (listen(serverSocket, 5) < 0) {
+    if (SocketListen(serverSocket, 5) < 0) {
         std::cerr << "Failed to listen for connections" << std::endl;
         exit(EXIT_FAILURE);
     }

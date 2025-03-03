@@ -17,6 +17,15 @@ def udp_client():
             data, server = sock.recvfrom(4096)
             print(f'Received: {data}')
 
+            message = b'hello2'
+            print(f'Sending: {message}')
+            sent = sock.sendto(message, server_address)
+
+            # Receive response
+            print('Waiting to receive...')
+            data, server = sock.recvfrom(4096)
+            print(f'Received: {data}')
+
         except Exception as e:
             print(f'An error occurred: {e}')
 

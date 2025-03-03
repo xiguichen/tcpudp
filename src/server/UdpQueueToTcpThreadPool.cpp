@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <thread>
 #include <iostream>
+#include <Socket.h>
 
 void UdpQueueToTcpThreadPool::run() {
     // Start a thread to process data concurrently
@@ -34,13 +35,13 @@ void UdpQueueToTcpThreadPool::sendDataViaTcp(int tcpSocket, const std::shared_pt
     if (tcpSocket != -1) {
         // Send data length first
         int length = htonl(data->size());
-        send(tcpSocket, &length, sizeof(length), 0);
+        std::cout << __func__ << ": sending data length: " << data->size() << " via TCP socket" << std::endl;
+        SendTcpData(tcpSocket, &length, sizeof(length), 0);
 
         // Send the actual data
-        send(tcpSocket, data->data(), length, 0);
+        SendTcpData(tcpSocket, data->data(), length, 0);
 
-        std::cout << "Data sent via TCP" << std::endl;
     } else {
-        std::cerr << "Error: Invalid TCP socket" << std::endl;
+        std::cerr << __func__ << ": Error: Invalid TCP socket" << std::endl;
     }
 }

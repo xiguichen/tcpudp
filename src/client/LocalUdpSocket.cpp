@@ -5,12 +5,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
+#include <Socket.h>
 
 LocalUdpSocket::LocalUdpSocket(int port) {
   // Create a UDP socket
   socketFd = socket(AF_INET, SOCK_DGRAM, 0);
   if (socketFd < 0) {
-    std::cerr << "Failed to create socket" << std::endl;
+    std::cerr << "[LocalUdpSocket::LocalUdpSocket] Failed to create socket" << std::endl;
     exit(EXIT_FAILURE);
   }
 
@@ -26,20 +27,20 @@ void LocalUdpSocket::bind(int port) {
 
   if (::bind(socketFd, (struct sockaddr *)&localAddress, sizeof(localAddress)) <
       0) {
-    std::cerr << "Failed to bind socket" << std::endl;
+    std::cerr << "[LocalUdpSocket::bind] Failed to bind socket" << std::endl;
     exit(EXIT_FAILURE);
   }
 }
 
 void LocalUdpSocket::send(const std::vector<char> &data) {
-    std::cout << "Sending data" << std::endl;
-    std::cout << "Data Length: " << data.size() << std::endl;
-    std::cout << "Data: " << std::string(data.begin(), data.end()) << std::endl;
+    std::cout << "[LocalUdpSocket::send] Sending data" << std::endl;
+    std::cout << "[LocalUdpSocket::send] Data Length: " << data.size() << std::endl;
+    std::cout << "[LocalUdpSocket::send] Data: " << std::string(data.begin(), data.end()) << std::endl;
   ssize_t sentBytes =
-      sendto(socketFd, data.data(), data.size(), 0,
+      SendUdpData(socketFd, data.data(), data.size(), 0,
              (struct sockaddr *)&localAddress, sizeof(localAddress));
   if (sentBytes < 0) {
-    std::cerr << "Failed to send data" << std::endl;
+    std::cerr << "[LocalUdpSocket::send] Failed to send data" << std::endl;
   }
 }
 
@@ -56,16 +57,16 @@ std::vector<char> LocalUdpSocket::receive() {
   int activity = select(socketFd + 1, &readfds, NULL, NULL, NULL);
 
   if (activity < 0) {
-    std::cerr << "Select error" << std::endl;
+    std::cerr << "[LocalUdpSocket::receive] Select error" << std::endl;
     return {};
   }
 
   if (FD_ISSET(socketFd, &readfds)) {
     ssize_t receivedBytes =
-        recvfrom(socketFd, buffer.data(), buffer.size(), MSG_WAITALL,
+        RecvUdpData(socketFd, buffer.data(), buffer.size(), MSG_WAITALL,
                  (struct sockaddr *)&localAddress, &addrLen);
-    std::cout << "address: " << localAddress.sin_addr.s_addr << std::endl;
-    std::cout << "port: " << localAddress.sin_port << std::endl;
+    std::cout << "[LocalUdpSocket::receive] address: " << localAddress.sin_addr.s_addr << std::endl;
+    std::cout << "[LocalUdpSocket::receive] port: " << localAddress.sin_port << std::endl;
     if (receivedBytes < 0) {
       std::cerr << "Failed to receive data" << std::endl;
       perror("Failed to receive data");

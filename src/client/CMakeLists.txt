@@ -23,6 +23,13 @@ add_executable(client ${SOURCES})
 # Add include directories
 target_include_directories(client PRIVATE ${CMAKE_SOURCE_DIR}/third_party/json)
 
+# Add Common library as dependency
+target_link_libraries(client common)
+
+# Add Common library as include directory
+target_include_directories(client PRIVATE ${CMAKE_SOURCE_DIR}/Common)
+
+
 # Link libraries if needed
 # target_link_libraries(client <libraries>)
 
