@@ -8,7 +8,7 @@
 
 void TcpToQueueThread::run() {
     while (true) {
-        char buffer[1024];
+        char buffer[65535];
         ssize_t bytesRead = readFromSocket(buffer, sizeof(buffer));
         if (bytesRead > 0) {
             enqueueData(buffer, bytesRead);
@@ -37,6 +37,7 @@ size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
     // Ensure the buffer is large enough
     if (messageLength > bufferSize) {
         std::cerr << "Buffer size is too small for the incoming message" << std::endl;
+        exit(1);
         return 0;
     }
 

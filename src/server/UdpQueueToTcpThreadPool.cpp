@@ -39,7 +39,7 @@ void UdpQueueToTcpThreadPool::sendDataViaTcp(int tcpSocket, const std::shared_pt
         SendTcpData(tcpSocket, &length, sizeof(length), 0);
 
         // Send the actual data
-        SendTcpData(tcpSocket, data->data(), length, 0);
+        SendTcpData(tcpSocket, data->data(), data->size(), 0);
 
     } else {
         std::cerr << __func__ << ": Error: Invalid TCP socket" << std::endl;
