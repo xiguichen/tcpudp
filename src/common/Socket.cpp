@@ -21,3 +21,8 @@ int SocketListen(SocketFd socketFd, int backlog) {
   return listen(socketFd, backlog);
 }
 
+int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr,
+                  socklen_t destAddrLen) {
+  return connect(socketFd, destAddr, destAddrLen);
+}
+

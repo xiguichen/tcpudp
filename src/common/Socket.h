@@ -12,3 +12,7 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flag
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flags);
 
 int SocketListen(SocketFd socketFd, int backlog);
+
+// Socket Connect
+int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr,
+                  socklen_t destAddrLen);
