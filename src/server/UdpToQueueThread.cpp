@@ -10,7 +10,7 @@
 
 void UdpToQueueThread::run() {
     while (true) {
-        char buffer[1024];
+        char buffer[4096];
         ssize_t bytesRead = readFromUdpSocket(buffer, sizeof(buffer));
         if (bytesRead > 0) {
             enqueueData(buffer, bytesRead);
