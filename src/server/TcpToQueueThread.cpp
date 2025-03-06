@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <vector>
 #include <Socket.h>
+#include <arpa/inet.h>
 
 void TcpToQueueThread::run() {
     while (true) {
