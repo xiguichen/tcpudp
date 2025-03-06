@@ -21,7 +21,7 @@ jobs:
       uses: actions/checkout@v2
 
     - name: Set up CMake
-      uses: actions/setup-cmake@v3
+      uses: lukka/get-cmake@v4.0.0-rc3
 
     - name: Configure CMake
       run: cmake -S . -B build
