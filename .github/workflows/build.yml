@@ -24,7 +24,7 @@ jobs:
       uses: lukka/get-cmake@v4.0.0-rc3
 
     - name: Configure CMake
-      run: cmake -S . -B build
+      run: mkdir build; cd build; cmake -G Ninja -S src 
 
     - name: Build
-      run: cmake --build build
+      run: cd build; Ninja
