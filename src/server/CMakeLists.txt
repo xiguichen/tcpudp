@@ -12,9 +12,9 @@ file(GLOB_RECURSE ALL_CPP_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "*.cpp")
 
 add_executable(server ${ALL_CPP_FILES})
 
-# Add Common library as dependency
+# Add common library as dependency
 target_link_libraries(server common)
 
-# Add Common library as include directory
-target_include_directories(server PRIVATE ${CMAKE_SOURCE_DIR}/Common)
+# Add common library as include directory
+target_include_directories(server PRIVATE ${CMAKE_SOURCE_DIR}/common)
 
