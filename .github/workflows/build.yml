@@ -28,3 +28,10 @@ jobs:
 
     - name: Build
       run: cd build; ninja
+
+    - name: Archive CMake binaries
+      if: success()
+      uses: actions/upload-artifact@v2
+      with:
+        name: cmake-binaries
+        path: build/bin/**/*
