@@ -27,4 +27,4 @@ jobs:
       run: mkdir build; cd build; cmake -G Ninja -S ../src 
 
     - name: Build
-      run: cd build; Ninja
+      run: cd build; ninja
