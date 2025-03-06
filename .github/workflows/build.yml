@@ -36,8 +36,4 @@ jobs:
         name: ${{ matrix.os }}-cmake-binaries
         path: build/bin/**/*
     - name: Create Release
-      if: success() && github.ref == 'refs/heads/main'
-      uses: ncipollo/release-action@v1
-      with:
-        artifacts: ${{ matrix.os }}-cmake-binaries
-        token: ${{ secrets.GITHUB_TOKEN }}
+      uses: googleapis/release-please-action@v3.1.2
