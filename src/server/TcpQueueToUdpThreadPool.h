@@ -2,6 +2,7 @@
 #define TCP_QUEUE_TO_UDP_THREAD_POOL_H
 
 #include <vector>
+#include <memory>
 class TcpQueueToUdpThreadPool {
 public:
     void run();

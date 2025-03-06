@@ -6,6 +6,8 @@
 #include <thread>
 #include <iostream>
 #include <Socket.h>
+#include <arpa/inet.h>
+
 
 void UdpQueueToTcpThreadPool::run() {
     // Start a thread to process data concurrently
