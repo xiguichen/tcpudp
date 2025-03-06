@@ -35,3 +35,5 @@ target_include_directories(client PRIVATE ${CMAKE_SOURCE_DIR}/common)
 
 # Copy config.json to the build directory
 configure_file(config.json config.json COPYONLY)
+
+set_target_properties(client PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
