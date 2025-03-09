@@ -29,7 +29,7 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize,
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize,
                     int flags) {
   ssize_t length =  recv(socketFd, buffer, bufferSize, flags);
-  Log::getInstance().info(std::format("RecvUdpData: receive {} bytes of data", length));
+  Log::getInstance().info(std::format("RecvTcpData: receive {} bytes of data", length));
   return length;
 }
 

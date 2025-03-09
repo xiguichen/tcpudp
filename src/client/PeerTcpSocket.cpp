@@ -25,7 +25,7 @@ void PeerTcpSocket::send(const std::vector<char> &data) {
   // send the data length first
   uint32_t dataLength = htonl(data.size());
   Log::getInstance().info(
-      std::format("Queue -> TCP: Data Length {}", dataLength));
+      std::format("Queue -> TCP: Data Length {}", data.size()));
   SendTcpData(socketFd, &dataLength, sizeof(dataLength), 0);
   SendTcpData(socketFd, data.data(), data.size(), 0);
 }
@@ -36,7 +36,8 @@ std::vector<char> PeerTcpSocket::receive() {
   ssize_t lengthBytesReceived =
       RecvTcpData(socketFd, &messageLength, sizeof(messageLength), 0);
   if (lengthBytesReceived != sizeof(messageLength)) {
-    Log::getInstance().error(std::format("TCP -> Queue: Data Length Receive Failed."));
+    Log::getInstance().error(
+        std::format("TCP -> Queue: Data Length Receive Failed."));
     return {};
   }
 
@@ -47,11 +48,14 @@ std::vector<char> PeerTcpSocket::receive() {
 
   // Prepare a buffer to receive the actual message
   std::vector<char> buffer(messageLength);
-  ssize_t bytesReceived =
-      RecvTcpData(socketFd, buffer.data(), messageLength, 0);
-  if (bytesReceived != messageLength) {
-    Log::getInstance().error(std::format("TCP -> Queue: Data Receive Failed."));
-    return {};
+
+  size_t total_received = 0;
+  while (total_received < messageLength) {
+    int bytes = RecvTcpData(socketFd, buffer.data() + total_received,
+                            messageLength - total_received, 0);
+    if (bytes <= 0)
+      break;
+    total_received += bytes;
   }
 
   return buffer;
