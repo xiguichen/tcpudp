@@ -35,5 +35,3 @@ jobs:
       with:
         name: ${{ matrix.os }}-cmake-binaries
         path: build/bin/**/*
-    - name: Create Release
-      uses: googleapis/release-please-action@v3.1.2
