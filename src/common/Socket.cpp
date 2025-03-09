@@ -1,5 +1,6 @@
 #include "Socket.h"
 #include "Log.h"
+#include <format>
 
 using namespace Logger;
 
