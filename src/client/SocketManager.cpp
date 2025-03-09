@@ -3,6 +3,9 @@
 #include <thread>
 #include <mutex>
 #include <exception>
+#include <Log.h>
+
+using namespace Logger;
 
 SocketManager::SocketManager(int udpPort, int tcpPort, const std::string& address)
     : localUdpSocket(udpPort), peerTcpSocket(address, tcpPort) {}
@@ -81,7 +84,7 @@ void SocketManager::peerHostReadTask(std::mutex& mtx, bool& running) {
             }
             else
             {
-                std::cout << __func__ << ": empty data received, the remote might have closed the connection" << std::endl;
+                Log::getInstance().error("SocketManager: Empty data received.");
                 running = false;
             }
         }

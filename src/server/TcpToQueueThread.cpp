@@ -6,6 +6,10 @@
 #include <vector>
 #include <Socket.h>
 #include <arpa/inet.h>
+#include <Log.h>
+#include <format>
+
+using namespace Logger;
 
 void TcpToQueueThread::run() {
     while (true) {
@@ -27,21 +31,23 @@ size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
     size_t lengthBytesRead = RecvTcpData(socket_, &messageLength, sizeof(messageLength), 0);
     if (lengthBytesRead != sizeof(messageLength)) {
         if (lengthBytesRead == 0) {
-            std::cout << "Connection closed by peer" << std::endl;
+            Log::getInstance().error("Connection closed by peer. Length=0");
             close(socket_);
         } else {
-            std::cerr << "Error reading message length from socket" << std::endl;
+            Log::getInstance().error("Connection closed by peer. Length not correct");
         }
         return 0;
     }
 
     // Convert message length from network byte order to host byte order
     messageLength = ntohl(messageLength);
-    std::cout << "message length: " << messageLength << std::endl;
+    
+    Log::getInstance().error(std::format("TCP -> Queue: Message size: {}", messageLength));
 
     // Ensure the buffer is large enough
     if (messageLength > bufferSize) {
         std::cerr << "Buffer size is too small for the incoming message" << std::endl;
+        Log::getInstance().error(std::format("TCP -> Queue: Buffer size less than {}", messageLength));
         exit(1);
         return 0;
     }
@@ -49,10 +55,11 @@ size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
     // Now, read the actual message based on the length
     size_t bytesRead = RecvTcpData(socket_, buffer, messageLength, 0);
     if (bytesRead == 0) {
-        std::cout << "Connection closed by peer" << std::endl;
+
+        Log::getInstance().error("TCP -> Queue: Connection closed by peer.");
         close(socket_);
     } else if (bytesRead < 0) {
-        std::cerr << "Error reading from socket" << std::endl;
+        Log::getInstance().error("TCP -> Queue: Connection closed by peer.");
     }
     return bytesRead;
 }
@@ -60,5 +67,5 @@ size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
 void TcpToQueueThread::enqueueData(const char* data, size_t length) {
     auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
     TcpDataQueue::getInstance().enqueue(socket_, dataVector);
-    std::cout << "Data enqueued to TCP Queue" << std::endl;
+    Log::getInstance().info("TCP -> Queue: Data enqueued.");
 }

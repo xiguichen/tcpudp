@@ -7,6 +7,9 @@
 #include <unistd.h>
 #include "UdpDataQueue.h"
 #include <Socket.h>
+#include <Log.h>
+
+using namespace Logger;
 
 void UdpToQueueThread::run() {
     while (true) {
@@ -33,6 +36,5 @@ return bytesRead;
 void UdpToQueueThread::enqueueData(char* data, size_t length) {
     auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
     UdpDataQueue::getInstance().enqueue(socket_, dataVector);
-    std::cout << "Data enqueued to UDP queue." << std::endl;
-
+    Log::getInstance().info("UDP -> Queue: Data Enqueue");
 }

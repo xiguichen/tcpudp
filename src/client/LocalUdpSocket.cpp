@@ -6,6 +6,9 @@
 #include <unistd.h>
 #include <vector>
 #include <Socket.h>
+#include <Log.h>
+
+using namespace Logger;
 
 LocalUdpSocket::LocalUdpSocket(int port) {
   // Create a UDP socket
@@ -33,14 +36,11 @@ void LocalUdpSocket::bind(int port) {
 }
 
 void LocalUdpSocket::send(const std::vector<char> &data) {
-    std::cout << "[LocalUdpSocket::send] Sending data" << std::endl;
-    std::cout << "[LocalUdpSocket::send] Data Length: " << data.size() << std::endl;
-    std::cout << "[LocalUdpSocket::send] Data: " << std::string(data.begin(), data.end()) << std::endl;
   ssize_t sentBytes =
       SendUdpData(socketFd, data.data(), data.size(), 0,
              (struct sockaddr *)&localAddress, sizeof(localAddress));
   if (sentBytes < 0) {
-    std::cerr << "[LocalUdpSocket::send] Failed to send data" << std::endl;
+      Log::getInstance().error("Failed to send data.");
   }
 }
 
@@ -65,8 +65,6 @@ std::vector<char> LocalUdpSocket::receive() {
     ssize_t receivedBytes =
         RecvUdpData(socketFd, buffer.data(), buffer.size(), MSG_WAITALL,
                  (struct sockaddr *)&localAddress, &addrLen);
-    std::cout << "[LocalUdpSocket::receive] address: " << localAddress.sin_addr.s_addr << std::endl;
-    std::cout << "[LocalUdpSocket::receive] port: " << localAddress.sin_port << std::endl;
     if (receivedBytes < 0) {
       std::cerr << "Failed to receive data" << std::endl;
       perror("Failed to receive data");
