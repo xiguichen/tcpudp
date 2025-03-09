@@ -16,9 +16,7 @@ ssize_t SendUdpData(SocketFd socketFd, const void *data, size_t length,
 ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize,
                     int flags, struct sockaddr *srcAddr,
                     socklen_t *srcAddrLen) {
-  ssize_t size = recvfrom(socketFd, buffer, bufferSize, flags, srcAddr, srcAddrLen);
-  std::cout << "RecvUdpData:" << *srcAddrLen << std::endl;
-  return size;
+  return recvfrom(socketFd, buffer, bufferSize, flags, srcAddr, srcAddrLen);
 }
 
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize,

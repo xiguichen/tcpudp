@@ -14,10 +14,7 @@ public:
 
 private:
     int socketFd;
-    int sendSocketFd;
     struct sockaddr_in localAddress;
-    socklen_t remoteAddressLength;
-    struct sockaddr_in remoteAddress;
 };
 
 #endif // LOCALUDPSOCKET_H

@@ -38,12 +38,9 @@ void SocketManager::manageSockets() {
 }
 
 void SocketManager::localHostReadTask(std::mutex& mtx, bool& running) {
-
-    std::vector<char> data;
-
     try {
         while (running) {
-            data = localUdpSocket.receive();
+            std::vector<char> data = localUdpSocket.receive();
             if(data.size() != 0)
             {
                 std::lock_guard<std::mutex> lock(mtx);
@@ -59,10 +56,9 @@ void SocketManager::localHostReadTask(std::mutex& mtx, bool& running) {
 }
 
 void SocketManager::localHostWriteTask(std::mutex& mtx, bool& running) {
-    std::vector<char> data;
     try {
         while (running) {
-            data = udpToTcpQueue.dequeue();
+            std::vector<char> data = udpToTcpQueue.dequeue();
             if(data.size())
             {
                 std::lock_guard<std::mutex> lock(mtx);

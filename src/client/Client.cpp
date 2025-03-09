@@ -1,7 +1,6 @@
 #include "Client.h"
 #include <fstream>
 #include <nlohmann/json.hpp> // Include the nlohmann/json library
-#include <iostream>
 
 using json = nlohmann::json;
 
@@ -18,9 +17,6 @@ void Client::loadConfig(const std::string& configFile) {
     localHostUdpPort = config["localHostUdpPort"].get<int>();
     peerTcpPort = config["peerTcpPort"].get<int>();
     peerAddress = config["peerAddress"].get<std::string>();
-    std::cout << "localHostUdpPort: " << localHostUdpPort << std::endl;
-    std::cout << "peerTcpPort: " << peerTcpPort << std::endl;
-    std::cout << "peerAddress: " << peerAddress << std::endl;
 }
 
 void Client::configure() {
