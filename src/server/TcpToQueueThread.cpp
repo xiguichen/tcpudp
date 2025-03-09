@@ -14,6 +14,10 @@ void TcpToQueueThread::run() {
         if (bytesRead > 0) {
             enqueueData(buffer, bytesRead);
         }
+        else
+        {
+            break;
+        }
     }
 }
 
