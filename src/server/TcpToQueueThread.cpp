@@ -42,7 +42,7 @@ size_t TcpToQueueThread::readFromSocket(char* buffer, size_t bufferSize) {
     // Convert message length from network byte order to host byte order
     messageLength = ntohl(messageLength);
     
-    Log::getInstance().error(std::format("TCP -> Queue: Message size: {}", messageLength));
+    Log::getInstance().info(std::format("TCP -> Queue: Message size: {}", messageLength));
 
     // Ensure the buffer is large enough
     if (messageLength > bufferSize) {
