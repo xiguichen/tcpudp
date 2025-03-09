@@ -24,8 +24,6 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
 
     ssize_t bytesRead = RecvUdpData(socket_, buffer, bufferSize, 0, (struct sockaddr*)&clientAddr, &clientAddrLen);
     if (bytesRead > 0) {
-        std::cout << "Received data: " << std::string(buffer, bytesRead) << std::endl;
-        
     } else {
         std::cerr << "Error reading from UDP socket" << std::endl;
     }
