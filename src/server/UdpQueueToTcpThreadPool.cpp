@@ -5,10 +5,10 @@
 #include <Log.h>
 #include <Socket.h>
 #include <arpa/inet.h>
-#include <iostream>
 #include <sys/socket.h>
 #include <thread>
 #include <Protocol.h>
+#include <format>
 
 using namespace Logger;
 

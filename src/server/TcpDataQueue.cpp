@@ -1,6 +1,5 @@
 #include "TcpDataQueue.h"
 
-#include <iostream>
 #include <mutex>
 
 void TcpDataQueue::enqueue(int socket, const std::shared_ptr<std::vector<char>>& data) {
