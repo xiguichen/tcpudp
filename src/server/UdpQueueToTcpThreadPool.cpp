@@ -8,6 +8,7 @@
 #include <iostream>
 #include <sys/socket.h>
 #include <thread>
+#include <Protocol.h>
 
 using namespace Logger;
 
@@ -40,9 +41,15 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
 void UdpQueueToTcpThreadPool::sendDataViaTcp(
     int tcpSocket, const std::shared_ptr<std::vector<char>> &data) {
   if (tcpSocket != -1) {
-    // Send data length first
-    int length = htonl(data->size());
-    SendTcpData(tcpSocket, &length, sizeof(length), 0);
+    DataHeader header;
+    header.size = htons(data->size());
+    header.id = sendId++;
+    header.checksum = xor_checksum((uint8_t*)data->data(), data->size());
+    Log::getInstance().info(
+        std::format("Queue -> TCP: Data ID {} , Data Length: {}, Data Checksum: {}",
+                    header.id, data->size(), header.checksum));
+
+    SendTcpData(tcpSocket, &header, sizeof(header), 0);
 
     // Send the actual data
     SendTcpData(tcpSocket, data->data(), data->size(), 0);

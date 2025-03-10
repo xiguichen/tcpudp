@@ -6,6 +6,7 @@
 #include <iostream>
 #include <unistd.h>
 #include <vector>
+#include <Protocol.h>
 
 using namespace Logger;
 
@@ -23,33 +24,38 @@ void PeerTcpSocket::connect(const std::string &address, int port) {
 
 void PeerTcpSocket::send(const std::vector<char> &data) {
   // send the data length first
+
+  DataHeader header;
+  header.size = htons(data.size());
+  header.id = sendId++;
+  header.checksum = xor_checksum((uint8_t*)data.data(), data.size());
   uint32_t dataLength = htonl(data.size());
   Log::getInstance().info(
-      std::format("Queue -> TCP: Data Length {}", data.size()));
-  SendTcpData(socketFd, &dataLength, sizeof(dataLength), 0);
+      std::format("Queue -> TCP: Data ID {} , Data Length: {}, Data Checksum: {}", header.id, data.size(), header.checksum));
+  SendTcpData(socketFd, &header, HEADER_SIZE, 0);
   SendTcpData(socketFd, data.data(), data.size(), 0);
 }
 
 std::vector<char> PeerTcpSocket::receive() {
-  // First, read the length of the message
-  uint32_t messageLength = 0;
+
+  DataHeader header;
   ssize_t lengthBytesReceived =
-      RecvTcpData(socketFd, &messageLength, sizeof(messageLength), 0);
-  if (lengthBytesReceived != sizeof(messageLength)) {
+      RecvTcpData(socketFd, &header, HEADER_SIZE, 0);
+  if (lengthBytesReceived != HEADER_SIZE) {
     Log::getInstance().error(
-        std::format("TCP -> Queue: Data Length Receive Failed."));
+        std::format("TCP -> Queue: Data Header Receive Failed."));
     return {};
   }
 
   // Convert message length from network byte order to host byte order
-  messageLength = ntohl(messageLength);
+  uint16_t messageLength = ntohs(header.size);
   Log::getInstance().info(
-      std::format("TCP -> Queue: Data Length {}", messageLength));
+      std::format("TCP -> Queue: Data ID {} , Data Length: {}, Data Checksum: {}", header.id, messageLength, header.checksum));
 
   // Prepare a buffer to receive the actual message
   std::vector<char> buffer(messageLength);
 
-  size_t total_received = 0;
+  uint16_t total_received = 0;
   while (total_received < messageLength) {
     int bytes = RecvTcpData(socketFd, buffer.data() + total_received,
                             messageLength - total_received, 0);
@@ -57,6 +63,13 @@ std::vector<char> PeerTcpSocket::receive() {
       break;
     total_received += bytes;
   }
+  uint8_t checksum = xor_checksum((uint8_t*)buffer.data(), messageLength);
+  if(checksum != header.checksum)
+  {
+    Log::getInstance().error("Tcp -> Queue: Checksum verify failed");
+    return {};
+  }
+  
 
   return buffer;
 }
