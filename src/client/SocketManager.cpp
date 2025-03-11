@@ -47,7 +47,6 @@ void SocketManager::localHostReadTask(std::mutex& mtx, bool& running) {
             if(data.size() != 0)
             {
                 std::lock_guard<std::mutex> lock(mtx);
-                std::cout << "localHostReadThread" << ": Received data: length " << data.size() << std::endl;
                 udpToTcpQueue.enqueue(data);
             }
         }

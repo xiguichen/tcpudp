@@ -1,9 +1,10 @@
 #include "SocketManager.h"
-
-
+#include <Log.h>
+using namespace Logger;
 
 int main(int argc, char* argv[]) {
 
+    Log::getInstance().setLogLevel(LogLevel::ERROR);
     SocketManager socketManager;
     socketManager.createSocket();
     socketManager.bindToPort(6001);

@@ -70,7 +70,6 @@ std::vector<char> LocalUdpSocket::receive() {
       perror("Failed to receive data");
       receivedBytes = 0;
     } else {
-      std::cout << "Data Length: " << receivedBytes << std::endl;
     }
     buffer.resize(receivedBytes);
   }
