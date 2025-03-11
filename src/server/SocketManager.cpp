@@ -98,7 +98,7 @@ void SocketManager::startUdpToQueueThread(int clientSocket) {
     threads.push_back(std::move(thread));
 }
 void SocketManager::startTcpQueueToUdpThreadPool() {
-  for (int i = 0; i < 1; ++i) {
+  for (int i = 0; i < 5; ++i) {
       auto thread = std::thread([]() {
           // Assuming TcpQueueToUdpThread is a class that handles the processing
           TcpQueueToUdpThreadPool tcpQueueToUdpThreadPool;
@@ -109,7 +109,7 @@ void SocketManager::startTcpQueueToUdpThreadPool() {
 }
 
 void SocketManager::startUdpQueueToTcpThreadPool() {
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 1; ++i) {
         auto thread = std::thread([]() {
             // Assuming UdpQueueToTcpThread is a class that handles the processing
             UdpQueueToTcpThreadPool udpQueueToTcpThreadPool;
