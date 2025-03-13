@@ -9,6 +9,7 @@
 #include <thread>
 #include <Protocol.h>
 #include <format>
+#include <cstring>
 
 using namespace Logger;
 

@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <vector>
 #include <Protocol.h>
+#include <cstring>
 
 using namespace Logger;
 
