@@ -15,10 +15,10 @@ public:
     void cleanupResources();
 
 private:
-    void localHostReadTask(std::mutex& mtx, bool& running);
-    void localHostWriteTask(std::mutex& mtx, bool& running);
-    void peerHostReadTask(std::mutex& mtx, bool& running);
-    void peerHostWriteTask(std::mutex& mtx, bool& running);
+    void localHostReadTask(bool& running);
+    void localHostWriteTask(bool& running);
+    void peerHostReadTask(bool& running);
+    void peerHostWriteTask(bool& running);
 private:
     LocalUdpSocket localUdpSocket;
     PeerTcpSocket peerTcpSocket;

@@ -31,8 +31,11 @@ void PeerTcpSocket::send(const std::vector<char> &data) {
   uint32_t dataLength = htonl(data.size());
   Log::getInstance().info(
       std::format("Queue -> TCP: Data ID {} , Data Length: {}, Data Checksum: {}", header.id, data.size(), header.checksum));
-  SendTcpData(socketFd, &header, HEADER_SIZE, 0);
-  SendTcpData(socketFd, data.data(), data.size(), 0);
+  std::vector<char> newData(HEADER_SIZE + data.size());
+  int newLength = HEADER_SIZE + data.size();
+  memcpy(newData.data(), &header, HEADER_SIZE);
+  memcpy(newData.data() + HEADER_SIZE, data.data(), data.size());
+  SendTcpData(socketFd, newData.data(), newLength, 0);
 }
 
 std::vector<char> PeerTcpSocket::receive() {

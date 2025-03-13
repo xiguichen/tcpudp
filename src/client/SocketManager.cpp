@@ -1,7 +1,6 @@
 #include "SocketManager.h"
 #include <iostream>
 #include <thread>
-#include <mutex>
 #include <exception>
 #include <Log.h>
 
@@ -15,23 +14,22 @@ SocketManager::~SocketManager() {
 }
 
 void SocketManager::manageSockets() {
-    std::mutex mtx;
     bool localHostReadRunning = true;
     bool localHostWriteRunning = true;
     bool peerHostReadRunning = true;
     bool peerHostWriteRunning = true;
 
     // LocalHostReadThread
-    std::thread localHostReadThread(&SocketManager::localHostReadTask, this, std::ref(mtx), std::ref(localHostReadRunning));
+    std::thread localHostReadThread(&SocketManager::localHostReadTask, this, std::ref(localHostReadRunning));
 
     // LocalHostWriteThread
-    std::thread localHostWriteThread(&SocketManager::localHostWriteTask, this, std::ref(mtx), std::ref(localHostWriteRunning));
+    std::thread localHostWriteThread(&SocketManager::localHostWriteTask, this, std::ref(localHostWriteRunning));
 
     // PeerHostReadThread
-    std::thread peerHostReadThread(&SocketManager::peerHostReadTask, this, std::ref(mtx), std::ref(peerHostReadRunning));
+    std::thread peerHostReadThread(&SocketManager::peerHostReadTask, this, std::ref(peerHostReadRunning));
 
     // PeerHostWriteThread
-    std::thread peerHostWriteThread(&SocketManager::peerHostWriteTask, this, std::ref(mtx), std::ref(peerHostWriteRunning));
+    std::thread peerHostWriteThread(&SocketManager::peerHostWriteTask, this, std::ref(peerHostWriteRunning));
 
     // Join threads
     localHostReadThread.join();
@@ -40,13 +38,12 @@ void SocketManager::manageSockets() {
     peerHostWriteThread.join();
 }
 
-void SocketManager::localHostReadTask(std::mutex& mtx, bool& running) {
+void SocketManager::localHostReadTask(bool& running) {
     try {
         while (running) {
             std::vector<char> data = localUdpSocket.receive();
             if(data.size() != 0)
             {
-                std::lock_guard<std::mutex> lock(mtx);
                 udpToTcpQueue.enqueue(data);
             }
         }
@@ -56,13 +53,12 @@ void SocketManager::localHostReadTask(std::mutex& mtx, bool& running) {
     }
 }
 
-void SocketManager::localHostWriteTask(std::mutex& mtx, bool& running) {
+void SocketManager::localHostWriteTask(bool& running) {
     try {
         while (running) {
             std::vector<char> data = udpToTcpQueue.dequeue();
             if(data.size())
             {
-                std::lock_guard<std::mutex> lock(mtx);
                 peerTcpSocket.send(data);
             }
         }
@@ -72,13 +68,12 @@ void SocketManager::localHostWriteTask(std::mutex& mtx, bool& running) {
     }
 }
 
-void SocketManager::peerHostReadTask(std::mutex& mtx, bool& running) {
+void SocketManager::peerHostReadTask(bool& running) {
     try {
         while (running) {
             std::vector<char> data = peerTcpSocket.receive();
             if(data.size())
             {
-                std::lock_guard<std::mutex> lock(mtx);
                 tcpToUdpQueue.enqueue(data);
             }
             else
@@ -93,13 +88,12 @@ void SocketManager::peerHostReadTask(std::mutex& mtx, bool& running) {
     }
 }
 
-void SocketManager::peerHostWriteTask(std::mutex& mtx, bool& running) {
+void SocketManager::peerHostWriteTask(bool& running) {
     try {
         while (running) {
             std::vector<char> data = tcpToUdpQueue.dequeue();
             if(data.size())
             {
-                std::lock_guard<std::mutex> lock(mtx);
                 localUdpSocket.send(data);
             }
         }
