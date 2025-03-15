@@ -76,3 +76,5 @@ std::vector<char> LocalUdpSocket::receive() {
 
   return buffer;
 }
+LocalUdpSocket::~LocalUdpSocket() { close(socketFd); }
+

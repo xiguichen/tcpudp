@@ -4,7 +4,11 @@ using namespace Logger;
 
 int main() {
     Log::getInstance().setLogLevel(LogLevel::ERROR);
-    Client client("config.json");
-    client.configure();
+    while(true)
+    {
+        Log::getInstance().info("Starting Client");
+        Client client("config.json");
+        client.configure();
+    }
     return 0;
 }

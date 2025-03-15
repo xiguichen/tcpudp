@@ -76,3 +76,5 @@ std::vector<char> PeerTcpSocket::receive() {
 
   return buffer;
 }
+PeerTcpSocket::~PeerTcpSocket() { close(socketFd); }
+

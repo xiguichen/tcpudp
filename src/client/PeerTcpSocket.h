@@ -11,8 +11,9 @@ public:
     void connect(const std::string& address, int port);
     void send(const std::vector<char>& data);
     std::vector<char> receive();
+    ~PeerTcpSocket();
 
-private:
+  private:
     int socketFd;
     struct sockaddr_in peerAddress;
     uint8_t sendId = 0;

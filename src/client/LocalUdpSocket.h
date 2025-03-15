@@ -11,8 +11,9 @@ public:
     void bind(int port);
     void send(const std::vector<char>& data);
     std::vector<char> receive();
+    ~LocalUdpSocket();
 
-private:
+  private:
     int socketFd;
     struct sockaddr_in localAddress;
 };

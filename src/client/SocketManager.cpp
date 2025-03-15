@@ -14,22 +14,19 @@ SocketManager::~SocketManager() {
 }
 
 void SocketManager::manageSockets() {
-    bool localHostReadRunning = true;
-    bool localHostWriteRunning = true;
-    bool peerHostReadRunning = true;
-    bool peerHostWriteRunning = true;
+    bool running = true;
 
     // LocalHostReadThread
-    std::thread localHostReadThread(&SocketManager::localHostReadTask, this, std::ref(localHostReadRunning));
+    std::thread localHostReadThread(&SocketManager::localHostReadTask, this, std::ref(running));
 
     // LocalHostWriteThread
-    std::thread localHostWriteThread(&SocketManager::localHostWriteTask, this, std::ref(localHostWriteRunning));
+    std::thread localHostWriteThread(&SocketManager::localHostWriteTask, this, std::ref(running));
 
     // PeerHostReadThread
-    std::thread peerHostReadThread(&SocketManager::peerHostReadTask, this, std::ref(peerHostReadRunning));
+    std::thread peerHostReadThread(&SocketManager::peerHostReadTask, this, std::ref(running));
 
     // PeerHostWriteThread
-    std::thread peerHostWriteThread(&SocketManager::peerHostWriteTask, this, std::ref(peerHostWriteRunning));
+    std::thread peerHostWriteThread(&SocketManager::peerHostWriteTask, this, std::ref(running));
 
     // Join threads
     localHostReadThread.join();
