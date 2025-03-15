@@ -12,3 +12,8 @@ file(GLOB_RECURSE ALL_CPP_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "*.cpp")
 
 # Create a library
 add_library(common STATIC ${ALL_CPP_FILES})
+
+# Enable /EHsc for Windows platform
+if (WIN32)
+    target_compile_options(common PRIVATE /EHsc)
+endif()

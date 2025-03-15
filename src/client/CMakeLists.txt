@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(Client)
 
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 
 # Add source files
@@ -37,3 +38,9 @@ target_include_directories(client PRIVATE ${CMAKE_SOURCE_DIR}/common)
 configure_file(config.json config.json COPYONLY)
 
 set_target_properties(client PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+
+# Enable /EHsc for Windows platform
+if (WIN32)
+    target_compile_options(client PRIVATE /EHsc)
+endif()

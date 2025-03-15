@@ -2,8 +2,10 @@
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 #include <vector>
 #include <Socket.h>
 #include <Log.h>
@@ -76,5 +78,5 @@ std::vector<char> LocalUdpSocket::receive() {
 
   return buffer;
 }
-LocalUdpSocket::~LocalUdpSocket() { close(socketFd); }
+LocalUdpSocket::~LocalUdpSocket() { SocketClose(socketFd); }
 

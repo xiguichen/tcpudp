@@ -2,8 +2,7 @@
 #define SOCKET_MANAGER_H
 
 #include <thread>
-#include <map>
-#include <netinet/in.h>
+#include <Socket.h>
 #include <vector>
 
 class SocketManager {

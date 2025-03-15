@@ -4,7 +4,7 @@ using namespace Logger;
 
 int main(int argc, char* argv[]) {
 
-    Log::getInstance().setLogLevel(LogLevel::ERROR);
+    Log::getInstance().setLogLevel(LogLevel::LOG_ERROR);
     SocketManager socketManager;
     socketManager.createSocket();
     socketManager.bindToPort(6001);

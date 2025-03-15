@@ -3,11 +3,14 @@
 #include <Log.h>
 #include <Protocol.h>
 #include <Socket.h>
+#ifndef _WIN32
 #include <arpa/inet.h>
-#include <format>
-#include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#endif
+#include <format>
+#include <iostream>
 #include <vector>
 
 using namespace Logger;
@@ -32,7 +35,7 @@ size_t TcpToQueueThread::readFromSocket(char *buffer, size_t bufferSize) {
   if (lengthBytesRead != HEADER_SIZE) {
     if (lengthBytesRead == 0) {
       Log::getInstance().error("Connection closed by peer. Length=0");
-      close(socket_);
+      SocketClose(socket_);
     } else {
       Log::getInstance().error("Connection closed by peer. Length not correct");
     }

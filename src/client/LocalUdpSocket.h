@@ -2,7 +2,7 @@
 #define LOCALUDPSOCKET_H
 
 #include <string>
-#include <netinet/in.h>
+#include <Socket.h>
 #include <vector>
 
 class LocalUdpSocket {

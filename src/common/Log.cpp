@@ -1,4 +1,5 @@
 #include "Log.h"
+#include <iostream>
 
 namespace Logger {
 
@@ -34,27 +35,27 @@ void Log::log(LogLevel level, const std::string &message) {
 
 std::string Log::getLogLevelString(LogLevel level) {
   switch (level) {
-  case LogLevel::INFO:
+  case LogLevel::LOG_INFO:
     return "INFO";
-  case LogLevel::WARNING:
+  case LogLevel::LOG_WARN:
     return "WARNING";
-  case LogLevel::ERROR:
+  case LogLevel::LOG_ERROR:
     return "ERROR";
   default:
     return "UNKNOWN";
   }
 }
 
-void Log::info(const std::string &message) { log(LogLevel::INFO, message); }
+void Log::info(const std::string &message) { log(LogLevel::LOG_INFO, message); }
 
 void Log::warning(const std::string &message) {
-  log(LogLevel::WARNING, message);
+  log(LogLevel::LOG_WARN, message);
 }
 
-void Log::error(const std::string &message) { log(LogLevel::ERROR, message); }
+void Log::error(const std::string &message) { log(LogLevel::LOG_ERROR, message); }
 
 void Log::debug(const std::string &message) {
-  log(LogLevel::INFO, "DEBUG: " + message); // Assuming debug is a type of info
+  log(LogLevel::LOG_INFO, "DEBUG: " + message); // Assuming debug is a type of info
 }
 
 } // namespace Logger

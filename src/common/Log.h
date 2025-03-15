@@ -1,16 +1,15 @@
 #pragma once
 
 #include <string>
-#include <iostream>
 #include <fstream>
 #include <mutex>
 
 namespace Logger {
 
-enum class LogLevel {
-    INFO,
-    WARNING,
-    ERROR
+enum class LogLevel: int {
+    LOG_INFO,
+    LOG_WARN,
+    LOG_ERROR
 };
 
 class Log {
@@ -33,7 +32,7 @@ private:
     Log(const Log&) = delete;
     Log& operator=(const Log&) = delete;
 
-    LogLevel currentLogLevel = LogLevel::INFO;
+    LogLevel currentLogLevel = LogLevel::LOG_INFO;
     std::ofstream logFile;
     std::mutex logMutex;
 

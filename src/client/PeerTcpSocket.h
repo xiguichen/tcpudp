@@ -3,7 +3,7 @@
 
 #include <string>
 #include <vector>
-#include <netinet/in.h>
+#include <Socket.h>
 
 class PeerTcpSocket {
 public:

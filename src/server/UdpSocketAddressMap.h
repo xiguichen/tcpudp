@@ -2,7 +2,7 @@
 #define UDP_SOCKET_ADDRESS_MAP_H
 
 #include <map>
-#include <netinet/in.h>
+#include <Socket.h>
 
 class UdpSocketAddressMap {
 public:

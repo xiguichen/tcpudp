@@ -1,8 +1,10 @@
 #include "SocketManager.h"
 #include <iostream>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#endif
 #include "TcpToUdpSocketMap.h"
 #include "UdpToTcpSocketMap.h"
 #include "TcpToQueueThread.h"
@@ -20,7 +22,7 @@ SocketManager::~SocketManager() {
         }
     }
     if (serverSocket != -1) {
-        close(serverSocket);
+        SocketClose(serverSocket);
     }
 }
 
@@ -64,7 +66,7 @@ void SocketManager::acceptConnection() {
     int udpSocket = socket(AF_INET, SOCK_DGRAM, 0);
     if (udpSocket < 0) {
         std::cerr << "Failed to create UDP socket" << std::endl;
-        close(clientSocket);
+        SocketClose(clientSocket);
         return;
     }
 

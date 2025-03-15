@@ -1,9 +1,11 @@
 #include "PeerTcpSocket.h"
 #include <Log.h>
 #include <Socket.h>
+#ifndef _WIN32
 #include <arpa/inet.h>
-#include <format>
 #include <unistd.h>
+#endif
+#include <format>
 #include <vector>
 #include <Protocol.h>
 #include <cstring>
@@ -76,5 +78,5 @@ std::vector<char> PeerTcpSocket::receive() {
 
   return buffer;
 }
-PeerTcpSocket::~PeerTcpSocket() { close(socketFd); }
+PeerTcpSocket::~PeerTcpSocket() { SocketClose(socketFd); }
 

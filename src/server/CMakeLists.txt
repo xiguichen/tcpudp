@@ -19,3 +19,8 @@ target_link_libraries(server common)
 target_include_directories(server PRIVATE ${CMAKE_SOURCE_DIR}/common)
 
 set_target_properties(server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# Enable /EHsc for Windows platform
+if (WIN32)
+    target_compile_options(server PRIVATE /EHsc)
+endif()

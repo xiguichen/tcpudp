@@ -1,10 +1,12 @@
 #include "UdpToQueueThread.h"
 
 #include <iostream>
-#include <netinet/in.h>
+#include <Socket.h>
 #include <vector>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 #include "UdpDataQueue.h"
 #include <Socket.h>
 #include <Log.h>

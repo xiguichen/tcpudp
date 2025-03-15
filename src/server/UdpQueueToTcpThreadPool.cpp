@@ -4,8 +4,10 @@
 #include "UdpToTcpSocketMap.h"
 #include <Log.h>
 #include <Socket.h>
+#ifndef _WIN32
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#endif
 #include <thread>
 #include <Protocol.h>
 #include <format>
