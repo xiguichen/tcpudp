@@ -7,7 +7,7 @@ typedef int ssize_t;  // Define ssize_t for Windows
 typedef SOCKET SocketFd;  // Use SOCKET type for Windows
 typedef SOCKADDR_IN sockaddr_in;
 typedef SOCKADDR sockaddr;
-typedef int socklen_t;
+// typedef int socklen_t;
 #pragma comment(lib, "ws2_32.lib")
 #else
 #include <netinet/in.h>

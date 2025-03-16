@@ -33,7 +33,11 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize,
                     socklen_t *srcAddrLen) {
 
 #if defined(_WIN32)
-    ssize_t length =  recvfrom(socketFd, (char *)buffer, bufferSize, flags, srcAddr, srcAddrLen);
+    ssize_t length = recvfrom(socketFd, (char *)buffer, bufferSize, flags, srcAddr, srcAddrLen);
+    if (length == -1) {
+        int lastError = WSAGetLastError();
+        Log::getInstance().error(std::format("RecvUdpData: error receiving data, error code: {}", lastError));
+    }
 #else
   ssize_t length =  recvfrom(socketFd, buffer, bufferSize, flags, srcAddr, srcAddrLen);
 #endif

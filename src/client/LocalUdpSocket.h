@@ -1,9 +1,9 @@
 #ifndef LOCALUDPSOCKET_H
 #define LOCALUDPSOCKET_H
 
-#include <string>
 #include <Socket.h>
 #include <vector>
+#include <Socket.h>
 
 class LocalUdpSocket {
 public:
@@ -14,7 +14,7 @@ public:
     ~LocalUdpSocket();
 
   private:
-    int socketFd;
+    SocketFd socketFd;
     struct sockaddr_in localAddress;
 };
 

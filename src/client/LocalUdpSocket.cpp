@@ -13,12 +13,26 @@
 using namespace Logger;
 
 LocalUdpSocket::LocalUdpSocket(int port) {
+
   // Create a UDP socket
+#ifndef _WIN32
   socketFd = socket(AF_INET, SOCK_DGRAM, 0);
+#else
+  socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+#endif
+
+
+#ifndef _WIN32
   if (socketFd < 0) {
     std::cerr << "[LocalUdpSocket::LocalUdpSocket] Failed to create socket" << std::endl;
     exit(EXIT_FAILURE);
   }
+#else
+  if (socketFd == INVALID_SOCKET) {
+    std::cerr << "[LocalUdpSocket::LocalUdpSocket] Failed to create socket" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+#endif
 
   // Bind the socket to the specified port
   bind(port);
@@ -63,9 +77,15 @@ std::vector<char> LocalUdpSocket::receive() {
     return {};
   }
 
+  int flags = 0;
+
+#ifndef _WIN32
+  flags = MSG_WAITALL;
+#endif
+
   if (FD_ISSET(socketFd, &readfds)) {
     ssize_t receivedBytes =
-        RecvUdpData(socketFd, buffer.data(), buffer.size(), MSG_WAITALL,
+        RecvUdpData(socketFd, buffer.data(), buffer.size(), flags,
                  (struct sockaddr *)&localAddress, &addrLen);
     if (receivedBytes < 0) {
       std::cerr << "Failed to receive data" << std::endl;
