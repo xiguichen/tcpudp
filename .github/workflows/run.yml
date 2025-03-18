@@ -1,0 +1,28 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Install Cloudflared
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cloudflared
+
+    - name: Install Wireguard
+      run: |
+        sudo apt-get install -y wireguard
+
+    - name: Run Cloudflared
+      run: |
+        cloudflared --version # Replace with the actual command you want to run
