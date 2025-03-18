@@ -1,6 +1,9 @@
 #include "Socket.h"
 #include "Log.h"
 #include <format>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 using namespace Logger;
 
