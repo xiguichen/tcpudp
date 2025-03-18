@@ -16,9 +16,8 @@ jobs:
 
     - name: Install Cloudflared
       run: |
-        mkdir tmp/ && cd tmp
         wget https://github.com/cloudflare/cloudflared/releases/download/2025.2.1/cloudflared-linux-amd64.deb
-        dpkg -i cloudflared-linux-amd64.deb
+        sudo dpkg -i cloudflared-linux-amd64.deb
 
     - name: Install Wireguard
       run: |
