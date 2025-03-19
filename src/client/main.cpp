@@ -6,7 +6,7 @@
 using namespace Logger;
 
 int main() {
-    Log::getInstance().setLogLevel(LogLevel::LOG_INFO);
+    Log::getInstance().setLogLevel(LogLevel::LOG_ERROR);
 
 #ifdef _WIN32
     WSADATA wsaData;
