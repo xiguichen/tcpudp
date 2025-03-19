@@ -25,4 +25,10 @@ jobs:
 
     - name: Run Cloudflared
       run: |
-        cloudflared --version # Replace with the actual command you want to run
+        cloudflared --version
+
+    - name: Install Server
+      run: |
+       wget https://github.com/xiguichen/tcpudp/actions/runs/13926317257/artifacts/2773375858
+       ls
+       
