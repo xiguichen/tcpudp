@@ -13,6 +13,7 @@
 #include "TcpQueueToUdpThreadPool.h"
 #include <Socket.h>
 #include <Log.h>
+using namespace Logger;
 
 SocketManager::SocketManager() : serverSocket(-1) {}
 
