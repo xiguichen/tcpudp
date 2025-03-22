@@ -12,10 +12,13 @@
 #include "UdpQueueToTcpThreadPool.h"
 #include "TcpQueueToUdpThreadPool.h"
 #include <Socket.h>
+#include <Log.h>
 
 SocketManager::SocketManager() : serverSocket(-1) {}
 
 SocketManager::~SocketManager() {
+
+    Log::getInstance().info("Cleaning up resources");
     for (auto& thread : threads) {
         if (thread.joinable()) {
             thread.join();
@@ -77,8 +80,6 @@ void SocketManager::acceptConnection() {
     // Start threads for handling TCP and UDP data
     startTcpToQueueThread(clientSocket);
     startUdpToQueueThread(udpSocket);
-    startTcpQueueToUdpThreadPool();
-    startUdpQueueToTcpThreadPool();
 }
 
 

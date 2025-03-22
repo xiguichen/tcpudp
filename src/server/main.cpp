@@ -9,6 +9,8 @@ int main(int argc, char* argv[]) {
     socketManager.createSocket();
     socketManager.bindToPort(6001);
     socketManager.listenForConnections();
+    socketManager.startTcpQueueToUdpThreadPool();
+    socketManager.startUdpQueueToTcpThreadPool();
     while (true) {
         socketManager.acceptConnection();
     }
