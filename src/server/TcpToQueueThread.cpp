@@ -12,6 +12,7 @@
 #include <format>
 #include <iostream>
 #include <vector>
+#include <cstring>
 
 using namespace Logger;
 
