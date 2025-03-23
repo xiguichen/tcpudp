@@ -31,3 +31,6 @@ int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr,
 
 // Socket Close
 int SocketClose(SocketFd socketFd);
+
+// Socket Select
+int SocketSelect(SocketFd socketFd, int timeoutSec);

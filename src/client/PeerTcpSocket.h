@@ -10,6 +10,7 @@ public:
     PeerTcpSocket(const std::string& address, int port);
     void connect(const std::string& address, int port);
     void send(const std::vector<char>& data);
+    void sendHandshake();
     std::vector<char> receive();
     ~PeerTcpSocket();
 

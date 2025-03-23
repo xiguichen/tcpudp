@@ -72,3 +72,15 @@ int SocketClose(SocketFd socketFd) {
 #endif
 }
 
+int SocketSelect(SocketFd socketFd, int timeoutSec) {
+  fd_set readfds;
+  FD_ZERO(&readfds);
+  FD_SET(socketFd, &readfds);
+
+  struct timeval timeout;
+  timeout.tv_sec = timeoutSec;
+  timeout.tv_usec = 0;
+
+  return select(socketFd + 1, &readfds, NULL, NULL, &timeout);
+}
+

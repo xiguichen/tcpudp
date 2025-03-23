@@ -80,3 +80,8 @@ std::vector<char> PeerTcpSocket::receive() {
 }
 PeerTcpSocket::~PeerTcpSocket() { SocketClose(socketFd); }
 
+void PeerTcpSocket::sendHandshake() 
+{
+    SendTcpData(socketFd, "0.0.1", 5, 0);
+}
+

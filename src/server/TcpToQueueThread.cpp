@@ -16,8 +16,20 @@
 using namespace Logger;
 
 void TcpToQueueThread::run() {
+  char buffer[65535];
+  int result = SocketSelect(socket_, 2);
+  if(result <= 0) {
+    Log::getInstance().error("Socket select failed");
+    return;
+  }
+  result = RecvTcpData(socket_, buffer, 5, 0);
+  if(memcpy(buffer, "0.0.1", 5) != 0) {
+    Log::getInstance().error("Invalid protocol version");
+    SocketClose(socket_);
+    return;
+  }
+
   while (true) {
-    char buffer[65535];
     ssize_t bytesRead = readFromSocket(buffer, sizeof(buffer));
     if (bytesRead > 0) {
       enqueueData(buffer, bytesRead);
