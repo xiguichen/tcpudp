@@ -21,10 +21,11 @@ void TcpToQueueThread::run() {
   int result = SocketSelect(socket_, 2);
   if(result <= 0) {
     Log::getInstance().error("Socket select failed");
+    SocketClose(socket_);
     return;
   }
   result = RecvTcpData(socket_, buffer, 5, 0);
-  if(memcpy(buffer, "0.0.1", 5) != 0) {
+  if(memcmp(buffer, "0.0.1", 5) != 0) {
     Log::getInstance().error("Invalid protocol version");
     SocketClose(socket_);
     return;

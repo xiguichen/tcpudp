@@ -67,6 +67,7 @@ void SocketManager::localHostWriteTask(bool& running) {
 
 void SocketManager::peerHostReadTask(bool& running) {
     try {
+        peerTcpSocket.sendHandshake();
         while (running) {
             std::vector<char> data = peerTcpSocket.receive();
             if(data.size())
