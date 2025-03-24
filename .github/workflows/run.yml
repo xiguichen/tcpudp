@@ -37,4 +37,9 @@ jobs:
        ls
        tar xvf tcpudp-ubuntu-latest.tar.gz
        ls -R tcpudp-ubuntu-latest
-       
+    - name: Run Server
+      run: |
+        nohup tcpudp-ubuntu-latest/server &
+    - name: Run Cloudflared
+      run: |
+        cloudflared tunnel --url tcp://localhost:6001
