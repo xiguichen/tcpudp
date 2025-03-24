@@ -39,6 +39,7 @@ jobs:
       with:
         name: tcpudp-${{ matrix.os }}
         path: build/bin/**/*
+        retention-days: 1
   publish:
     needs: [build]
     runs-on: ubuntu-latest
@@ -78,6 +79,7 @@ jobs:
       # `sha256sum` outputs <sha> <path>, so we cd into each dir to drop the
       # containing folder from the output.
       - run: |
+          ls
           for i in tcpudp-*; do
               (
                   cd $i || exit
