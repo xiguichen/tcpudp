@@ -32,12 +32,3 @@ jobs:
 
     - name: Build
       run: cd build; ninja
-
-    - name: Archive CMake binaries
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.os }}-cmake-binaries
-        path: build/bin/**/*
-        retention-days: 1
-
