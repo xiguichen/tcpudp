@@ -89,7 +89,7 @@ jobs:
           cat $GITHUB_WORKSPACE/shasum.txt
       - name: Publish release
         env:
-          TCPUDP_VERSION: env.TAG_NAME
+          TCPUDP_VERSION: ${{env.TAG_NAME}}
           DEBUG: api
         run: |
           envsubst < "$GITHUB_WORKSPACE/.github/workflows/notes.md" > "$RUNNER_TEMP/notes.md"
