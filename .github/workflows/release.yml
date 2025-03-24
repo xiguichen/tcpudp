@@ -37,7 +37,7 @@ jobs:
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.os }}-cmake-binaries
+        name: tcpudp-${{ matrix.os }}
         path: build/bin/**/*
   publish:
     needs: [build]
