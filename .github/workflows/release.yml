@@ -86,6 +86,7 @@ jobs:
                   sha256sum * >> $GITHUB_WORKSPACE/shasum.txt
               )
           done
+          cat $GITHUB_WORKSPACE/shasum.txt
       - name: Publish release
         env:
           TCPUDP_VERSION: env.TAG_NAME
