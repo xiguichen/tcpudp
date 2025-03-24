@@ -26,11 +26,13 @@ jobs:
     - name: Install Wireguard
       run: |
         sudo apt-get install -y wireguard
-
-    - name: Run Cloudflared
+    - name: Configure Wireguard
       run: |
-        cloudflared --version
-
+        echo "${{ secrets.WIREGUARD_CONFIG }}" | sudo tee /etc/wireguard/wg0.conf
+      shell: bash
+    - name: Start Wireguard
+      run: |
+          sudo wg-quick up wg0
     - name: Install Server
       run: |
        wget https://github.com/xiguichen/tcpudp/releases/download/nightly/tcpudp-ubuntu-latest.tar.gz
