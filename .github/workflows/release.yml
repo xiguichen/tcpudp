@@ -97,6 +97,6 @@ jobs:
           cat shasum.txt >> "$RUNNER_TEMP/notes.md"
           echo '```' >> "$RUNNER_TEMP/notes.md"
           if [ "$TAG_NAME" != "nightly" ]; then
-            gh release create stable $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-*.tar.gz  shasum.txt
+            gh release create stable $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-macos-latest.tar.gz tcpudp-ubuntu-latest.tar.gz  shasum.txt
           fi
-          gh release create $TAG_NAME $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-*.tar.gz  shasum.txt
+          gh release create $TAG_NAME $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-macos-latest.tar.gz tcpudp-ubuntu-latest.tar.gz  shasum.txt
