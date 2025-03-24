@@ -82,8 +82,8 @@ jobs:
           ls
           for i in tcpudp-*; do
               (
-                  cd $i || exit
-                  sha256sum * >> $GITHUB_WORKSPACE/shasum.txt
+                  tar cvzf $i.tar.gz $i
+                  sha256sum $i.tar.gz >> $GITHUB_WORKSPACE/shasum.txt
               )
           done
           cat $GITHUB_WORKSPACE/shasum.txt
@@ -97,6 +97,6 @@ jobs:
           cat shasum.txt >> "$RUNNER_TEMP/notes.md"
           echo '```' >> "$RUNNER_TEMP/notes.md"
           if [ "$TAG_NAME" != "nightly" ]; then
-            gh release create stable $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-macos-latest/*  tcpudp-ubuntu-latest/*  shasum.txt
+            gh release create stable $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-*.tar.gz  shasum.txt
           fi
-          gh release create $TAG_NAME $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-macos-latest/*  tcpudp-ubuntu-latest/*  shasum.txt
+          gh release create $TAG_NAME $PRERELEASE --notes-file "$RUNNER_TEMP/notes.md" --title "$SUBJECT" --target $GITHUB_SHA tcpudp-*.tar.gz  shasum.txt
