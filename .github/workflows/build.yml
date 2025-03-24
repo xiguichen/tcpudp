@@ -39,3 +39,5 @@ jobs:
       with:
         name: ${{ matrix.os }}-cmake-binaries
         path: build/bin/**/*
+        retention-days: 1
+
