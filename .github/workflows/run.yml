@@ -39,6 +39,7 @@ jobs:
        ls
        tar xvf tcpudp-ubuntu-latest.tar.gz
        ls -R tcpudp-ubuntu-latest
+       chmod +x tcpudp-ubuntu-latest/server
     - name: Run Server
       run: |
         nohup tcpudp-ubuntu-latest/server &
