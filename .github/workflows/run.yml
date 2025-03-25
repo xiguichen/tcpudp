@@ -33,6 +33,9 @@ jobs:
     - name: Start Wireguard
       run: |
           sudo wg-quick up wg0
+          sudo apt-get update
+          sudo apt-get install -y net-tools
+
     - name: Install Server
       run: |
        wget https://github.com/xiguichen/tcpudp/releases/download/nightly/tcpudp-ubuntu-latest.tar.gz
