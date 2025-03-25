@@ -32,6 +32,7 @@ jobs:
       shell: bash
     - name: Start Wireguard
       run: |
+          sudo sysctl -w net.ipv4.ip_forward=1
           sudo wg-quick up wg0
           ifconfig
 
@@ -44,8 +45,6 @@ jobs:
     - name: Run Server
       run: |
         nohup tcpudp-ubuntu-latest/server &
-        sleep 5
-        ps -ef | grep server
     - name: Run Cloudflared
       run: |
         cloudflared tunnel --url tcp://localhost:6001
