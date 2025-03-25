@@ -33,15 +33,13 @@ jobs:
     - name: Start Wireguard
       run: |
           sudo wg-quick up wg0
-          sudo apt-get update
-          sudo apt-get install -y net-tools
+          ifconfig
 
     - name: Install Server
       run: |
        wget https://github.com/xiguichen/tcpudp/releases/download/nightly/tcpudp-ubuntu-latest.tar.gz
        ls
        tar xvf tcpudp-ubuntu-latest.tar.gz
-       ls -R tcpudp-ubuntu-latest
        chmod +x tcpudp-ubuntu-latest/server
     - name: Run Server
       run: |
