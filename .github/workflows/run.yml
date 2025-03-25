@@ -35,6 +35,8 @@ jobs:
           sudo sysctl -w net.ipv4.ip_forward=1
           sudo wg-quick up wg0
           ifconfig
+          sysctl net.ipv4.ip_forward
+          iptables -t nat -L
 
     - name: Install Server
       run: |
