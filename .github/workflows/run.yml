@@ -48,7 +48,7 @@ jobs:
       run: |
         cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
         sleep 10
-        cat cloudflare.log
+        cat cloudflare.log | grep trycloudflare.com
 
     - name: Run Server
       run: |
