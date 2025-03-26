@@ -13,10 +13,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
+    - name: Setup Git
+      run: |
+        git config --global user.name "GitHub Actions Bot"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git checkout run
 
     - name: Install Cloudflared
       run: |
@@ -48,7 +54,14 @@ jobs:
       run: |
         cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
         sleep 10
-        cat cloudflare.log | grep trycloudflare.com
+        cat cloudflare.log | grep https.*trycloudflare.com -o > ${{ github.workspace }}/cloudflare.txt
+    - name: Commit Change
+      working-directory: ${{ github.workspace }}
+      run: |
+          git add .
+          git commit -m "Auto-update"
+          git push origin run
+     
 
     - name: Run Server
       run: |
