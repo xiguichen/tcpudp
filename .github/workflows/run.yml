@@ -18,11 +18,13 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
+      with:
+        ref: run
+
     - name: Setup Git
       run: |
         git config --global user.name "GitHub Actions Bot"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git checkout run
 
     - name: Install Cloudflared
       run: |
