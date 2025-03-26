@@ -33,8 +33,8 @@ jobs:
       run: |
         wget https://github.com/cloudflare/cloudflared/releases/download/2025.2.1/cloudflared-linux-amd64.deb
         sudo dpkg -i cloudflared-linux-amd64.deb
-        sysctl -w net.core.rmem_max=7500000
-        sysctl -w net.core.wmem_max=7500000
+        sudo sysctl -w net.core.rmem_max=7500000
+        sudo sysctl -w net.core.wmem_max=7500000
     - name: Install Wireguard
       run: |
         sudo apt-get install -y wireguard
@@ -58,7 +58,7 @@ jobs:
        chmod +x tcpudp-ubuntu-latest/server
     - name: Run Cloudflared
       run: |
-        cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
+        sudo cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
         until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
         echo -n "cloudflared access tcp --url tcp://localhost:6001 --hostname " > ${{ github.workspace }}/cloudflare.sh
         cat cloudflare.log | grep https.*trycloudflare.com -o >> ${{ github.workspace }}/cloudflare.sh
