@@ -9,7 +9,7 @@ on:
         default: nightly
   push:
     branches:
-      - run
+      - trigger
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -58,7 +58,7 @@ jobs:
     - name: Commit Change
       working-directory: ${{ github.workspace }}
       run: |
-          git add .
+          git add cloudflare.txt
           git commit -m "Auto-update"
           git push origin run
      
