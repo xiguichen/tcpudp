@@ -46,10 +46,9 @@ jobs:
        chmod +x tcpudp-ubuntu-latest/server
     - name: Run Cloudflared
       run: |
-        cloudflared tunnel --url tcp://localhost:6001 2>&1 > cloudflared1.txt &
+        cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log
         sleep 10
-        cat cloudflared1.txt | grep "https://.*.trycloudflare.com" | sed 's/.*\(https:\/\/.*.trycloudflare.com\).*/\1/' > cloudflared2.txt
-        cat cloudflared2.txt
+        cat cloudflare.log
 
     - name: Run Server
       run: |
