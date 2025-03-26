@@ -9,7 +9,10 @@ on:
         default: nightly
   push:
     branches:
-      - trigger
+      - run
+    paths:
+      - trigger/*
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -56,11 +59,14 @@ jobs:
       run: |
         cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
         sleep 10
-        cat cloudflare.log | grep https.*trycloudflare.com -o > ${{ github.workspace }}/cloudflare.txt
+        echo -n "cloudflared access tcp --url tcp://localhost:6001 --hostname " > ${{ github.workspace }}/cloudflare.sh
+        cat cloudflare.log | grep https.*trycloudflare.com -o >> ${{ github.workspace }}/cloudflare.txt
+        cp ${{ github.workspace }}/cloudflare.sh ${{ github.workspace }}/cloudflare.bat
+        chmod +x ${{ github.workspace }}/cloudflare.sh
     - name: Commit Change
       working-directory: ${{ github.workspace }}
       run: |
-          git add cloudflare.txt
+          git add cloudflare.sh cloudflare.bat
           git commit -m "Auto-update"
           git push origin run
      
