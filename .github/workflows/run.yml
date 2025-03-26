@@ -58,7 +58,7 @@ jobs:
     - name: Run Cloudflared
       run: |
         cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
-        sleep 10
+        until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
         echo -n "cloudflared access tcp --url tcp://localhost:6001 --hostname " > ${{ github.workspace }}/cloudflare.sh
         cat cloudflare.log | grep https.*trycloudflare.com -o >> ${{ github.workspace }}/cloudflare.sh
         cp ${{ github.workspace }}/cloudflare.sh ${{ github.workspace }}/cloudflare.bat
