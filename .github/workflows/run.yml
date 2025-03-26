@@ -46,7 +46,7 @@ jobs:
        chmod +x tcpudp-ubuntu-latest/server
     - name: Run Cloudflared
       run: |
-        cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log
+        cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
         sleep 10
         cat cloudflare.log
 
