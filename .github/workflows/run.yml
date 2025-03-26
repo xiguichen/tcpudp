@@ -60,7 +60,7 @@ jobs:
         cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
         sleep 10
         echo -n "cloudflared access tcp --url tcp://localhost:6001 --hostname " > ${{ github.workspace }}/cloudflare.sh
-        cat cloudflare.log | grep https.*trycloudflare.com -o >> ${{ github.workspace }}/cloudflare.txt
+        cat cloudflare.log | grep https.*trycloudflare.com -o >> ${{ github.workspace }}/cloudflare.sh
         cp ${{ github.workspace }}/cloudflare.sh ${{ github.workspace }}/cloudflare.bat
         chmod +x ${{ github.workspace }}/cloudflare.sh
     - name: Commit Change
