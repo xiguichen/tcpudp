@@ -25,7 +25,6 @@ int main() {
         Log::getInstance().info("Starting Client");
         Client client("config.json");
         client.configure();
-        Sleep(1000);
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     #ifdef _WIN32
