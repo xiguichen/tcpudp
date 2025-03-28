@@ -12,10 +12,12 @@ public:
     void send(const std::vector<char>& data);
     std::vector<char> receive();
     ~LocalUdpSocket();
+    void close();
 
   private:
     SocketFd socketFd;
     struct sockaddr_in localAddress;
+    bool bClosed = false;
 };
 
 #endif // LOCALUDPSOCKET_H

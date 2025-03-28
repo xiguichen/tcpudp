@@ -78,6 +78,9 @@ void SocketManager::peerHostReadTask(bool& running) {
             {
                 Log::getInstance().error("SocketManager: Empty data received.");
                 running = false;
+                this->udpToTcpQueue.cancel();
+                this->tcpToUdpQueue.cancel();
+                this->localUdpSocket.close();
             }
         }
     } catch (const std::exception& e) {

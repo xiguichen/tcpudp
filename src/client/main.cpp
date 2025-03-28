@@ -22,6 +22,7 @@ int main() {
         Log::getInstance().info("Starting Client");
         Client client("config.json");
         client.configure();
+        Sleep(1000);
     }
     #ifdef _WIN32
         WSACleanup();

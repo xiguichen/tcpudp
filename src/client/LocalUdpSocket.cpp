@@ -98,5 +98,11 @@ std::vector<char> LocalUdpSocket::receive() {
 
   return buffer;
 }
-LocalUdpSocket::~LocalUdpSocket() { SocketClose(socketFd); }
+LocalUdpSocket::~LocalUdpSocket() { if(!bClosed) SocketClose(socketFd); }
+
+void LocalUdpSocket::close() {
+  if (!bClosed) {
+    SocketClose(socketFd);
+  }
+}
 

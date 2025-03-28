@@ -10,11 +10,13 @@ class TcpToUdpQueue {
 public:
     void enqueue(const std::vector<char>& data);
     std::vector<char> dequeue();
+    void cancel();
 
-private:
+  private:
     std::queue<std::vector<char>> queue;
     std::mutex mtx;
     std::condition_variable cv;
+    bool shouldCancel = false;
 };
 
 #endif // TCPTOTCPQUEUE_H
