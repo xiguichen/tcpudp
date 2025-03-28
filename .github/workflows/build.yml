@@ -31,9 +31,16 @@ jobs:
       if: runner.os != 'Windows'
       run: mkdir build; cd build; cmake -G Ninja -S ../src
 
+    - name: Set up MSBuild
+      if: runner.os == 'Windows'
+      uses: microsoft/setup-msbuild@v1.0.2
+
     - name: Configure CMake (Windows)
       if: runner.os == 'Windows'
-      run: mkdir build; cd build; cmake -G "Ninja" -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -S ../src
+      run: |
+        mkdir build
+        cd build
+        cmake -G "Ninja" -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe -S ../src
 
     - name: Build
       run: cd build; ninja

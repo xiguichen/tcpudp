@@ -15,7 +15,6 @@ private:
     int peerTcpPort;
     std::string peerAddress;
     std::shared_ptr<SocketManager> socketManager;
-
     void loadConfig(const std::string& configFile);
 };
 
