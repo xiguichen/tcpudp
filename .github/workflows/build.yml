@@ -37,18 +37,15 @@ jobs:
       if: runner.os == 'Windows'
       uses: microsoft/setup-msbuild@v1.0.2
 
-    - name: Find Visual Studio installation path
+    - name: Configure Visual Studio
       if: runner.os == 'Windows'
-      run: |
-        $vsInstallPath = &"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-        echo "##[set-output name=vsInstallPath;$vsInstallPath]"
-
+      uses: egor-tensin/vs-shell@v2
+      
     - name: Configure CMake (Windows)
       if: runner.os == 'Windows'
       run: |
         mkdir build
         cd build
-        ${{ steps.vsInstallPath.outputs.vsInstallPath }}\VC\Auxiliary\Build\vcvarsall.bat x64
         cmake -G "Ninja" -S ../src
 
     - name: Build
