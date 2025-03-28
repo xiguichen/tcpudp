@@ -33,10 +33,6 @@ jobs:
       if: runner.os != 'Windows'
       run: mkdir build; cd build; cmake -G Ninja -S ../src
 
-    - name: Set up MSBuild
-      if: runner.os == 'Windows'
-      uses: microsoft/setup-msbuild@v1.0.2
-
     - name: Configure Visual Studio
       if: runner.os == 'Windows'
       uses: egor-tensin/vs-shell@v2
