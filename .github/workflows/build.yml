@@ -27,8 +27,13 @@ jobs:
     - name: Set up CMake
       uses: lukka/get-cmake@v4.0.0-rc3
 
-    - name: Configure CMake
-      run: mkdir build; cd build; cmake -G Ninja -S ../src 
+    - name: Configure CMake (Linux and macOS)
+      if: runner.os != 'Windows'
+      run: mkdir build; cd build; cmake -G Ninja -S ../src
+
+    - name: Configure CMake (Windows)
+      if: runner.os == 'Windows'
+      run: mkdir build; cd build; cmake -G "Ninja" -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -S ../src
 
     - name: Build
       run: cd build; ninja
