@@ -3,6 +3,9 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #endif
+#include <chrono>
+#include <thread>
+
 using namespace Logger;
 
 int main() {
@@ -23,6 +26,7 @@ int main() {
         Client client("config.json");
         client.configure();
         Sleep(1000);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     #ifdef _WIN32
         WSACleanup();
