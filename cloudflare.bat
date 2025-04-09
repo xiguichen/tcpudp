@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:6001 --hostname https://maiden-journals-eco-salvation.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:6001 --hostname https://wage-important-yield-apnic.trycloudflare.com
