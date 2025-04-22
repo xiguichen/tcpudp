@@ -101,3 +101,27 @@ void SocketLogLastError()
 #endif
 }
 
+ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int bytesToRead)
+{
+    char *bufPtr = static_cast<char *>(buffer);
+    ssize_t totalBytesRead = 0;
+
+    while (totalBytesRead < bytesToRead) {
+        ssize_t bytesRead = recv(socketFd, bufPtr + totalBytesRead, bytesToRead - totalBytesRead, flags);
+
+        if (bytesRead < 0) {
+            // An error occurred, log the error and return
+            SocketLogLastError();
+            return -1;
+        } else if (bytesRead == 0) {
+            // The connection was closed by the peer
+            Log::getInstance().info("RecvTcpDataWithSize: connection closed by peer");
+            return totalBytesRead;
+        }
+
+        totalBytesRead += bytesRead;
+    }
+
+    Log::getInstance().info(std::format("RecvTcpDataWithSize: successfully received {} bytes of data", totalBytesRead));
+    return totalBytesRead;
+}

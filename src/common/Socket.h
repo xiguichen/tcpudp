@@ -23,6 +23,9 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flag
                     struct sockaddr *srcAddr, socklen_t *srcAddrLen);
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flags);
 
+ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize,
+                            int flags, int bytesToRead);
+
 int SocketListen(SocketFd socketFd, int backlog);
 
 // Socket Connect
