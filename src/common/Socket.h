@@ -34,3 +34,6 @@ int SocketClose(SocketFd socketFd);
 
 // Socket Select
 int SocketSelect(SocketFd socketFd, int timeoutSec);
+
+// Socket Log Last Error
+void SocketLogLastError();

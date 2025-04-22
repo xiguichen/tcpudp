@@ -52,6 +52,7 @@ size_t TcpToQueueThread::readFromSocket(char *buffer, size_t bufferSize) {
       SocketClose(socket_);
     } else if (lengthBytesRead == -1) {
       Log::getInstance().error("Connection closed by peer. Length not correct. Length=-1");
+      SocketLogLastError();
       SocketClose(socket_);
     }
     else 

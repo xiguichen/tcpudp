@@ -3,6 +3,8 @@
 #include <format>
 #ifndef _WIN32
 #include <unistd.h>
+#include <cstring> // For strerror
+#include <errno.h> // For errno
 #endif
 
 using namespace Logger;
@@ -82,5 +84,20 @@ int SocketSelect(SocketFd socketFd, int timeoutSec) {
   timeout.tv_usec = 0;
 
   return select(socketFd + 1, &readfds, NULL, NULL, &timeout);
+}
+
+void SocketLogLastError()
+{
+
+#ifdef _WIN32
+  int lastError = WSAGetLastError();
+  Log::getInstance().error(std::format("Socket error: {}", lastError));
+#else
+  // Linux/macOS error handling for log errorCode
+  //
+  int lastError = errno;
+  Log::getInstance().error(std::format("Socket error: {} - {}", lastError, strerror(lastError)));
+
+#endif
 }
 
