@@ -45,7 +45,7 @@ std::vector<char> PeerTcpSocket::receive() {
 
   DataHeader header;
   ssize_t lengthBytesReceived =
-      RecvTcpData(socketFd, &header, HEADER_SIZE, 0);
+      RecvTcpDataWithSize(socketFd, &header, HEADER_SIZE, 0, HEADER_SIZE);
   if (lengthBytesReceived != HEADER_SIZE) {
     Log::getInstance().error(
         std::format("TCP -> Queue: Data Header Receive Failed."));
