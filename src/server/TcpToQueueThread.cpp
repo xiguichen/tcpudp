@@ -43,7 +43,7 @@ void TcpToQueueThread::run() {
 
 size_t TcpToQueueThread::readFromSocket(char *buffer, size_t bufferSize) {
 
-  DataHeader header;
+  UvtHeader header;
 
   ssize_t lengthBytesRead = RecvTcpDataWithSize(socket_, &header, HEADER_SIZE, 0, HEADER_SIZE);
   if (lengthBytesRead != HEADER_SIZE) {

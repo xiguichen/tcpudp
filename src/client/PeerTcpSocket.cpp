@@ -27,7 +27,7 @@ void PeerTcpSocket::connect(const std::string &address, int port) {
 void PeerTcpSocket::send(const std::vector<char> &data) {
   // send the data length first
 
-  DataHeader header;
+  UvtHeader header;
   header.size = htons(data.size());
   header.id = sendId++;
   header.checksum = xor_checksum((uint8_t*)data.data(), data.size());
@@ -43,7 +43,7 @@ void PeerTcpSocket::send(const std::vector<char> &data) {
 
 std::vector<char> PeerTcpSocket::receive() {
 
-  DataHeader header;
+  UvtHeader header;
   ssize_t lengthBytesReceived =
       RecvTcpDataWithSize(socketFd, &header, HEADER_SIZE, 0, HEADER_SIZE);
   if (lengthBytesReceived != HEADER_SIZE) {

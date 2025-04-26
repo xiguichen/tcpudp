@@ -44,7 +44,7 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
 void UdpQueueToTcpThreadPool::sendDataViaTcp(
     int tcpSocket, const std::shared_ptr<std::vector<char>> &data) {
     if (tcpSocket != -1) {
-        DataHeader header;
+        UvtHeader header;
         header.size = htons(data->size());
         header.id = sendId++;
         header.checksum = xor_checksum((uint8_t*)data->data(), data->size());
