@@ -36,13 +36,10 @@ void TcpToQueueThread::run() {
 
   while (true) {
 
-    Log::getInstance().info("loop enter");
-
     result = RecvTcpData(socket_, buffer, bufferSize, 0);
     if (result == 0 || result == -1) {
       Log::getInstance().error(
           std::format("Failed to recv tcp data with return code: {}", result));
-      Log::getInstance().info("loop break");
       break;
     }
 
@@ -54,8 +51,6 @@ void TcpToQueueThread::run() {
         enqueueData(decodedData.data(), decodedData.size());
       }
     } while (decodedData.size() && remainingData.size());
-
-    Log::getInstance().info("loop exit");
   }
 }
 
