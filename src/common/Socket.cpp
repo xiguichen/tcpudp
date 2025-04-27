@@ -49,6 +49,7 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize,
 
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize,
                     int flags) {
+    Log::getInstance().info("RecvTcpData: Enter");
 #if defined(_WIN32)
     ssize_t length =  recv(socketFd, (char *)buffer, bufferSize, flags);
 #else
