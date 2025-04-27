@@ -44,19 +44,10 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
 void UdpQueueToTcpThreadPool::sendDataViaTcp(
     int tcpSocket, const std::shared_ptr<std::vector<char>> &data) {
     if (tcpSocket != -1) {
-        UvtHeader header;
-        header.size = htons(data->size());
-        header.id = sendId++;
-        header.checksum = xor_checksum((uint8_t*)data->data(), data->size());
-        Log::getInstance().info(
-                std::format("Queue -> TCP: Data ID {} , Data Length: {}, Data Checksum: {}",
-                    header.id, data->size(), header.checksum));
 
-        std::vector<char> newData(HEADER_SIZE + data->size());
-        int newLength = HEADER_SIZE + data->size();
-        memcpy(newData.data(), &header, HEADER_SIZE);
-        memcpy(newData.data() + HEADER_SIZE, data->data(), data->size());
-        SendTcpData(tcpSocket, newData.data(), newLength, 0);
+        std::vector<char> newData;
+        UvtUtils::AppendUdpData(*data, sendId, newData);
+        SendTcpData(tcpSocket, newData.data(), newData.size(), 0);
 
     } else {
         Log::getInstance().error("Queue -> TCP: Invalid socket");

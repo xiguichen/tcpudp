@@ -44,4 +44,21 @@ public:
     std::memcpy(outputBuffer.data() + currentSize, &header, HEADER_SIZE);
     std::memcpy(outputBuffer.data() + currentSize + HEADER_SIZE, data.data(), length);
   }
+
+  static void AppendUdpData(const std::vector<char> &data, uint8_t id,
+                            std::vector<char> &outputBuffer) {
+    size_t length = data.size();
+
+    UvtHeader header;
+
+    header.size = static_cast<uint16_t>(length);
+    header.id = id;
+    header.checksum = calculateChecksum(reinterpret_cast<const uint8_t *>(data.data()), length);
+
+    size_t currentSize = outputBuffer.size();
+    outputBuffer.resize(currentSize + HEADER_SIZE + length);
+    std::memcpy(outputBuffer.data() + currentSize, &header, HEADER_SIZE);
+    std::memcpy(outputBuffer.data() + currentSize + HEADER_SIZE, data.data(), length);
+
+  }
 };
