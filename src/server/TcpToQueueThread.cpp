@@ -9,91 +9,49 @@
 #include <unistd.h>
 
 #endif
-#include <format>
-#include <iostream>
-#include <vector>
 #include <cstring>
+#include <format>
+#include <vector>
 
 using namespace Logger;
 
 void TcpToQueueThread::run() {
-  char buffer[65535];
+  const int bufferSize = 65535;
+  char buffer[bufferSize];
   int result = SocketSelect(socket_, 2);
-  if(result <= 0) {
+  if (result <= 0) {
     Log::getInstance().error("Socket select failed");
     SocketClose(socket_);
     return;
   }
   result = RecvTcpData(socket_, buffer, 5, 0);
-  if(memcmp(buffer, "0.0.1", 5) != 0) {
+  if (memcmp(buffer, "0.0.1", 5) != 0) {
     Log::getInstance().error("Invalid protocol version");
     SocketClose(socket_);
     return;
   }
 
+  std::vector<char> remainingData;
+  std::vector<char> decodedData;
+
   while (true) {
-    ssize_t bytesRead = readFromSocket(buffer, sizeof(buffer));
-    if (bytesRead > 0) {
-      enqueueData(buffer, bytesRead);
-    } else {
+
+    result = RecvTcpData(socket_, buffer, bufferSize, 0);
+    if (result == 0 || result == -1) {
+      Log::getInstance().error(
+          std::format("Failed to recv tcp data with return code: {}", result));
       break;
     }
+
+    remainingData.insert(remainingData.end(), buffer, buffer + result);
+
+    do {
+      remainingData = UvtUtils::ExtractUdpData(remainingData, decodedData);
+      if (decodedData.size()) {
+        enqueueData(decodedData.data(), decodedData.size());
+      }
+    } while (decodedData.size() && remainingData.size());
   }
-}
-
-size_t TcpToQueueThread::readFromSocket(char *buffer, size_t bufferSize) {
-
-  UvtHeader header;
-
-  ssize_t lengthBytesRead = RecvTcpDataWithSize(socket_, &header, HEADER_SIZE, 0, HEADER_SIZE);
-  if (lengthBytesRead != HEADER_SIZE) {
-    if (lengthBytesRead == 0) {
-      Log::getInstance().error("Connection closed by peer. Length=0");
-      SocketClose(socket_);
-    } else if (lengthBytesRead == -1) {
-      Log::getInstance().error("Connection closed by peer. Length not correct. Length=-1");
-      SocketLogLastError();
-      SocketClose(socket_);
-    }
-    else 
-    {
-      Log::getInstance().error(std::format("Connection closed by peer. Length not correct. Length={}", lengthBytesRead));
-    }
-    return 0;
-  }
-
-  // Convert message length from network byte order to host byte order
-  uint16_t messageLength = ntohs(header.size);
-
-  Log::getInstance().info(std::format(
-      "TCP -> Queue: Data ID {} , Data Length: {}, Data Checksum: {}",
-      header.id, messageLength, header.checksum));
-
-  // Ensure the buffer is large enough
-  if (messageLength > bufferSize) {
-    std::cerr << "Buffer size is too small for the incoming message"
-              << std::endl;
-    Log::getInstance().error(
-        std::format("TCP -> Queue: Buffer size less than {}", messageLength));
-    exit(1);
-    return 0;
-  }
-
-  uint16_t total_received = 0;
-  while (total_received < messageLength) {
-    int bytes = RecvTcpData(socket_, buffer + total_received,
-                            messageLength - total_received, 0);
-    if (bytes <= 0)
-      break;
-    total_received += bytes;
-  }
-  uint8_t checksum = xor_checksum((uint8_t *)buffer, messageLength);
-  if (checksum != header.checksum) {
-    Log::getInstance().error("Tcp -> Queue: Checksum verify failed");
-    return {};
-  }
-
-  return total_received;
 }
 
 void TcpToQueueThread::enqueueData(const char *data, size_t length) {

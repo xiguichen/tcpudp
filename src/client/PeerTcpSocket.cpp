@@ -5,10 +5,10 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #endif
-#include <format>
-#include <vector>
 #include <Protocol.h>
 #include <cstring>
+#include <format>
+#include <vector>
 
 using namespace Logger;
 
@@ -26,19 +26,9 @@ void PeerTcpSocket::connect(const std::string &address, int port) {
 
 void PeerTcpSocket::send(const std::vector<char> &data) {
   // send the data length first
-
-  UvtHeader header;
-  header.size = htons(data.size());
-  header.id = sendId++;
-  header.checksum = xor_checksum((uint8_t*)data.data(), data.size());
-  uint32_t dataLength = htonl(data.size());
-  Log::getInstance().info(
-      std::format("Queue -> TCP: Data ID {} , Data Length: {}, Data Checksum: {}", header.id, data.size(), header.checksum));
-  std::vector<char> newData(HEADER_SIZE + data.size());
-  int newLength = HEADER_SIZE + data.size();
-  memcpy(newData.data(), &header, HEADER_SIZE);
-  memcpy(newData.data() + HEADER_SIZE, data.data(), data.size());
-  SendTcpData(socketFd, newData.data(), newLength, 0);
+  std::vector<char> newData;
+  UvtUtils::AppendUdpData(data, sendId, newData);
+  SendTcpData(socketFd, newData.data(), newData.size(), 0);
 }
 
 std::vector<char> PeerTcpSocket::receive() {
@@ -54,8 +44,9 @@ std::vector<char> PeerTcpSocket::receive() {
 
   // Convert message length from network byte order to host byte order
   uint16_t messageLength = ntohs(header.size);
-  Log::getInstance().info(
-      std::format("TCP -> Queue: Data ID {} , Data Length: {}, Data Checksum: {}", header.id, messageLength, header.checksum));
+  Log::getInstance().info(std::format(
+      "TCP -> Queue: Data ID {} , Data Length: {}, Data Checksum: {}",
+      header.id, messageLength, header.checksum));
 
   // Prepare a buffer to receive the actual message
   std::vector<char> buffer(messageLength);
@@ -68,20 +59,14 @@ std::vector<char> PeerTcpSocket::receive() {
       break;
     total_received += bytes;
   }
-  uint8_t checksum = xor_checksum((uint8_t*)buffer.data(), messageLength);
-  if(checksum != header.checksum)
-  {
+  uint8_t checksum = xor_checksum((uint8_t *)buffer.data(), messageLength);
+  if (checksum != header.checksum) {
     Log::getInstance().error("Tcp -> Queue: Checksum verify failed");
     return {};
   }
-  
 
   return buffer;
 }
 PeerTcpSocket::~PeerTcpSocket() { SocketClose(socketFd); }
 
-void PeerTcpSocket::sendHandshake() 
-{
-    SendTcpData(socketFd, "0.0.1", 5, 0);
-}
-
+void PeerTcpSocket::sendHandshake() { SendTcpData(socketFd, "0.0.1", 5, 0); }

@@ -3,8 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <stdexcept>
+#include "Log.h"
+#include <format>
 #include <vector>
+#include "Socket.h"
+#include <format>
+
+using namespace Logger;
 
 // Let's call the protocol as UVT (UDP Over TCP)
 
@@ -30,27 +35,12 @@ public:
     return xor_checksum(buffer, length) == checksum;
   }
 
-  static void AppendUdpData(const std::vector<uint8_t> &data, uint8_t id,
-                            std::vector<uint8_t> &outputBuffer) {
+  template <typename T>
+  static void AppendUdpData(const std::vector<T> &data, uint8_t id,
+                            std::vector<T> &outputBuffer) {
     size_t length = data.size();
 
     UvtHeader header;
-    header.size = static_cast<uint16_t>(length);
-    header.id = id;
-    header.checksum = calculateChecksum(data.data(), length);
-
-    size_t currentSize = outputBuffer.size();
-    outputBuffer.resize(currentSize + HEADER_SIZE + length);
-    std::memcpy(outputBuffer.data() + currentSize, &header, HEADER_SIZE);
-    std::memcpy(outputBuffer.data() + currentSize + HEADER_SIZE, data.data(), length);
-  }
-
-  static void AppendUdpData(const std::vector<char> &data, uint8_t id,
-                            std::vector<char> &outputBuffer) {
-    size_t length = data.size();
-
-    UvtHeader header;
-
     header.size = static_cast<uint16_t>(length);
     header.id = id;
     header.checksum = calculateChecksum(reinterpret_cast<const uint8_t *>(data.data()), length);
@@ -59,6 +49,35 @@ public:
     outputBuffer.resize(currentSize + HEADER_SIZE + length);
     std::memcpy(outputBuffer.data() + currentSize, &header, HEADER_SIZE);
     std::memcpy(outputBuffer.data() + currentSize + HEADER_SIZE, data.data(), length);
-
   }
+
+
+  //  Extract UDP data from the TCP data buffer
+  //  Returns the data that not yet extracted from the data buffer
+  template <typename T>
+  static std::vector<T> ExtractUdpData(const std::vector<T> &data, std::vector<T> &outputBuffer) {
+      if (data.size() < HEADER_SIZE) {
+          return data; // Not enough data for a header
+      }
+
+      const UvtHeader* header = reinterpret_cast<const UvtHeader*>(data.data());
+      uint16_t messageLength = header->size;
+
+      if (HEADER_SIZE + messageLength > data.size()) {
+          return data; // Not enough data for a full message
+      }
+
+
+      const uint8_t* messageData = reinterpret_cast<const uint8_t*>(data.data() + HEADER_SIZE);
+      uint8_t checksum = UvtUtils::calculateChecksum(messageData, messageLength);
+
+      if (checksum == header->checksum) {
+          outputBuffer.insert(outputBuffer.end(), messageData, messageData + messageLength);
+      } else {
+          Log::getInstance().error("ExtractUdpData: Checksum verify failed");
+      }
+
+      return std::vector<T>(data.begin() + HEADER_SIZE + messageLength, data.end());
+  }
+
 };
