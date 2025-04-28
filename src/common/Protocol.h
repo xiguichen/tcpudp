@@ -56,7 +56,12 @@ public:
   //  Returns the data that not yet extracted from the data buffer
   template <typename T>
   static std::vector<T> ExtractUdpData(const std::vector<T> &data, std::vector<T> &outputBuffer) {
+      outputBuffer.clear();
+
+      Log::getInstance().info(std::format("Data size: {}", data.size()));
+
       if (data.size() < HEADER_SIZE) {
+          Log::getInstance().info("not enough data for decode header");
           return data; // Not enough data for a header
       }
 
@@ -64,9 +69,9 @@ public:
       uint16_t messageLength = ntohs(header->size);
 
       if (HEADER_SIZE + messageLength > data.size()) {
+          Log::getInstance().info(std::format("not enough data for decode data. Expected: {}, Actual: {}", HEADER_SIZE + messageLength, data.size()));
           return data; // Not enough data for a full message
       }
-
 
       const uint8_t* messageData = reinterpret_cast<const uint8_t*>(data.data() + HEADER_SIZE);
       uint8_t checksum = UvtUtils::calculateChecksum(messageData, messageLength);
@@ -74,8 +79,11 @@ public:
       if (checksum == header->checksum) {
           outputBuffer.insert(outputBuffer.end(), messageData, messageData + messageLength);
       } else {
-          Log::getInstance().error("ExtractUdpData: Checksum verify failed");
+          throw std::logic_error("ExtractUdpData: Checksum verify failed");
+          return data;
       }
+
+
 
       return std::vector<T>(data.begin() + HEADER_SIZE + messageLength, data.end());
   }

@@ -57,5 +57,5 @@ void TcpToQueueThread::run() {
 void TcpToQueueThread::enqueueData(const char *data, size_t length) {
   auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
   TcpDataQueue::getInstance().enqueue(socket_, dataVector);
-  Log::getInstance().info("TCP -> Queue: Data enqueued.");
+  Log::getInstance().info(std::format("TCP -> Queue: Data enqueued. Length: {}", length));
 }

@@ -229,3 +229,34 @@ TEST(UvtUtilsTest, ExtractUdpDataWithoutEnoughData) {
     EXPECT_EQ(EncodedData, restData);
   });
 }
+
+TEST(UvtUtilsTest, ExtractUdpDataMultipleCall) {
+
+  std::vector<uint8_t> originalData = {0x01, 0x02, 0x03, 0x04};
+
+  std::vector<uint8_t> EncodedData;
+  EXPECT_NO_THROW({ UvtUtils::AppendUdpData(originalData, 1, EncodedData); });
+
+  std::vector<uint8_t> DecodedData;
+  std::vector<uint8_t> restData;
+  EXPECT_NO_THROW({
+    restData = UvtUtils::ExtractUdpData(EncodedData, DecodedData);
+    EXPECT_EQ(DecodedData.size(), originalData.size());
+    EXPECT_EQ(DecodedData, originalData);
+    EXPECT_EQ(restData.size(), 0); // All data should be extracted
+  });
+
+  EXPECT_EQ(originalData.size(), 4);
+
+  EncodedData.clear();
+
+  EXPECT_NO_THROW({ UvtUtils::AppendUdpData(originalData, 2, EncodedData); });
+  EXPECT_EQ(EncodedData.size(), 8 );
+  EXPECT_NO_THROW({
+    restData = UvtUtils::ExtractUdpData(EncodedData, DecodedData);
+    EXPECT_EQ(DecodedData.size(), originalData.size());
+    EXPECT_EQ(DecodedData, originalData);
+    EXPECT_EQ(restData.size(), 0); // All data should be extracted
+    EXPECT_EQ(restData, std::vector<uint8_t>{}); // All data should be extracted
+  });
+}
