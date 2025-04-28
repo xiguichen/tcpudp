@@ -29,7 +29,7 @@ TEST(UvtUtilsTest, AppendUdpData) {
 
   // Check the header
   UvtHeader *header = reinterpret_cast<UvtHeader *>(outputBuffer.data());
-  EXPECT_EQ(header->size, static_cast<uint16_t>(data.size()));
+  EXPECT_EQ(header->size, ntohs(static_cast<uint16_t>(data.size())));
   EXPECT_EQ(header->id, id);
   EXPECT_EQ(header->checksum,
             UvtUtils::calculateChecksum(data.data(), data.size()));
@@ -67,7 +67,7 @@ TEST(UvtUtilsTest, AppendUdpDataChar) {
 
   // Check the header
   UvtHeader *header = reinterpret_cast<UvtHeader *>(outputBuffer.data());
-  EXPECT_EQ(header->size, static_cast<uint16_t>(data.size()));
+  EXPECT_EQ(header->size, htons(static_cast<uint16_t>(data.size())));
   EXPECT_EQ(header->id, id);
   EXPECT_EQ(header->checksum,
             UvtUtils::calculateChecksum(
@@ -107,7 +107,7 @@ TEST(UvtUtilsTest, AppendUdpDataLargeChar) {
 
   // Check the header
   UvtHeader *header = reinterpret_cast<UvtHeader *>(outputBuffer.data());
-  EXPECT_EQ(header->size, static_cast<uint16_t>(data.size()));
+  EXPECT_EQ(header->size, htons(static_cast<uint16_t>(data.size())));
   EXPECT_EQ(header->id, id);
   EXPECT_EQ(header->checksum,
             UvtUtils::calculateChecksum(
@@ -130,7 +130,7 @@ TEST(UvtUtilsTest, AppendUdpDataMultipleCallsChar) {
 
   // Check the first header
   UvtHeader *header1 = reinterpret_cast<UvtHeader *>(outputBuffer.data());
-  EXPECT_EQ(header1->size, static_cast<uint16_t>(data1.size()));
+  EXPECT_EQ(header1->size, htons(static_cast<uint16_t>(data1.size())));
   EXPECT_EQ(header1->id, id);
   EXPECT_EQ(header1->checksum,
             UvtUtils::calculateChecksum(
@@ -139,7 +139,7 @@ TEST(UvtUtilsTest, AppendUdpDataMultipleCallsChar) {
   // Check the second header
   UvtHeader *header2 = reinterpret_cast<UvtHeader *>(
       outputBuffer.data() + HEADER_SIZE + data1.size());
-  EXPECT_EQ(header2->size, static_cast<uint16_t>(data2.size()));
+  EXPECT_EQ(header2->size, htons(static_cast<uint16_t>(data2.size())));
   EXPECT_EQ(header2->id, id);
   EXPECT_EQ(header2->checksum,
             UvtUtils::calculateChecksum(
@@ -159,7 +159,7 @@ TEST(UvtUtilsTest, AppendUdpDataLarge) {
 
   // Check the header
   UvtHeader *header = reinterpret_cast<UvtHeader *>(outputBuffer.data());
-  EXPECT_EQ(header->size, static_cast<uint16_t>(data.size()));
+  EXPECT_EQ(header->size, htons(static_cast<uint16_t>(data.size())));
   EXPECT_EQ(header->id, id);
   EXPECT_EQ(header->checksum,
             UvtUtils::calculateChecksum(data.data(), data.size()));
@@ -181,7 +181,7 @@ TEST(UvtUtilsTest, AppendUdpDataMultipleCalls) {
 
   // Check the first header
   UvtHeader *header1 = reinterpret_cast<UvtHeader *>(outputBuffer.data());
-  EXPECT_EQ(header1->size, static_cast<uint16_t>(data1.size()));
+  EXPECT_EQ(header1->size, htons(static_cast<uint16_t>(data1.size())));
   EXPECT_EQ(header1->id, id);
   EXPECT_EQ(header1->checksum,
             UvtUtils::calculateChecksum(data1.data(), data1.size()));
@@ -189,7 +189,7 @@ TEST(UvtUtilsTest, AppendUdpDataMultipleCalls) {
   // Check the second header
   UvtHeader *header2 = reinterpret_cast<UvtHeader *>(
       outputBuffer.data() + HEADER_SIZE + data1.size());
-  EXPECT_EQ(header2->size, static_cast<uint16_t>(data2.size()));
+  EXPECT_EQ(header2->size, htons(static_cast<uint16_t>(data2.size())));
   EXPECT_EQ(header2->id, id);
   EXPECT_EQ(header2->checksum,
             UvtUtils::calculateChecksum(data2.data(), data2.size()));

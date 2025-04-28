@@ -41,7 +41,7 @@ public:
     size_t length = data.size();
 
     UvtHeader header;
-    header.size = static_cast<uint16_t>(length);
+    header.size = htons(static_cast<uint16_t>(length));
     header.id = id;
     header.checksum = calculateChecksum(reinterpret_cast<const uint8_t *>(data.data()), length);
 
@@ -61,7 +61,7 @@ public:
       }
 
       const UvtHeader* header = reinterpret_cast<const UvtHeader*>(data.data());
-      uint16_t messageLength = header->size;
+      uint16_t messageLength = ntohs(header->size);
 
       if (HEADER_SIZE + messageLength > data.size()) {
           return data; // Not enough data for a full message
