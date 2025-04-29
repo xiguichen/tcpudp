@@ -8,10 +8,10 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #endif
-#include <thread>
 #include <Protocol.h>
-#include <format>
 #include <cstring>
+#include <format>
+#include <thread>
 
 using namespace Logger;
 
@@ -36,20 +36,16 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
           UdpToTcpSocketMap::getInstance().retrieveMappedTcpSocket(udpSocket);
 
       // Send data via TCP
-      sendDataViaTcp(tcpSocket, data);
+      sendDataViaTcp(tcpSocket, *data);
     }
   }
 }
 
 void UdpQueueToTcpThreadPool::sendDataViaTcp(
-    int tcpSocket, const std::shared_ptr<std::vector<char>> &data) {
-    if (tcpSocket != -1) {
-
-        std::vector<char> newData;
-        UvtUtils::AppendUdpData(*data, sendId, newData);
-        SendTcpData(tcpSocket, newData.data(), newData.size(), 0);
-
-    } else {
-        Log::getInstance().error("Queue -> TCP: Invalid socket");
-    }
+    int tcpSocket, const std::vector<char> &data) {
+  if (tcpSocket != -1) {
+    SendTcpData(tcpSocket, data.data(), data.size(), 0);
+  } else {
+    Log::getInstance().error("Queue -> TCP: Invalid socket");
+  }
 }

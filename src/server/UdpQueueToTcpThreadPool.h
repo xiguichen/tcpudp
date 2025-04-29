@@ -9,8 +9,7 @@ public:
     void run();
 private:
     void processDataConcurrently();
-    void sendDataViaTcp(int tcpSocket, const std::shared_ptr<std::vector<char>>& data);
-    uint8_t sendId = 0;
+    void sendDataViaTcp(int tcpSocket, const std::vector<char>& data);
 };
 
 #endif // UDP_QUEUE_TO_TCP_THREAD_POOL_H

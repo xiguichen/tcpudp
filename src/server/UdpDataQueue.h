@@ -27,6 +27,7 @@ private:
   std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
   std::mutex queueMutex;
   std::condition_variable cv;
+  uint8_t sendId = 0;
 };
 
 #endif // UDP_DATA_QUEUE_H
