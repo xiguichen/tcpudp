@@ -4,7 +4,7 @@
 void UdpDataQueue::enqueue(int socket, const std::shared_ptr<std::vector<char>>& data) {
     {
         std::lock_guard<std::mutex> lock(queueMutex);
-        std::shared_ptr<std::vector<char>> newData = {};
+        std::shared_ptr<std::vector<char>> newData = std::make_shared<std::vector<char>>();
         UvtUtils::AppendUdpData(*data, sendId++, *newData);
         queue.push(std::make_pair(socket, newData));
     }
