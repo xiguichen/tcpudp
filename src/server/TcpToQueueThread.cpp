@@ -41,7 +41,7 @@ void TcpToQueueThread::run() {
 
   while (true) {
 
-    Log::getInstance().info("Server -> Client (TCP Data)");
+    Log::getInstance().info("Server -> Client (Receive TCP Data)");
     result = RecvTcpData(socket_, buffer, bufferSize, 0);
     if (result == 0 || result == -1) {
       Log::getInstance().error(
