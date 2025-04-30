@@ -1,5 +1,7 @@
 #include "UdpDataQueue.h"
 #include <Protocol.h>
+#include <Log.h>
+using namespace Logger;
 
 void UdpDataQueue::enqueue(int socket,
                            const std::shared_ptr<std::vector<char>> &data) {
@@ -10,6 +12,7 @@ void UdpDataQueue::enqueue(int socket,
 
   // 1. If the buffered data size + data size great than 1400, let's send it now
   if (bufferedNewData.size() + data->size() > 1400) {
+      Log::getInstance().info("Get enough data for send");
       this->enqueueAndNotify(socket, data, bufferedNewData);
   }
   // 2. Check if we get enough time to send the data
@@ -18,10 +21,12 @@ void UdpDataQueue::enqueue(int socket,
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         currentTime - lastEmitTime);
     if (duration.count() > 100) {
+        Log::getInstance().info("Time reached for send");
         this->enqueueAndNotify(socket, data, bufferedNewData);
     }
     // We should buffer the data for next time to send
     else {
+      Log::getInstance().info("Buffer the data for send");
       UvtUtils::AppendUdpData(*data, sendId++, bufferedNewData);
     }
   }
