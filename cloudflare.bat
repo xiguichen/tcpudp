@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:6001 --hostname https://major-system-she-const.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:6001 --hostname https://classes-which-doll-prix.trycloudflare.com
