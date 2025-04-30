@@ -1,0 +1,72 @@
+# Specify the minimum version for CMake
+cmake_minimum_required(VERSION 3.16)
+
+# Project's name
+project(CommonTest)
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  # Specify the commit you depend on and update it regularly.
+  URL https://github.com/google/googletest/archive/5376968f6948923e2411081fd9372e71a59d8e77.zip
+)
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+# Specify the C++ standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+# add a macro to disable secure warnings
+add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+
+# Include directories
+include_directories("${CMAKE_SOURCE_DIR}/sdk/nlohman_json/include")
+
+# add google test include directories
+include_directories(${googletest_SOURCE_DIR}/googletest/include)
+
+# include common directory
+include_directories(${CMAKE_SOURCE_DIR}/common)
+
+# link google test libraries
+link_directories(${googletest_BINARY_DIR})
+
+# find all source files in the current directory
+file(GLOB_RECURSE SOURCES "*.cpp" "*.h")
+
+# Define the executable
+add_executable(CommonTest
+    ${SOURCES}
+)
+
+# Link the common library
+target_link_libraries(CommonTest PRIVATE
+    common
+    gtest_main
+)
+
+# Header files
+target_include_directories(CommonTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+
+# Link Windows Socket library
+if(WIN32)
+    target_link_libraries(CommonTest PRIVATE
+        ws2_32
+    )
+endif()
+
+# Precompiled header (pch.h)
+# target_precompile_headers(CommonTest PRIVATE pch.h)
+
+# Set properties for different configurations
+set_target_properties(CommonTest PROPERTIES
+    COMPILE_PDB_NAME "CommonTest"
+    COMPILE_PDB_FILE "CommonTest.pdb"
+)
+
+add_test(NAME CommonTest COMMAND CommonTest) 
+

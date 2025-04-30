@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/**
+      - .github/workflows/build.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - src/**
+      - .github/workflows/build.yml
+
+jobs:
+  build:
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up CMake
+      uses: lukka/get-cmake@v4.0.0-rc3
+
+    - name: Configure CMake (Linux and macOS)
+      if: runner.os != 'Windows'
+      run: mkdir build; cd build; cmake -G Ninja -S ../src
+
+    - name: Configure Visual Studio
+      if: runner.os == 'Windows'
+      uses: egor-tensin/vs-shell@v2
+      
+    - name: Configure CMake (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir build
+        cd build
+        cmake -G "Ninja" -S ../src
+
+    - name: Build
+      run: cd build; ninja
