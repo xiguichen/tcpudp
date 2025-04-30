@@ -8,7 +8,7 @@ void UdpDataQueue::enqueue(int socket,
 
   // Decide if we need to buffer the data for transfer or we should notify the
   // the consumer to consume the data
-  std::vector<char> bufferedNewData = bufferedNewDataMap[socket];
+  std::vector<char>& bufferedNewData = bufferedNewDataMap[socket];
 
   Log::getInstance().info(
       std::format("previous buffer size: {}", bufferedNewData.size()));
