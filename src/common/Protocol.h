@@ -58,7 +58,7 @@ public:
   static std::vector<T> ExtractUdpData(const std::vector<T> &data, std::vector<T> &outputBuffer) {
       outputBuffer.clear();
 
-      Log::getInstance().info(std::format("Data size: {}", data.size()));
+      Log::getInstance().info("Begin ExtractUdpData");
 
       if (data.size() < HEADER_SIZE) {
           Log::getInstance().info("not enough data for decode header");
@@ -67,6 +67,7 @@ public:
 
       const UvtHeader* header = reinterpret_cast<const UvtHeader*>(data.data());
       uint16_t messageLength = ntohs(header->size);
+      Log::getInstance().info(std::format("Message Id: {}, Message Length: {}", header->id, messageLength));
 
       if (HEADER_SIZE + messageLength > data.size()) {
           Log::getInstance().info(std::format("not enough data for decode data. Expected: {}, Actual: {}", HEADER_SIZE + messageLength, data.size()));
@@ -83,8 +84,7 @@ public:
           return data;
       }
 
-
-
+      Log::getInstance().info("End ExtractUdpData");
       return std::vector<T>(data.begin() + HEADER_SIZE + messageLength, data.end());
   }
 

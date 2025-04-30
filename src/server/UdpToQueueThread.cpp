@@ -27,6 +27,7 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     sockaddr_in clientAddr;
     socklen_t clientAddrLen = sizeof(clientAddr);
 
+    Log::getInstance().info("Server -> Server (UDP Data)");
     ssize_t bytesRead = RecvUdpData(socket_, buffer, bufferSize, 0, (struct sockaddr*)&clientAddr, &clientAddrLen);
     if (bytesRead > 0) {
     } else {
@@ -37,6 +38,6 @@ return bytesRead;
 
 void UdpToQueueThread::enqueueData(char* data, size_t length) {
     auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
+    Log::getInstance().info(std::format("UDP -> Queue: Data Enqueue, Length: {}", dataVector->size()));
     UdpDataQueue::getInstance().enqueue(socket_, dataVector);
-    Log::getInstance().info("UDP -> Queue: Data Enqueue");
 }

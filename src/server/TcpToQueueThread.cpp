@@ -24,6 +24,9 @@ void TcpToQueueThread::run() {
     SocketClose(socket_);
     return;
   }
+
+  Log::getInstance().info("Begin capability negotiate");
+
   result = RecvTcpData(socket_, buffer, 5, 0);
   if (memcmp(buffer, "0.0.1", 5) != 0) {
     Log::getInstance().error("Invalid protocol version");
@@ -31,11 +34,14 @@ void TcpToQueueThread::run() {
     return;
   }
 
+  Log::getInstance().info("End capability negotiate");
+
   std::vector<char> remainingData;
   std::vector<char> decodedData;
 
   while (true) {
 
+    Log::getInstance().info("Server -> Client (TCP Data)");
     result = RecvTcpData(socket_, buffer, bufferSize, 0);
     if (result == 0 || result == -1) {
       Log::getInstance().error(
@@ -57,5 +63,5 @@ void TcpToQueueThread::run() {
 void TcpToQueueThread::enqueueData(const char *data, size_t length) {
   auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
   TcpDataQueue::getInstance().enqueue(socket_, dataVector);
-  Log::getInstance().info(std::format("TCP -> Queue: Data enqueued. Length: {}", length));
+  Log::getInstance().info(std::format("TCP -> Queue: Decoded Data enqueued. Length: {}", length));
 }

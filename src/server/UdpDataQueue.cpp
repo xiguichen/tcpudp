@@ -10,6 +10,9 @@ void UdpDataQueue::enqueue(int socket,
   // the consumer to consume the data
   std::vector<char> bufferedNewData = bufferedNewDataMap[socket];
 
+  Log::getInstance().info(
+      std::format("previous buffer size: {}", bufferedNewData.size()));
+
   // 1. If the buffered data size + data size great than 1400, let's send it now
   if (bufferedNewData.size() + data->size() > 1400) {
     Log::getInstance().info("Get enough data for send");
@@ -26,8 +29,9 @@ void UdpDataQueue::enqueue(int socket,
     }
     // We should buffer the data for next time to send
     else {
-      Log::getInstance().info("Buffer the data for send");
       UvtUtils::AppendUdpData(*data, sendId++, bufferedNewData);
+      Log::getInstance().info(
+          std::format("new buffer size: {}", bufferedNewData.size()));
     }
   }
 }
@@ -47,13 +51,13 @@ void UdpDataQueue::enqueueAndNotify(
     std::vector<char> &bufferedNewData) {
   std::lock_guard<std::mutex> lock(queueMutex);
   std::shared_ptr<std::vector<char>> newData =
-      std::make_shared<std::vector<char>>(bufferedNewData.begin(),
-                                          bufferedNewData.end());
+      std::make_shared<std::vector<char>>();
+  UvtUtils::AppendUdpData(bufferedNewData, sendId++, *newData);
+  // We should clear the buffer now
+  bufferedNewData.clear();
   UvtUtils::AppendUdpData(*data, sendId++, *newData);
   queue.push(std::make_pair(socket, newData));
   // Notify one waiting thread
   cv.notify_one();
   this->lastEmitTime = std::chrono::high_resolution_clock::now();
-  // We should clear the buffer now
-  bufferedNewData.clear();
 }

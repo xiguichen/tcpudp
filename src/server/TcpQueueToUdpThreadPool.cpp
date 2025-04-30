@@ -7,6 +7,9 @@
 #include <memory>
 #include "TcpQueueToUdpThreadPool.h"
 #include <Socket.h>
+#include <Log.h>
+
+using namespace Logger;
 
 void TcpQueueToUdpThreadPool::run() {
     while (true) {
@@ -29,6 +32,8 @@ void TcpQueueToUdpThreadPool::sendDataViaUdp(int socket, std::shared_ptr<std::ve
     udpAddr.sin_family = AF_INET;
     udpAddr.sin_port = htons(Configuration::getInstance()->getPortNumber());
     inet_pton(AF_INET, Configuration::getInstance()->getSocketAddress().c_str(), &udpAddr.sin_addr);
+
+    Log::getInstance().info("Server -> Server (UDP Data)");
 
     ssize_t sentBytes = SendUdpData(udpSocket, data->data(), data->size(), 0, (struct sockaddr*)&udpAddr, sizeof(udpAddr));
     if (sentBytes < 0) {

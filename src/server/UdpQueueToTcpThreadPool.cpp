@@ -36,6 +36,7 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
           UdpToTcpSocketMap::getInstance().retrieveMappedTcpSocket(udpSocket);
 
       // Send data via TCP
+      Log::getInstance().info(std::format("Server -> Client (TCP Data), Length: {}", data->size()));
       sendDataViaTcp(tcpSocket, *data);
     }
   }
