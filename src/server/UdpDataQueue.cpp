@@ -52,9 +52,12 @@ void UdpDataQueue::enqueueAndNotify(
   std::lock_guard<std::mutex> lock(queueMutex);
   std::shared_ptr<std::vector<char>> newData =
       std::make_shared<std::vector<char>>();
-  UvtUtils::AppendUdpData(bufferedNewData, sendId++, *newData);
-  // We should clear the buffer now
-  bufferedNewData.clear();
+  if(!bufferedNewData.empty())
+  {
+    UvtUtils::AppendUdpData(bufferedNewData, sendId++, *newData);
+    // We should clear the buffer now
+    bufferedNewData.clear();
+  }
   UvtUtils::AppendUdpData(*data, sendId++, *newData);
   queue.push(std::make_pair(socket, newData));
   // Notify one waiting thread
