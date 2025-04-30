@@ -26,9 +26,7 @@ void PeerTcpSocket::connect(const std::string &address, int port) {
 
 void PeerTcpSocket::send(const std::vector<char> &data) {
   // send the data length first
-  std::vector<char> newData;
-  UvtUtils::AppendUdpData(data, ++sendId, newData);
-  SendTcpData(socketFd, newData.data(), newData.size(), 0);
+  SendTcpData(socketFd, data.data(), data.size(), 0);
 }
 
 std::vector<char> PeerTcpSocket::receive() {

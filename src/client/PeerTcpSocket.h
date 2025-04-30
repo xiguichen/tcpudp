@@ -17,7 +17,6 @@ public:
   private:
     int socketFd;
     struct sockaddr_in peerAddress;
-    uint8_t sendId = 0;
     uint8_t recvId = 0;
 };
 

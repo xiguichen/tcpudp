@@ -23,7 +23,7 @@ void UdpDataQueue::enqueue(int socket,
     auto currentTime = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         currentTime - lastEmitTime);
-    if (duration.count() > 100) {
+    if (duration.count() > 50) {
       Log::getInstance().info("Time reached for send");
       this->enqueueAndNotify(socket, data, bufferedNewData);
     }
