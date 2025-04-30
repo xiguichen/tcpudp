@@ -1,6 +1,6 @@
 #include "UdpDataQueue.h"
-#include <Protocol.h>
 #include <Log.h>
+#include <Protocol.h>
 using namespace Logger;
 
 void UdpDataQueue::enqueue(int socket,
@@ -12,8 +12,8 @@ void UdpDataQueue::enqueue(int socket,
 
   // 1. If the buffered data size + data size great than 1400, let's send it now
   if (bufferedNewData.size() + data->size() > 1400) {
-      Log::getInstance().info("Get enough data for send");
-      this->enqueueAndNotify(socket, data, bufferedNewData);
+    Log::getInstance().info("Get enough data for send");
+    this->enqueueAndNotify(socket, data, bufferedNewData);
   }
   // 2. Check if we get enough time to send the data
   else {
@@ -21,8 +21,8 @@ void UdpDataQueue::enqueue(int socket,
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         currentTime - lastEmitTime);
     if (duration.count() > 100) {
-        Log::getInstance().info("Time reached for send");
-        this->enqueueAndNotify(socket, data, bufferedNewData);
+      Log::getInstance().info("Time reached for send");
+      this->enqueueAndNotify(socket, data, bufferedNewData);
     }
     // We should buffer the data for next time to send
     else {
@@ -43,13 +43,17 @@ std::pair<int, std::shared_ptr<std::vector<char>>> UdpDataQueue::dequeue() {
 }
 
 void UdpDataQueue::enqueueAndNotify(
-    int socket, const std::shared_ptr<std::vector<char>> &data, std::vector<char>& bufferedNewData) {
+    int socket, const std::shared_ptr<std::vector<char>> &data,
+    std::vector<char> &bufferedNewData) {
   std::lock_guard<std::mutex> lock(queueMutex);
   std::shared_ptr<std::vector<char>> newData =
       std::make_shared<std::vector<char>>(bufferedNewData.begin(),
                                           bufferedNewData.end());
   UvtUtils::AppendUdpData(*data, sendId++, *newData);
   queue.push(std::make_pair(socket, newData));
-  cv.notify_one(); // Notify one waiting thread
+  // Notify one waiting thread
+  cv.notify_one();
   this->lastEmitTime = std::chrono::high_resolution_clock::now();
+  // We should clear the buffer now
+  bufferedNewData.clear();
 }
