@@ -54,7 +54,7 @@ void UdpDataQueue::enqueueAndNotify(
       std::make_shared<std::vector<char>>();
   if(!bufferedNewData.empty())
   {
-    UvtUtils::AppendUdpData(bufferedNewData, sendId++, *newData);
+    newData->insert(newData->end(), bufferedNewData.begin(), bufferedNewData.end());
     // We should clear the buffer now
     bufferedNewData.clear();
   }
