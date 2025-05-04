@@ -2,6 +2,10 @@
 #include <Log.h>
 using namespace Logger;
 
+#ifdef EXCLUDE_MAIN
+
+#else
+
 int main(int argc, char* argv[]) {
 
     Log::getInstance().setLogLevel(LogLevel::LOG_INFO);
@@ -16,3 +20,4 @@ int main(int argc, char* argv[]) {
     }
 
 }
+#endif

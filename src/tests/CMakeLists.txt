@@ -30,15 +30,26 @@ include_directories(${googletest_SOURCE_DIR}/googletest/include)
 # include common directory
 include_directories(${CMAKE_SOURCE_DIR}/common)
 
+# include server directory
+include_directories(${CMAKE_SOURCE_DIR}/server)
+
+# include client directory
+include_directories(${CMAKE_SOURCE_DIR}/client)
+
 # link google test libraries
 link_directories(${googletest_BINARY_DIR})
 
 # find all source files in the current directory
 file(GLOB_RECURSE SOURCES "*.cpp" "*.h")
 
+# find all source files in the server directory
+file(GLOB_RECURSE SERVER_SOURCES "${CMAKE_SOURCE_DIR}/server/*.cpp" "${CMAKE_SOURCE_DIR}/server/*.h")
+
+
 # Define the executable
 add_executable(CommonTest
     ${SOURCES}
+    ${SERVER_SOURCES}
 )
 
 # Link the common library
@@ -67,6 +78,9 @@ set_target_properties(CommonTest PROPERTIES
     COMPILE_PDB_NAME "CommonTest"
     COMPILE_PDB_FILE "CommonTest.pdb"
 )
+
+
+target_compile_definitions(CommonTest PRIVATE EXCLUDE_MAIN)
 
 add_test(NAME CommonTest COMMAND CommonTest) 
 
