@@ -3,8 +3,12 @@
 #include <Protocol.h>
 using namespace Logger;
 
+
+
 void UdpDataQueue::enqueue(int socket,
                            const std::shared_ptr<std::vector<char>> &data) {
+
+#ifdef BUFFER_UDP_DATA
 
   // Decide if we need to buffer the data for transfer or we should notify the
   // the consumer to consume the data
@@ -34,6 +38,14 @@ void UdpDataQueue::enqueue(int socket,
           std::format("new buffer size: {}", bufferedNewData.size()));
     }
   }
+
+#else
+    
+    Log::getInstance().info("Buffer is not used for UDP data");
+    std::vector<char>& bufferedNewData = bufferedNewDataMap[socket];
+    this->enqueueAndNotify(socket, data, bufferedNewData);
+#endif
+
 }
 
 std::pair<int, std::shared_ptr<std::vector<char>>> UdpDataQueue::dequeue() {

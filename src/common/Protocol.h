@@ -19,6 +19,15 @@ struct UvtHeader {
   uint8_t checksum;
 };
 
+struct MsgBind {
+  uint32_t clientId;
+};
+
+struct MsgBindResponse {
+  uint8_t status;
+};
+
+
 const size_t HEADER_SIZE = sizeof(UvtHeader);
 
 uint8_t xor_checksum(const uint8_t *buffer, size_t length);

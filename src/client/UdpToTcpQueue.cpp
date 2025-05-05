@@ -1,7 +1,11 @@
 #include "UdpToTcpQueue.h"
 #include <Protocol.h>
 
+
+
 void UdpToTcpQueue::enqueue(const std::vector<char>& data) {
+
+  #ifdef BUFFER_UDP_DATA
 
   // Decide if we need to buffer the data for transfer or we should notify the
   // the consumer to consume the data
@@ -30,6 +34,10 @@ void UdpToTcpQueue::enqueue(const std::vector<char>& data) {
           std::format("new buffer size: {}", bufferedNewData.size()));
     }
   }
+
+#else
+      this->enqueueAndNotify(data, bufferedNewData);
+#endif
 }
 
 std::vector<char> UdpToTcpQueue::dequeue() {
