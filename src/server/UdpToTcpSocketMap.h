@@ -14,12 +14,11 @@ public:
     int retrieveMappedTcpSocket(int udpSocket);
     void Reset();
 
-  private:
+private:
     UdpToTcpSocketMap() = default;
     ~UdpToTcpSocketMap() = default;
     UdpToTcpSocketMap(const UdpToTcpSocketMap&) = delete;
     UdpToTcpSocketMap& operator=(const UdpToTcpSocketMap&) = delete;
-private:
     std::map<int, std::vector<int>> socketMap;
     std::map<int, int> lastMappedTcpSocketIndex;
 };
