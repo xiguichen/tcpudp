@@ -2,6 +2,7 @@
 #define UDP_TO_TCP_SOCKET_MAP_H
 
 #include <map>
+#include <vector>
 
 class UdpToTcpSocketMap {
 public:
