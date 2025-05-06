@@ -16,7 +16,34 @@ TEST(UvtUtilsTest, ValidateChecksum) {
   EXPECT_TRUE(UvtUtils::validateChecksum(data, sizeof(data), checksum));
 }
 
-// Test for UvtUtils::AppendUdpData
+// Test for UvtUtils::AppendMsgBind
+TEST(UvtUtilsTest, AppendMsgBind) {
+  MsgBind bind = {12345}; // Example clientId
+  std::vector<uint8_t> outputBuffer;
+
+  UvtUtils::AppendMsgBind(bind, outputBuffer);
+
+  // Check the size of the output buffer
+  EXPECT_EQ(outputBuffer.size(), sizeof(MsgBind));
+
+  // Check the content of the output buffer
+  MsgBind *bindPtr = reinterpret_cast<MsgBind *>(outputBuffer.data());
+  EXPECT_EQ(bindPtr->clientId, bind.clientId);
+}
+
+// Test for UvtUtils::ExtractMsgBind
+TEST(UvtUtilsTest, ExtractMsgBind) {
+  MsgBind originalBind = {12345}; // Example clientId
+  std::vector<uint8_t> data(sizeof(MsgBind));
+  std::memcpy(data.data(), &originalBind, sizeof(MsgBind));
+
+  MsgBind extractedBind;
+  bool result = UvtUtils::ExtractMsgBind(data, extractedBind);
+
+  EXPECT_TRUE(result);
+  EXPECT_EQ(extractedBind.clientId, originalBind.clientId);
+}
+
 TEST(UvtUtilsTest, AppendUdpData) {
   std::vector<uint8_t> data = {0x01, 0x02, 0x03, 0x04};
   uint8_t id = 1;
