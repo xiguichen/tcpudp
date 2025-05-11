@@ -152,6 +152,17 @@ typedef struct Connection {
 
 class ConnectionManager {
 public:
+  // Get the singleton instance
+  static ConnectionManager& getInstance() {
+    static ConnectionManager instance;
+    return instance;
+  }
+
+  // Delete copy constructor and assignment operator
+  ConnectionManager(const ConnectionManager&) = delete;
+  ConnectionManager& operator=(const ConnectionManager&) = delete;
+
+
   // Create a connection
   Connection *createConnection(uint32_t clientId) {
     // Create a new connection and add it to the list
@@ -162,6 +173,23 @@ public:
     return connection;
   }
 
+  // Remove a connection by its connectionId
+  bool removeConnection(uint32_t connectionId) {
+    for (auto it = connections.begin(); it != connections.end(); ++it) {
+      if ((*it)->connectionId == connectionId) {
+        delete *it; // Free the memory
+        connections.erase(it); // Remove from the vector
+        connectionIds.erase(connectionId); // Remove from the set
+        return true; // Successfully removed
+      }
+    }
+    return false; // Connection not found
+  }
+
+private:
+  // Private constructor
+  ConnectionManager() = default;
+  
   // Destructor
   ~ConnectionManager() {
     // Clean up all connections

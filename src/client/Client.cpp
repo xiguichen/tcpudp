@@ -24,6 +24,7 @@ void Client::loadConfig(const std::string& configFile) {
     localHostUdpPort = config["localHostUdpPort"].get<int>();
     peerTcpPort = config["peerTcpPort"].get<int>();
     peerAddress = config["peerAddress"].get<std::string>();
+    clientId = config["clientId"].get<uint32_t>();
 
 }
 

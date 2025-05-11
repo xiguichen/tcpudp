@@ -2,17 +2,27 @@
 #define CONFIGURATION_H
 
 #include <string>
+#include <set>
 
 class Configuration {
 private:
     static Configuration* instance;
-    Configuration() = default; // Private constructor
+    // Private constructor
+    Configuration() = default; 
+
+    // Example client IDs
+    std::set<uint32_t> allowedClientIds = {1, 2, 3};
 
 public:
     static Configuration* getInstance();
-public:
     std::string getSocketAddress() const;
     int getPortNumber() const;
+
+    // Get the list of client id that are allowed
+    const std::set<uint32_t>& getAllowedClientIds() const {
+        return allowedClientIds;
+    }
+
 };
 
 #endif // CONFIGURATION_H

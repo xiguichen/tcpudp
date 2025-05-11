@@ -13,6 +13,7 @@ public:
 private:
     int localHostUdpPort;
     int peerTcpPort;
+    uint32_t clientId;
     std::string peerAddress;
     std::shared_ptr<SocketManager> socketManager;
     void loadConfig(const std::string& configFile);
