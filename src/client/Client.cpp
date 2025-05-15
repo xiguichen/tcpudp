@@ -3,13 +3,23 @@
 #include <nlohmann/json.hpp> // Include the nlohmann/json library
 #include <Log.h>
 #include <stdlib.h>
+const int TCP_CONNECTION_NUMBER = 30;
 
 using json = nlohmann::json;
 
 Client::Client(const std::string& configFile)
 {
     loadConfig(configFile);
-    socketManager = std::make_shared<SocketManager>(localHostUdpPort, peerTcpPort, peerAddress);
+
+    // Initialize peer tcp connections
+    std::vector<std::pair<std::string, int>> peerConnections;
+    for(int i = 0; i < TCP_CONNECTION_NUMBER; i++)
+    {
+        peerConnections.emplace_back(peerAddress, peerTcpPort);
+    }
+
+    // Initialize socket manager
+    socketManager = std::make_shared<SocketManager>(localHostUdpPort, peerConnections);
 }
 
 void Client::loadConfig(const std::string& configFile) {

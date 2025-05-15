@@ -115,10 +115,10 @@ end
 
 @startuml
 
-class Configuration
-{
+class Configuration {
     +getSocketAddress()
     +getPortNumber()
+    +getAllowedClientIds()
 }
 
 class SocketManager {
@@ -126,10 +126,10 @@ class SocketManager {
     +bindToPort(port: int)
     +listenForConnections()
     +acceptConnection()
-    +createUdpSocket()
-    +mapSockets()
     +startTcpToQueueThread()
     +startUdpToQueueThread()
+    +startTcpQueueToUdpThreadPool()
+    +startUdpQueueToTcpThreadPool()
 }
 
 class SocketMap {
@@ -185,17 +185,20 @@ class UdpToTcpSocketMap {
     +retrieveMappedTcpSocket()
 }
 
-SocketManager -> SocketMap
-SocketManager -> TcpToQueueThread
-SocketManager -> UdpToQueueThread
-TcpToQueueThread -> TcpDataQueue
-UdpToQueueThread -> UdpDataQueue
-TcpQueueToUdpThreadPool -> TcpDataQueue
-TcpQueueToUdpThreadPool -> UdpSocketAddressMap
-TcpQueueToUdpThreadPool -> TcpToUdpSocketMap
-UdpQueueToTcpThreadPool -> UdpDataQueue
-UdpQueueToTcpThreadPool -> UdpToTcpSocketMap
+SocketManager -> SocketMap : 1 to 1
+SocketManager -> TcpToQueueThread : 1 to 1
+SocketManager -> UdpToQueueThread : 1 to 1
+SocketManager -> TcpQueueToUdpThreadPool : 1 to n
+SocketManager -> UdpQueueToTcpThreadPool : 1 to n
+TcpToQueueThread -> TcpDataQueue : 1 to 1
+UdpToQueueThread -> UdpDataQueue : 1 to 1
+TcpQueueToUdpThreadPool -> TcpDataQueue : 1 to 1
+TcpQueueToUdpThreadPool -> TcpToUdpSocketMap : 1 to 1
+TcpQueueToUdpThreadPool -> UdpSocketAddressMap : 1 to 1
+UdpQueueToTcpThreadPool -> UdpDataQueue : 1 to 1
+UdpQueueToTcpThreadPool -> UdpToTcpSocketMap : 1 to 1
 
+@enduml
 @enduml
 
 ### Error Handling

@@ -135,6 +135,20 @@ class PeerTcpSocket {
 
 class SocketManager {
     - LocalUdpSocket localUdpSocket
+    - std::vector<PeerTcpSocket> peerTcpSockets
+    - UdpToTcpQueue udpToTcpQueue
+    - TcpToUdpQueue tcpToUdpQueue
+    + SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections)
+    + void manageSockets()
+    + void cleanupResources()
+    - void localHostReadTask(bool& running)
+    - void localHostWriteTask(bool& running)
+    - void peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket)
+    - void peerHostWriteTask(bool& running, PeerTcpSocket& peerTcpSocket)
+    + ~SocketManager()
+}
+class SocketManager {
+    - LocalUdpSocket localUdpSocket
     - PeerTcpSocket peerTcpSocket
     - UdpToTcpQueue udpToTcpQueue
     - TcpToUdpQueue tcpToUdpQueue
@@ -173,8 +187,8 @@ class UdpToTcpQueue {
 }
 
 Client --> SocketManager
-SocketManager --> LocalUdpSocket
-SocketManager --> PeerTcpSocket
+SocketManager "1" --> "1" LocalUdpSocket
+SocketManager "1" --> "n" PeerTcpSocket
 SocketManager --> UdpToTcpQueue
 SocketManager --> TcpToUdpQueue
 

@@ -6,8 +6,12 @@
 
 using namespace Logger;
 
-SocketManager::SocketManager(int udpPort, int tcpPort, const std::string& address)
-    : localUdpSocket(udpPort), peerTcpSocket(address, tcpPort) {}
+SocketManager::SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections)
+    : localUdpSocket(udpPort) {
+    for (const auto& connection : peerConnections) {
+        peerTcpSockets.emplace_back(connection.first, connection.second);
+    }
+}
 
 SocketManager::~SocketManager() {
     cleanupResources();
@@ -22,17 +26,27 @@ void SocketManager::manageSockets() {
     // LocalHostWriteThread
     std::thread localHostWriteThread(&SocketManager::localHostWriteTask, this, std::ref(running));
 
-    // PeerHostReadThread
-    std::thread peerHostReadThread(&SocketManager::peerHostReadTask, this, std::ref(running));
+    // PeerHostReadThreads
+    std::vector<std::thread> peerHostReadThreads;
+    for (auto& peerTcpSocket : peerTcpSockets) {
+        peerHostReadThreads.emplace_back(&SocketManager::peerHostReadTask, this, std::ref(running), std::ref(peerTcpSocket));
+    }
 
-    // PeerHostWriteThread
-    std::thread peerHostWriteThread(&SocketManager::peerHostWriteTask, this, std::ref(running));
+    // PeerHostWriteThreads
+    std::vector<std::thread> peerHostWriteThreads;
+    for (auto& peerTcpSocket : peerTcpSockets) {
+        peerHostWriteThreads.emplace_back(&SocketManager::peerHostWriteTask, this, std::ref(running), std::ref(peerTcpSocket));
+    }
 
     // Join threads
     localHostReadThread.join();
     localHostWriteThread.join();
-    peerHostReadThread.join();
-    peerHostWriteThread.join();
+    for (auto& thread : peerHostReadThreads) {
+        thread.join();
+    }
+    for (auto& thread : peerHostWriteThreads) {
+        thread.join();
+    }
 }
 
 void SocketManager::localHostReadTask(bool& running) {
@@ -51,12 +65,14 @@ void SocketManager::localHostReadTask(bool& running) {
 }
 
 void SocketManager::localHostWriteTask(bool& running) {
+    int i = 0;
     try {
         while (running) {
             std::vector<char> data = udpToTcpQueue.dequeue();
             if(data.size())
             {
-                peerTcpSocket.send(data);
+                peerTcpSockets[i].send(data);
+                i = (i + 1) % peerTcpSockets.size();
             }
         }
     } catch (const std::exception& e) {
@@ -65,7 +81,7 @@ void SocketManager::localHostWriteTask(bool& running) {
     }
 }
 
-void SocketManager::peerHostReadTask(bool& running) {
+void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket) {
     try {
         peerTcpSocket.sendHandshake();
         while (running) {
@@ -89,7 +105,7 @@ void SocketManager::peerHostReadTask(bool& running) {
     }
 }
 
-void SocketManager::peerHostWriteTask(bool& running) {
+void SocketManager::peerHostWriteTask(bool& running, PeerTcpSocket& peerTcpSocket) {
     try {
         while (running) {
             std::vector<char> data = tcpToUdpQueue.dequeue();
