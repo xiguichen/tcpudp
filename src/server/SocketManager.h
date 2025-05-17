@@ -18,10 +18,18 @@ public:
     void startUdpToQueueThread(int clientSocket);
     void startTcpQueueToUdpThreadPool();
     void startUdpQueueToTcpThreadPool();
+    
+    // Shutdown mechanism
+    void shutdown();
+    bool isRunning() const { return running; }
 
   private:
     int serverSocket;
     std::vector<std::thread> threads;
+    bool running;
+    
+    // Prevent threads from joining multiple times during cleanup
+    bool threadsJoined;
 };
 
 #endif // SOCKET_MANAGER_H

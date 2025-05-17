@@ -17,19 +17,39 @@
 #include <Log.h>
 using namespace Logger;
 
-SocketManager::SocketManager() : serverSocket(-1) {}
+SocketManager::SocketManager() : serverSocket(-1), running(true), threadsJoined(false) {}
 
 SocketManager::~SocketManager() {
+    // Call shutdown to ensure proper cleanup
+    shutdown();
+}
 
-    Log::getInstance().info("Cleaning up resources");
-    for (auto& thread : threads) {
-        if (thread.joinable()) {
-            thread.join();
+void SocketManager::shutdown() {
+    // Set running flag to false to stop all threads
+    running = false;
+    
+    Log::getInstance().info("Shutting down server...");
+    
+    // Only join threads if they haven't been joined already
+    if (!threadsJoined) {
+        Log::getInstance().info("Waiting for all threads to complete...");
+        for (auto& thread : threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
         }
+        threadsJoined = true;
+        Log::getInstance().info("All threads joined successfully");
     }
+    
+    // Close server socket if open
     if (serverSocket != -1) {
+        Log::getInstance().info("Closing server socket");
         SocketClose(serverSocket);
+        serverSocket = -1;
     }
+    
+    Log::getInstance().info("Server shutdown complete");
 }
 
 void SocketManager::createSocket() {
@@ -84,6 +104,11 @@ void SocketManager::listenForConnections() {
 }
 
 void SocketManager::acceptConnection() {
+    // Check if server should still be running
+    if (!running) {
+        return;
+    }
+    
     // Check if server socket is readable with a short timeout
     if (!IsSocketReadable(serverSocket, 100)) { // 100ms timeout
         // No pending connections, yield to other threads

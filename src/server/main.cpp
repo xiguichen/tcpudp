@@ -3,8 +3,35 @@
 #include "../common/PerformanceMonitor.h"
 #include <iostream>
 #include <string>
+#include <signal.h>
+#include <atomic>
 
 using namespace Logger;
+
+// Global pointer to SocketManager for signal handling
+SocketManager* g_socketManager = nullptr;
+
+// Atomic flag to indicate shutdown is in progress
+std::atomic<bool> g_shutdownInProgress(false);
+
+// Signal handler for graceful shutdown
+void signalHandler(int signum) {
+    Log::getInstance().info(std::format("Received signal: {}", signum));
+    
+    // Prevent multiple shutdown attempts
+    if (g_shutdownInProgress.exchange(true)) {
+        Log::getInstance().warning("Shutdown already in progress. Ignoring signal.");
+        return;
+    }
+    
+    if (g_socketManager != nullptr) {
+        Log::getInstance().info("Starting graceful shutdown...");
+        g_socketManager->shutdown();
+    }
+    
+    // Exit program after cleanup
+    exit(signum);
+}
 
 void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options]" << std::endl;
@@ -37,11 +64,24 @@ int main(int argc, char* argv[]) {
     Log::getInstance().setLogLevel(logLevel);
     std::cout << "Log level set to: " << Log::getInstance().getCurrentLogLevelString() << std::endl;
     
+    // Register signal handlers for graceful shutdown
+    Log::getInstance().info("Registering signal handlers");
+    signal(SIGINT, signalHandler);  // Handle Ctrl+C
+    signal(SIGTERM, signalHandler); // Handle termination request
+#ifndef _WIN32
+    signal(SIGHUP, signalHandler);  // Handle terminal disconnect (not on Windows)
+#endif
+    
     // Start performance monitoring
     PerformanceMonitor::getInstance().startMonitoring(30); // Report every 30 seconds
     Log::getInstance().info("Performance monitoring started");
     
+    // Initialize SocketManager
     SocketManager socketManager;
+    // Set global pointer for signal handler to access
+    g_socketManager = &socketManager;
+    
+    // Initialize server
     socketManager.createSocket();
     socketManager.bindToPort(6001);
     socketManager.listenForConnections();
@@ -49,10 +89,24 @@ int main(int argc, char* argv[]) {
     socketManager.startUdpQueueToTcpThreadPool();
     
     Log::getInstance().info("Server started successfully with lock-free queues");
+    Log::getInstance().info("Press Ctrl+C to shut down the server gracefully");
     
-    while (true) {
+    // Main server loop with clean exit condition
+    while (socketManager.isRunning()) {
         socketManager.acceptConnection();
+        
+        // Small sleep to prevent CPU saturation
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    
+    // Additional cleanup before exiting
+    Log::getInstance().info("Main loop exited, performing final cleanup...");
+    
+    // Reset global pointer
+    g_socketManager = nullptr;
+    
+    Log::getInstance().info("Server terminated successfully");
+    return 0;
 
 }
 #endif
