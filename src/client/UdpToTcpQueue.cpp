@@ -16,13 +16,8 @@ UdpToTcpQueue::UdpToTcpQueue()
     // Start memory monitoring
     MemoryMonitor::getInstance().start();
     
-    // Register an alert callback
-    MemoryMonitor::getInstance().registerAlertCallback([](size_t usage) {
-        Log::getInstance().warning(std::format(
-            "Memory usage alert: Current usage is {}", 
-            MemoryMonitor::formatMemorySize(usage)
-        ));
-    });
+    // Register the default alert handler
+    MemoryMonitor::getInstance().registerDefaultAlertHandler();
 }
 
 UdpToTcpQueue::~UdpToTcpQueue() {

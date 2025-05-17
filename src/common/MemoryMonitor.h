@@ -82,6 +82,9 @@ public:
         alertCallbacks_.push_back(callback);
     }
     
+    // Register the default alert handler
+    void registerDefaultAlertHandler();
+    
     // Format memory size for human-readable output
     static std::string formatMemorySize(size_t bytes) {
         const char* units[] = {"B", "KB", "MB", "GB", "TB"};

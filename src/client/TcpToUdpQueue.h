@@ -5,9 +5,9 @@
 #include <atomic>
 #include <memory>
 #include <chrono>
-#include "../common/LockFreeQueue.h"
-#include "../common/MemoryPool.h"
-#include "../common/MemoryMonitor.h"
+#include <LockFreeQueue.h>
+#include <MemoryPool.h>
+#include <MemoryMonitor.h>
 
 class TcpToUdpQueue {
 public:

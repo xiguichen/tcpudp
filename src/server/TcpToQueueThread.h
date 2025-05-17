@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <memory>
 #include <vector>
-#include "../common/MemoryPool.h"
-#include "../common/MemoryMonitor.h"
+#include <MemoryPool.h>
+#include <MemoryMonitor.h>
 
 class TcpToQueueThread {
 public:
