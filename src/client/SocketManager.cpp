@@ -52,14 +52,18 @@ void SocketManager::manageSockets() {
 void SocketManager::localHostReadTask(bool& running) {
     try {
         while (running) {
+            // Non-blocking receive with short timeout
             std::vector<char> data = localUdpSocket.receive();
-            if(data.size() != 0)
-            {
+            if(data.size() != 0) {
                 udpToTcpQueue.enqueue(data);
+            } else {
+                // No data available, yield to other threads
+                std::this_thread::yield();
             }
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": LocalHostReadThread error: " << e.what() << std::endl;
+        Log::getInstance().error(std::format("LocalHostReadThread error: {}", e.what()));
         running = false;
     }
 }
@@ -68,39 +72,65 @@ void SocketManager::localHostWriteTask(bool& running) {
     int i = 0;
     try {
         while (running) {
+            // Dequeue data with timeout
             std::vector<char> data = udpToTcpQueue.dequeue();
-            if(data.size())
-            {
-                peerTcpSockets[i].send(data);
-                i = (i + 1) % peerTcpSockets.size();
+            if(data.size()) {
+                try {
+                    // Send data with non-blocking I/O
+                    peerTcpSockets[i].send(data);
+                    i = (i + 1) % peerTcpSockets.size();
+                } catch (const std::exception& e) {
+                    Log::getInstance().error(std::format("Failed to send data to peer: {}", e.what()));
+                    // Continue with next peer if one fails
+                    i = (i + 1) % peerTcpSockets.size();
+                }
+            } else {
+                // No data available, yield to other threads
+                std::this_thread::yield();
             }
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": LocalHostWriteThread error: " << e.what() << std::endl;
+        Log::getInstance().error(std::format("LocalHostWriteThread error: {}", e.what()));
         running = false;
     }
 }
 
 void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket) {
     try {
+        // Send handshake with non-blocking I/O
         peerTcpSocket.sendHandshake();
+        
+        int emptyDataCount = 0;
+        const int MAX_EMPTY_DATA_COUNT = 10; // Allow some empty receives before considering connection dead
+        
         while (running) {
+            // Receive data with non-blocking I/O
             std::vector<char> data = peerTcpSocket.receive();
-            if(data.size())
-            {
+            
+            if(data.size()) {
+                // Reset empty data counter on successful receive
+                emptyDataCount = 0;
                 tcpToUdpQueue.enqueue(data);
-            }
-            else
-            {
-                Log::getInstance().error("SocketManager: Empty data received.");
-                running = false;
-                this->udpToTcpQueue.cancel();
-                this->tcpToUdpQueue.cancel();
-                this->localUdpSocket.close();
+            } else {
+                // Count consecutive empty receives
+                emptyDataCount++;
+                
+                if (emptyDataCount > MAX_EMPTY_DATA_COUNT) {
+                    Log::getInstance().error("SocketManager: Too many empty data receives, connection may be dead");
+                    running = false;
+                    this->udpToTcpQueue.cancel();
+                    this->tcpToUdpQueue.cancel();
+                    this->localUdpSocket.close();
+                } else {
+                    // No data available, yield to other threads
+                    std::this_thread::yield();
+                }
             }
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": PeerHostReadThread error: " << e.what() << std::endl;
+        Log::getInstance().error(std::format("PeerHostReadThread error: {}", e.what()));
         running = false;
     }
 }
@@ -108,14 +138,20 @@ void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket
 void SocketManager::peerHostWriteTask(bool& running, PeerTcpSocket& peerTcpSocket) {
     try {
         while (running) {
+            // Dequeue data with timeout
             std::vector<char> data = tcpToUdpQueue.dequeue();
-            if(data.size())
-            {
+            
+            if(data.size()) {
+                // Send data with non-blocking I/O
                 localUdpSocket.send(data);
+            } else {
+                // No data available, yield to other threads
+                std::this_thread::yield();
             }
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": PeerHostWriteThread error: " << e.what() << std::endl;
+        Log::getInstance().error(std::format("PeerHostWriteThread error: {}", e.what()));
         running = false;
     }
 }

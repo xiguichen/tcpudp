@@ -19,16 +19,21 @@ using namespace Logger;
 void TcpToQueueThread::run() {
   const int bufferSize = 65535;
   char buffer[bufferSize];
-  int result = SocketSelect(socket_, 2);
-  if (result <= 0) {
-    Log::getInstance().error("Socket select failed");
+  
+  // Set socket to non-blocking mode
+  SetSocketNonBlocking(socket_);
+  
+  // Wait for socket to be readable with timeout
+  if (!IsSocketReadable(socket_, 2000)) { // 2 seconds timeout
+    Log::getInstance().error("Socket not readable within timeout");
     SocketClose(socket_);
     return;
   }
 
   Log::getInstance().info("Begin capability negotiate");
 
-  result = RecvTcpDataWithSize(socket_, buffer, bufferSize, 0, sizeof(MsgBind));
+  // Receive handshake data with timeout
+  int result = RecvTcpDataWithSizeNonBlocking(socket_, buffer, bufferSize, 0, sizeof(MsgBind), 5000); // 5 seconds timeout
   if (result != sizeof(MsgBind)) {
     Log::getInstance().error(std::format("Failed to recv tcp data with return code: {}", result));
     SocketClose(socket_);
@@ -50,38 +55,61 @@ void TcpToQueueThread::run() {
     return;
   }
 
-  pConnection connection =  ConnectionManager::getInstance().createConnection(bind.clientId);
+  pConnection connection = ConnectionManager::getInstance().createConnection(bind.clientId);
   MsgBindResponse bindResponse;
   bindResponse.connectionId = connection->connectionId;
 
   std::vector<char> outputBuffer;
   UvtUtils::AppendMsgBindResponse(bindResponse, outputBuffer);
 
-  SendTcpData(socket_, outputBuffer.data(), outputBuffer.size(), 0);
+  // Send response with timeout
+  result = SendTcpDataNonBlocking(socket_, outputBuffer.data(), outputBuffer.size(), 0, 5000); // 5 seconds timeout
+  if (result != static_cast<int>(outputBuffer.size())) {
+    Log::getInstance().error(std::format("Failed to send tcp data with return code: {}", result));
+    SocketClose(socket_);
+    return;
+  }
 
   Log::getInstance().info("End capability negotiate");
 
   std::vector<char> remainingData;
   std::vector<char> decodedData;
 
+  // Main processing loop
   while (true) {
-
-    Log::getInstance().info("Client -> Server (Receive TCP Data)");
-    result = RecvTcpData(socket_, buffer, bufferSize, 0);
-    if (result == 0 || result == -1) {
-      Log::getInstance().error(
-          std::format("Failed to recv tcp data with return code: {}", result));
-      break;
-    }
-
-    remainingData.insert(remainingData.end(), buffer, buffer + result);
-
-    do {
-      remainingData = UvtUtils::ExtractUdpData(remainingData, decodedData);
-      if (decodedData.size()) {
-        enqueueData(decodedData.data(), decodedData.size());
+    // Check if socket is readable with a short timeout
+    if (IsSocketReadable(socket_, 100)) { // 100ms timeout
+      Log::getInstance().info("Client -> Server (Receive TCP Data)");
+      
+      // Receive data non-blocking with timeout
+      result = RecvTcpDataNonBlocking(socket_, buffer, bufferSize, 0, 1000); // 1 second timeout
+      
+      if (result == SOCKET_ERROR_TIMEOUT) {
+        // Timeout, just continue the loop
+        continue;
+      } else if (result == SOCKET_ERROR_WOULD_BLOCK) {
+        // Would block, just continue the loop
+        continue;
+      } else if (result == SOCKET_ERROR_CLOSED || result <= 0) {
+        // Connection closed or error
+        Log::getInstance().error(
+            std::format("Failed to recv tcp data with return code: {}", result));
+        break;
       }
-    } while (decodedData.size() && remainingData.size());
+      
+      // Process received data
+      remainingData.insert(remainingData.end(), buffer, buffer + result);
+
+      do {
+        remainingData = UvtUtils::ExtractUdpData(remainingData, decodedData);
+        if (decodedData.size()) {
+          enqueueData(decodedData.data(), decodedData.size());
+        }
+      } while (decodedData.size() && remainingData.size());
+    } else {
+      // No data available, yield to other threads
+      std::this_thread::yield();
+    }
   }
 }
 
