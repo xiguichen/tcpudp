@@ -1,30 +1,67 @@
 #ifndef UDPTOTCPQUEUE_H
 #define UDPTOTCPQUEUE_H
 
-#include <condition_variable>
-#include <mutex>
-#include <queue>
 #include <vector>
 #include <chrono>
+#include <atomic>
+#include <memory>
+#include "../common/LockFreeQueue.h"
+#include "../common/MemoryPool.h"
+#include "../common/MemoryMonitor.h"
 
 class UdpToTcpQueue {
 public:
-  void enqueue(const std::vector<char> &data);
-  std::vector<char> dequeue();
-  void cancel();
+    UdpToTcpQueue();
+    ~UdpToTcpQueue();
+    
+    // Enqueue data for processing
+    void enqueue(const std::vector<char> &data);
+    
+    // Dequeue data (returns empty vector if cancelled or timeout)
+    std::vector<char> dequeue();
+    
+    // Cancel all pending operations
+    void cancel();
+    
+    // Get queue statistics
+    struct QueueStats {
+        size_t currentQueueSize;
+        size_t peakQueueSize;
+        size_t totalEnqueued;
+        size_t totalDequeued;
+        size_t bufferSize;
+        std::chrono::milliseconds avgWaitTime;
+    };
+    
+    QueueStats getStats() const;
 
 private:
-  std::queue<std::vector<char>> queue;
-  std::mutex mtx;
-  std::condition_variable cv;
-  bool shouldCancel = false;
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> lastEmitTime =
-      std::chrono::high_resolution_clock::now();
-  std::vector<char> bufferedNewData;
-  void enqueueAndNotify(const std::vector<char> &data,
-                        std::vector<char> &bufferedNewData);
-  uint8_t sendId;
+    // Process and buffer data before enqueueing
+    void enqueueAndNotify(const std::vector<char> &data,
+                         std::shared_ptr<std::vector<char>> &bufferedNewData);
+    
+    // Lock-free queue for better performance
+    LockFreeQueue<std::shared_ptr<std::vector<char>>> queue;
+    
+    // Atomic flag for signaling when data is available
+    std::atomic<bool> dataAvailable{false};
+    
+    // Cancellation flag
+    std::atomic<bool> shouldCancel{false};
+    
+    // Packet ID counter
+    std::atomic<uint8_t> sendId{0};
+    
+    // Buffering state
+    std::shared_ptr<std::vector<char>> bufferedNewData;
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastEmitTime;
+    
+    // Statistics
+    std::atomic<size_t> totalEnqueued{0};
+    std::atomic<size_t> totalDequeued{0};
+    std::atomic<size_t> peakQueueSize{0};
+    std::atomic<uint64_t> totalWaitTimeMs{0};
+    std::atomic<size_t> waitTimeCount{0};
 };
 
 #endif // UDPTOTCPQUEUE_H

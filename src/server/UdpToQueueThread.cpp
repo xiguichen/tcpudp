@@ -17,15 +17,25 @@ void UdpToQueueThread::run() {
     // Set socket to non-blocking mode
     SetSocketNonBlocking(socket_);
     
-    const int bufferSize = 4096;
-    char buffer[bufferSize];
+    // Initialize memory monitoring
+    MemoryMonitor::getInstance().start();
+    
+    // Get a buffer from the memory pool with optimal size for UDP packets
+    auto buffer = MemoryPool::getInstance().getBuffer(4096);
     
     while (true) {
         // Check if socket is readable with a short timeout
         if (IsSocketReadable(socket_, 100)) { // 100ms timeout
-            ssize_t bytesRead = readFromUdpSocket(buffer, sizeof(buffer));
+            ssize_t bytesRead = readFromUdpSocket(buffer->data(), buffer->capacity());
             if (bytesRead > 0) {
-                enqueueData(buffer, bytesRead);
+                // Resize the buffer to the actual data size
+                buffer->resize(bytesRead);
+                
+                // Enqueue the data and get a new buffer
+                enqueueData(buffer);
+                
+                // Get a new buffer for the next read
+                buffer = MemoryPool::getInstance().getBuffer(4096);
             } else if (bytesRead == SOCKET_ERROR_WOULD_BLOCK || bytesRead == SOCKET_ERROR_TIMEOUT) {
                 // No data available or timeout, just continue
                 std::this_thread::yield();
@@ -34,7 +44,16 @@ void UdpToQueueThread::run() {
             // No data available, yield to other threads
             std::this_thread::yield();
         }
+        
+        // Periodically log memory usage (every ~1000 iterations)
+        static int counter = 0;
+        if (++counter % 1000 == 0) {
+            MemoryMonitor::getInstance().logMemoryUsage();
+        }
     }
+    
+    // Recycle the buffer (though this code is unreachable in the current implementation)
+    MemoryPool::getInstance().recycleBuffer(buffer);
 }
 
 size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
@@ -49,6 +68,7 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     
     if (bytesRead > 0) {
         // Data received successfully
+        MemoryMonitor::getInstance().trackAllocation(bytesRead);
     } else if (bytesRead == SOCKET_ERROR_TIMEOUT) {
         Log::getInstance().info("UDP socket read timeout");
     } else if (bytesRead == SOCKET_ERROR_WOULD_BLOCK) {
@@ -61,8 +81,12 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     return bytesRead;
 }
 
-void UdpToQueueThread::enqueueData(char* data, size_t length) {
-    auto dataVector = std::make_shared<std::vector<char>>(data, data + length);
-    Log::getInstance().info(std::format("UDP -> Queue: Data Enqueue, Length: {}", dataVector->size()));
-    UdpDataQueue::getInstance().enqueue(socket_, dataVector);
+void UdpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer) {
+    // The buffer is already properly sized by the caller
+    Log::getInstance().info(std::format("UDP -> Queue: Data Enqueue, Length: {}", dataBuffer->size()));
+    
+    // Enqueue the data buffer directly (no need to copy)
+    UdpDataQueue::getInstance().enqueue(socket_, dataBuffer);
+    
+    // Note: The buffer is now owned by the queue and will be recycled when no longer needed
 }
