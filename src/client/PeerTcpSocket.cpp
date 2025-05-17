@@ -13,7 +13,8 @@
 
 using namespace Logger;
 
-PeerTcpSocket::PeerTcpSocket(const std::string &address, int port) {
+PeerTcpSocket::PeerTcpSocket(const std::string &address, int port, uint32_t clientId) 
+  : clientId(clientId), state(ConnectionState::DISCONNECTED) {
   // Create socket with non-blocking mode
   socketFd = CreateSocket(AF_INET, SOCK_STREAM, 0);
   if (socketFd < 0) {
@@ -32,6 +33,12 @@ PeerTcpSocket::PeerTcpSocket(const std::string &address, int port) {
 }
 
 void PeerTcpSocket::connect(const std::string &address, int port) {
+  if (state != ConnectionState::DISCONNECTED) {
+    Log::getInstance().warning("Attempting to connect when socket is not in DISCONNECTED state");
+    return;
+  }
+
+  state = ConnectionState::CONNECTING;
   peerAddress.sin_family = AF_INET;
   peerAddress.sin_port = htons(port);
   inet_pton(AF_INET, address.c_str(), &peerAddress.sin_addr);
@@ -41,14 +48,22 @@ void PeerTcpSocket::connect(const std::string &address, int port) {
   if (result < 0) {
     Log::getInstance().error(std::format("Failed to connect to {}:{}", address, port));
     SocketLogLastError();
-    SocketClose(socketFd);
+    close();
     throw std::runtime_error("Failed to connect to peer");
   }
   
+  isConnected = true;
+  state = ConnectionState::CONNECTED;
   Log::getInstance().info(std::format("Connected to peer at {}:{}", address, port));
 }
 
 void PeerTcpSocket::send(const std::vector<char> &data) {
+  // Check if we're authenticated before sending data
+  if (state != ConnectionState::AUTHENTICATED) {
+    Log::getInstance().error("Cannot send data: Socket not authenticated");
+    throw std::runtime_error("Cannot send data: Socket not authenticated");
+  }
+
   // Send data with timeout
   ssize_t result = SendTcpDataNonBlocking(socketFd, data.data(), data.size(), 0, 5000); // 5 seconds timeout
   if (result != static_cast<ssize_t>(data.size())) {
@@ -62,6 +77,12 @@ void PeerTcpSocket::send(const std::vector<char> &data) {
 }
 
 std::vector<char> PeerTcpSocket::receive() {
+  // Check if we're connected
+  if (state != ConnectionState::CONNECTED && state != ConnectionState::AUTHENTICATED) {
+    Log::getInstance().error("Cannot receive data: Socket not connected");
+    throw std::runtime_error("Cannot receive data: Socket not connected");
+  }
+
   // Check if socket is readable with timeout
   if (!IsSocketReadable(socketFd, 1000)) { // 1 second timeout
     Log::getInstance().info("Socket not readable within timeout");
@@ -124,22 +145,85 @@ std::vector<char> PeerTcpSocket::receive() {
 }
 
 PeerTcpSocket::~PeerTcpSocket() { 
-  SocketClose(socketFd); 
+  close();
+}
+
+void PeerTcpSocket::close() {
+  if (socketFd >= 0) {
+    SocketClose(socketFd);
+    socketFd = -1;
+    isConnected = false;
+    state = ConnectionState::DISCONNECTED;
+    connectionId = 0;
+  }
 }
 
 void PeerTcpSocket::sendHandshake() { 
+  // Check if we're in the correct state
+  if (state != ConnectionState::CONNECTED) {
+    Log::getInstance().error("Cannot send handshake: Socket not connected");
+    throw std::runtime_error("Cannot send handshake: Socket not connected");
+  }
+
+  // Create and populate the MsgBind structure
   MsgBind msgBind;
-  msgBind.clientId = 1; // Set appropriate client ID
+  msgBind.clientId = this->clientId;
+  
+  // Create a buffer to hold the serialized MsgBind structure
+  std::vector<char> buffer(sizeof(MsgBind));
+  std::memcpy(buffer.data(), &msgBind, sizeof(MsgBind));
   
   // Send handshake with timeout
-  ssize_t result = SendTcpDataNonBlocking(socketFd, "0.0.1", 5, 0, 5000); // 5 seconds timeout
-  if (result != 5) {
-    Log::getInstance().error("Failed to send handshake");
+  ssize_t result = SendTcpDataNonBlocking(socketFd, buffer.data(), sizeof(MsgBind), 0, 5000); // 5 seconds timeout
+  if (result != sizeof(MsgBind)) {
+    Log::getInstance().error(std::format("Failed to send handshake, sent {} bytes instead of {}", 
+                                        result, sizeof(MsgBind)));
     if (result < 0) {
       SocketLogLastError();
     }
     throw std::runtime_error("Failed to send handshake");
   }
   
-  Log::getInstance().info("Handshake sent successfully");
+  Log::getInstance().info(std::format("Handshake sent successfully with client ID: {}", this->clientId));
+}
+
+void PeerTcpSocket::completeHandshake() {
+  // Send the initial handshake
+  sendHandshake();
+  
+  // Wait for the server's response
+  Log::getInstance().info("Waiting for handshake response...");
+  
+  // Check if socket is readable with timeout (longer timeout for handshake)
+  if (!IsSocketReadable(socketFd, 5000)) { // 5 second timeout
+    Log::getInstance().error("Timeout waiting for handshake response");
+    throw std::runtime_error("Timeout waiting for handshake response");
+  }
+  
+  // Receive the MsgBindResponse with timeout
+  std::vector<char> responseBuffer(sizeof(MsgBindResponse));
+  ssize_t bytesReceived = RecvTcpDataWithSizeNonBlocking(socketFd, responseBuffer.data(), 
+                                                        responseBuffer.size(), 0, 
+                                                        sizeof(MsgBindResponse), 5000); // 5 seconds timeout
+  
+  if (bytesReceived != sizeof(MsgBindResponse)) {
+    Log::getInstance().error(std::format("Failed to receive handshake response, received {} of {} bytes", 
+                                        (bytesReceived > 0 ? bytesReceived : 0), sizeof(MsgBindResponse)));
+    if (bytesReceived < 0) {
+      SocketLogLastError();
+    }
+    throw std::runtime_error("Failed to receive handshake response");
+  }
+  
+  // Extract the connection ID
+  MsgBindResponse response;
+  std::memcpy(&response, responseBuffer.data(), sizeof(MsgBindResponse));
+  
+  // Store the connection ID
+  this->connectionId = response.connectionId;
+  
+  // Update the state to authenticated
+  state = ConnectionState::AUTHENTICATED;
+  
+  Log::getInstance().info(std::format("Handshake completed successfully. Connection ID: {}", this->connectionId));
 }

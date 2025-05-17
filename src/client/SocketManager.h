@@ -10,7 +10,7 @@
 
 class SocketManager {
 public:
-    SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections);
+    SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections, uint32_t clientId = 1);
     ~SocketManager(); // Destructor declaration
     void manageSockets();
     void cleanupResources();

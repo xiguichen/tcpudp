@@ -33,8 +33,10 @@ void Log::log(LogLevel level, const std::string &message) {
   }
 }
 
-std::string Log::getLogLevelString(LogLevel level) {
+std::string Log::getLogLevelString(LogLevel level) const {
   switch (level) {
+  case LogLevel::LOG_DEBUG:
+    return "DEBUG";
   case LogLevel::LOG_INFO:
     return "INFO";
   case LogLevel::LOG_WARN:
@@ -46,6 +48,23 @@ std::string Log::getLogLevelString(LogLevel level) {
   }
 }
 
+LogLevel Log::stringToLogLevel(const std::string& levelStr) {
+  if (levelStr == "DEBUG" || levelStr == "debug") {
+    return LogLevel::LOG_DEBUG;
+  } else if (levelStr == "INFO" || levelStr == "info") {
+    return LogLevel::LOG_INFO;
+  } else if (levelStr == "WARNING" || levelStr == "warning" || levelStr == "WARN" || levelStr == "warn") {
+    return LogLevel::LOG_WARN;
+  } else if (levelStr == "ERROR" || levelStr == "error") {
+    return LogLevel::LOG_ERROR;
+  } else {
+    // Default to INFO if unknown
+    return LogLevel::LOG_INFO;
+  }
+}
+
+void Log::debug(const std::string &message) { log(LogLevel::LOG_DEBUG, message); }
+
 void Log::info(const std::string &message) { log(LogLevel::LOG_INFO, message); }
 
 void Log::warning(const std::string &message) {
@@ -53,9 +72,5 @@ void Log::warning(const std::string &message) {
 }
 
 void Log::error(const std::string &message) { log(LogLevel::LOG_ERROR, message); }
-
-void Log::debug(const std::string &message) {
-  log(LogLevel::LOG_INFO, "DEBUG: " + message); // Assuming debug is a type of info
-}
 
 } // namespace Logger

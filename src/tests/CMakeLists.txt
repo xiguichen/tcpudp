@@ -22,7 +22,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
 # Include directories
-include_directories("${CMAKE_SOURCE_DIR}/sdk/nlohman_json/include")
+include_directories("${CMAKE_SOURCE_DIR}/third_party")
 
 # add google test include directories
 include_directories(${googletest_SOURCE_DIR}/googletest/include)
@@ -45,6 +45,8 @@ file(GLOB_RECURSE SOURCES "*.cpp" "*.h")
 # find all source files in the server directory
 file(GLOB_RECURSE SERVER_SOURCES "${CMAKE_SOURCE_DIR}/server/*.cpp" "${CMAKE_SOURCE_DIR}/server/*.h")
 
+# We'll only include the test files, not the actual client implementation
+# to avoid dependency issues
 
 # Define the executable
 add_executable(CommonTest

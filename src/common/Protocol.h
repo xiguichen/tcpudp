@@ -127,6 +127,7 @@ public:
   static void AppendMsgBindResponse(const MsgBindResponse &bindResponse,
                                     std::vector<T> &outputBuffer) {
     size_t currentSize = outputBuffer.size();
+    outputBuffer.resize(currentSize + sizeof(MsgBindResponse));
     std::copy(reinterpret_cast<const T *>(&bindResponse),
               reinterpret_cast<const T *>(&bindResponse) +
                   sizeof(MsgBindResponse),
@@ -184,6 +185,15 @@ public:
       }
     }
     return false; // Connection not found
+  }
+  
+  // Remove all connections (for testing purposes)
+  void removeAllConnections() {
+    for (auto connection : connections) {
+      delete connection;
+    }
+    connections.clear();
+    connectionIds.clear();
   }
 
 private:

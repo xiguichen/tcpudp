@@ -6,10 +6,10 @@
 
 using namespace Logger;
 
-SocketManager::SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections)
+SocketManager::SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections, uint32_t clientId)
     : localUdpSocket(udpPort) {
     for (const auto& connection : peerConnections) {
-        peerTcpSockets.emplace_back(connection.first, connection.second);
+        peerTcpSockets.emplace_back(connection.first, connection.second, clientId);
     }
 }
 
@@ -76,8 +76,13 @@ void SocketManager::localHostWriteTask(bool& running) {
             std::vector<char> data = udpToTcpQueue.dequeue();
             if(data.size()) {
                 try {
-                    // Send data with non-blocking I/O
-                    peerTcpSockets[i].send(data);
+                    // Only send if the socket is authenticated
+                    if (peerTcpSockets[i].isAuthenticated()) {
+                        // Send data with non-blocking I/O
+                        peerTcpSockets[i].send(data);
+                    } else {
+                        Log::getInstance().warning(std::format("Socket {} not authenticated, skipping send", i));
+                    }
                     i = (i + 1) % peerTcpSockets.size();
                 } catch (const std::exception& e) {
                     Log::getInstance().error(std::format("Failed to send data to peer: {}", e.what()));
@@ -98,8 +103,8 @@ void SocketManager::localHostWriteTask(bool& running) {
 
 void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket) {
     try {
-        // Send handshake with non-blocking I/O
-        peerTcpSocket.sendHandshake();
+        // Complete the handshake process (send handshake and receive response)
+        peerTcpSocket.completeHandshake();
         
         int emptyDataCount = 0;
         const int MAX_EMPTY_DATA_COUNT = 10; // Allow some empty receives before considering connection dead

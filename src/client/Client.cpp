@@ -18,8 +18,8 @@ Client::Client(const std::string& configFile)
         peerConnections.emplace_back(peerAddress, peerTcpPort);
     }
 
-    // Initialize socket manager
-    socketManager = std::make_shared<SocketManager>(localHostUdpPort, peerConnections);
+    // Initialize socket manager with client ID
+    socketManager = std::make_shared<SocketManager>(localHostUdpPort, peerConnections, clientId);
 }
 
 void Client::loadConfig(const std::string& configFile) {
