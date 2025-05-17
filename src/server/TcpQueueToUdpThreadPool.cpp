@@ -2,6 +2,8 @@
 #include "TcpDataQueue.h"
 #include "Configuration.h"
 #include "TcpToUdpSocketMap.h"
+#include "ClientUdpSocketManager.h"
+#include <Protocol.h>
 #include <iostream>
 #include <vector>
 #include <memory>

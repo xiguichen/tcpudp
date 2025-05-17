@@ -11,6 +11,8 @@
 #include "UdpToQueueThread.h"
 #include "UdpQueueToTcpThreadPool.h"
 #include "TcpQueueToUdpThreadPool.h"
+#include "ClientUdpSocketManager.h"
+#include <Protocol.h>
 #include <Socket.h>
 #include <Log.h>
 using namespace Logger;
@@ -123,34 +125,15 @@ void SocketManager::acceptConnection() {
         return;
     }
 
-    // Create a new UDP socket for this client
-    int udpSocket = CreateSocket(AF_INET, SOCK_DGRAM, 0);
-    if (udpSocket < 0) {
-        std::cerr << "Failed to create UDP socket" << std::endl;
-        SocketClose(clientSocket);
-        return;
-    }
-    
-    // Set UDP socket to non-blocking mode
-    if (SetSocketNonBlocking(udpSocket) < 0) {
-        std::cerr << "Failed to set UDP socket to non-blocking mode" << std::endl;
-        SocketClose(clientSocket);
-        SocketClose(udpSocket);
-        return;
-    }
-
-    // Map the TCP and UDP sockets
-    UdpToTcpSocketMap::getInstance().mapSockets(udpSocket, clientSocket);
-    TcpToUdpSocketMap::getInstance().mapSockets(clientSocket, udpSocket);
-    
     // Log client connection
     char clientIP[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIP, INET_ADDRSTRLEN);
     Log::getInstance().info(std::format("Accepted connection from {}:{}", clientIP, ntohs(clientAddr.sin_port)));
 
-    // Start threads for handling TCP and UDP data
+    // Start TCP thread to handle the handshake and get the clientId
     startTcpToQueueThread(clientSocket);
-    startUdpToQueueThread(udpSocket);
+    
+    // Note: UDP socket will be created after the handshake when we know the clientId
 }
 
 

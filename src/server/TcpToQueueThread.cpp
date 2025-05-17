@@ -13,6 +13,10 @@
 #include <vector>
 #include "Configuration.h"
 #include "Protocol.h"
+#include "ClientUdpSocketManager.h"
+#include "TcpToUdpSocketMap.h"
+#include "UdpToTcpSocketMap.h"
+#include "UdpToQueueThread.h"
 
 using namespace Logger;
 
@@ -61,9 +65,32 @@ void TcpToQueueThread::run() {
     return;
   }
 
+  // Create a new connection for this client
   pConnection connection = ConnectionManager::getInstance().createConnection(bind.clientId);
   MsgBindResponse bindResponse;
   bindResponse.connectionId = connection->connectionId;
+
+  // Get or create a UDP socket for this client
+  int udpSocket = ClientUdpSocketManager::getInstance().getOrCreateUdpSocket(bind.clientId);
+  if (udpSocket < 0) {
+    Log::getInstance().error(std::format("Failed to create UDP socket for client ID: {}", bind.clientId));
+    SocketClose(socket_);
+    return;
+  }
+
+  // Map the TCP and UDP sockets
+  UdpToTcpSocketMap::getInstance().mapSockets(udpSocket, socket_);
+  TcpToUdpSocketMap::getInstance().mapSockets(socket_, udpSocket);
+  
+  // Start UDP thread if this is the first connection for this client
+  if (ConnectionManager::getInstance().getClientConnectionCount(bind.clientId) == 1) {
+    // Start a thread to handle UDP data for this client
+    startUdpToQueueThread(udpSocket);
+    Log::getInstance().info(std::format("Started UDP thread for client ID: {}", bind.clientId));
+  }
+  
+  Log::getInstance().info(std::format("Mapped TCP socket {} to UDP socket {} for client ID: {}", 
+                                     socket_, udpSocket, bind.clientId));
 
   // Get a buffer for the response
   auto outputBuffer = MemoryPool::getInstance().getBuffer(0);
@@ -185,4 +212,12 @@ void TcpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffe
   TcpDataQueue::getInstance().enqueue(socket_, dataBuffer);
   
   // Note: The buffer is now owned by the queue and will be recycled when no longer needed
+}
+
+void TcpToQueueThread::startUdpToQueueThread(int udpSocket) {
+  auto thread = std::thread([udpSocket]() {
+    UdpToQueueThread udpToQueueThread(udpSocket);
+    udpToQueueThread.run();
+  });
+  thread.detach(); // Detach the thread to let it run independently
 }
