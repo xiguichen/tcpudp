@@ -1,7 +1,7 @@
 #ifndef UDP_TO_TCP_SOCKET_MAP_H
 #define UDP_TO_TCP_SOCKET_MAP_H
 
-#include <map>
+#include <unordered_map>
 #include <vector>
 
 class UdpToTcpSocketMap {
@@ -16,12 +16,16 @@ public:
     void Reset();
 
 private:
-    UdpToTcpSocketMap() = default;
+    UdpToTcpSocketMap() {
+        // Reserve space for expected number of connections
+        socketMap.reserve(1000);
+        lastMappedTcpSocketIndex.reserve(1000);
+    }
     ~UdpToTcpSocketMap() = default;
     UdpToTcpSocketMap(const UdpToTcpSocketMap&) = delete;
     UdpToTcpSocketMap& operator=(const UdpToTcpSocketMap&) = delete;
-    std::map<int, std::vector<int>> socketMap;
-    std::map<int, int> lastMappedTcpSocketIndex;
+    std::unordered_map<int, std::vector<int>> socketMap;
+    std::unordered_map<int, int> lastMappedTcpSocketIndex;
 };
 
 #endif // UDP_TO_TCP_SOCKET_MAP_H

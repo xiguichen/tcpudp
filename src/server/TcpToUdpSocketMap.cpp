@@ -5,5 +5,9 @@ void TcpToUdpSocketMap::mapSockets(int tcpSocket, int udpSocket) {
 }
 
 int TcpToUdpSocketMap::retrieveMappedUdpSocket(int tcpSocket) {
-    return socketMap[tcpSocket];
+    auto it = socketMap.find(tcpSocket);
+    if (it != socketMap.end()) {
+        return it->second;
+    }
+    return -1; // Invalid socket
 }
