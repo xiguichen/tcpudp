@@ -1,11 +1,11 @@
 #ifndef TCP_DATA_QUEUE_H
 #define TCP_DATA_QUEUE_H
 
-#include <queue>
 #include <utility>
-#include <mutex>
 #include <vector>
-#include <condition_variable>
+#include <memory>
+#include <atomic>
+#include "../common/LockFreeQueue.h"
 
 class TcpDataQueue {
 public:
@@ -18,10 +18,11 @@ public:
     std::pair<int, std::shared_ptr<std::vector<char>>> dequeue();
 
 private:
-    std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
-    std::mutex queueMutex;
-
-    std::condition_variable cv;
+    // Using our lock-free queue implementation
+    LockFreeQueue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue{4096};
+    
+    // Atomic flag for signaling when data is available
+    std::atomic<bool> dataAvailable{false};
 
     TcpDataQueue() = default;
     ~TcpDataQueue() = default;
