@@ -10,6 +10,7 @@
 #include <functional>
 #include <chrono>
 #include <thread>
+#include <cstddef>
 
 // A thread-safe memory pool for efficient buffer allocation and reuse
 class MemoryPool {
