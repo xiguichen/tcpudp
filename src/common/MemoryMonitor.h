@@ -45,10 +45,9 @@ public:
     // Track memory allocation
     void trackAllocation(size_t bytes) {
         currentMemoryUsage_.fetch_add(bytes, std::memory_order_relaxed);
-        peakMemoryUsage_.store(
-            std::max(peakMemoryUsage_.load(std::memory_order_relaxed), 
-                    currentMemoryUsage_.load(std::memory_order_relaxed)),
-            std::memory_order_relaxed);
+        auto m = std::max(peakMemoryUsage_.load(std::memory_order_relaxed), 
+        currentMemoryUsage_.load(std::memory_order_relaxed));
+        peakMemoryUsage_.store(m, std::memory_order_relaxed);
     }
     
     // Track memory deallocation
