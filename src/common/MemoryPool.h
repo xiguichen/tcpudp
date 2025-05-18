@@ -32,7 +32,7 @@ public:
     MemoryStats getStats();
     void trim(float percentToKeep = 0.5f);
     void setMaxPoolSize(size_t size);
-    void setBufferSizes(size_t small, size_t medium, size_t large);
+    void setBufferSizes(size_t small1, size_t medium1, size_t large1);
 
 private:
     MemoryPool();
