@@ -27,10 +27,13 @@ void signalHandler(int signum) {
     if (g_socketManager != nullptr) {
         Log::getInstance().info("Starting graceful shutdown...");
         g_socketManager->shutdown();
+        
+        // Setting the socket manager to nullptr after shutdown
+        g_socketManager = nullptr;
     }
     
-    // Exit program after cleanup
-    exit(signum);
+    // Don't call exit() here - let the main loop detect that isRunning() is false
+    // and perform a clean exit
 }
 
 void printUsage(const char* programName) {

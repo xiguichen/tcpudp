@@ -25,17 +25,25 @@ SocketManager::~SocketManager() {
 }
 
 void SocketManager::shutdown() {
+    // First log the shutdown attempt
+    Log::getInstance().info("Shutting down server...");
+    
     // Set running flag to false to stop all threads
     running = false;
     
-    Log::getInstance().info("Shutting down server...");
+    // Wait a short time for threads to notice the running flag change
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
     // Only join threads if they haven't been joined already
     if (!threadsJoined) {
         Log::getInstance().info("Waiting for all threads to complete...");
         for (auto& thread : threads) {
             if (thread.joinable()) {
-                thread.join();
+                try {
+                    thread.join();
+                } catch (const std::exception& e) {
+                    Log::getInstance().error(std::string("Exception joining thread: ") + e.what());
+                }
             }
         }
         threadsJoined = true;
