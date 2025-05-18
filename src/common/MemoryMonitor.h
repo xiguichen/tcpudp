@@ -10,6 +10,7 @@
 #include <string>
 #include <iostream>
 #include <format>
+#include <algorithm>
 #include "Log.h"
 
 // A class to monitor memory usage and provide alerts when thresholds are exceeded
