@@ -2,6 +2,7 @@
 #include <Protocol.h>
 #include <memory>
 #include <vector>
+#include <algorithm>
 
 // Mock socket class for testing
 class SimpleMockSocket {
