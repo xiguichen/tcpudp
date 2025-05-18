@@ -16,100 +16,19 @@
 // A class to monitor memory usage and provide alerts when thresholds are exceeded
 class MemoryMonitor {
 public:
-    static MemoryMonitor& getInstance() {
-        static MemoryMonitor instance;
-        return instance;
-    }
-    
-    // Start monitoring memory usage
-    void start() {
-        if (isRunning_) {
-            return;
-        }
-        
-        isRunning_ = true;
-        monitorThread_ = std::thread(&MemoryMonitor::monitorLoop, this);
-    }
-    
-    // Stop monitoring memory usage
-    void stop() {
-        if (!isRunning_) {
-            return;
-        }
-        
-        isRunning_ = false;
-        if (monitorThread_.joinable()) {
-            monitorThread_.join();
-        }
-    }
-    
-    // Track memory allocation
-    void trackAllocation(size_t bytes) {
-        currentMemoryUsage_.fetch_add(bytes, std::memory_order_relaxed);
-        auto m = std::max(peakMemoryUsage_.load(std::memory_order_relaxed), 
-        currentMemoryUsage_.load(std::memory_order_relaxed));
-        peakMemoryUsage_.store(m, std::memory_order_relaxed);
-    }
-    
-    // Track memory deallocation
-    void trackDeallocation(size_t bytes) {
-        currentMemoryUsage_.fetch_sub(bytes, std::memory_order_relaxed);
-    }
-    
-    // Get current memory usage
-    size_t getCurrentMemoryUsage() const {
-        return currentMemoryUsage_.load(std::memory_order_relaxed);
-    }
-    
-    // Get peak memory usage
-    size_t getPeakMemoryUsage() const {
-        return peakMemoryUsage_.load(std::memory_order_relaxed);
-    }
-    
-    // Reset peak memory usage
-    void resetPeakMemoryUsage() {
-        peakMemoryUsage_.store(currentMemoryUsage_.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    }
-    
-    // Set memory usage threshold for alerts
-    void setMemoryThreshold(size_t bytes) {
-        memoryThreshold_ = bytes;
-    }
-    
-    // Register a callback for memory alerts
-    void registerAlertCallback(std::function<void(size_t)> callback) {
-        std::lock_guard<std::mutex> lock(callbacksMutex_);
-        alertCallbacks_.push_back(callback);
-    }
-    
-    // Register the default alert handler
+    static MemoryMonitor& getInstance();
+    void start();
+    void stop();
+    void trackAllocation(size_t bytes);
+    void trackDeallocation(size_t bytes);
+    size_t getCurrentMemoryUsage() const;
+    size_t getPeakMemoryUsage() const;
+    void resetPeakMemoryUsage();
+    void setMemoryThreshold(size_t bytes);
+    void registerAlertCallback(std::function<void(size_t)> callback);
     void registerDefaultAlertHandler();
-    
-    // Format memory size for human-readable output
-    static std::string formatMemorySize(size_t bytes) {
-        const char* units[] = {"B", "KB", "MB", "GB", "TB"};
-        int unitIndex = 0;
-        double size = static_cast<double>(bytes);
-        
-        while (size >= 1024.0 && unitIndex < 4) {
-            size /= 1024.0;
-            unitIndex++;
-        }
-        
-        return std::format("{:.2f} {}", size, units[unitIndex]);
-    }
-    
-    // Log current memory usage
-    void logMemoryUsage() {
-        size_t current = getCurrentMemoryUsage();
-        size_t peak = getPeakMemoryUsage();
-        
-        Logger::Log::getInstance().info(std::format(
-            "Memory usage - Current: {}, Peak: {}", 
-            formatMemorySize(current), 
-            formatMemorySize(peak)
-        ));
-    }
+    static std::string formatMemorySize(size_t bytes);
+    void logMemoryUsage();
 
 private:
     MemoryMonitor() 
@@ -119,39 +38,9 @@ private:
           memoryThreshold_(100 * 1024 * 1024)  // Default 100MB threshold
     {}
     
-    ~MemoryMonitor() {
-        stop();
-    }
-    
-    // Memory monitoring loop
-    void monitorLoop() {
-        while (isRunning_) {
-            // Check memory usage every second
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            
-            size_t currentUsage = currentMemoryUsage_.load(std::memory_order_relaxed);
-            
-            // Log memory usage every 10 seconds
-            auto now = std::chrono::steady_clock::now();
-            if (now - lastLogTime_ >= std::chrono::seconds(10)) {
-                logMemoryUsage();
-                lastLogTime_ = now;
-            }
-            
-            // Check if memory usage exceeds threshold
-            if (currentUsage > memoryThreshold_) {
-                triggerAlerts(currentUsage);
-            }
-        }
-    }
-    
-    // Trigger memory alert callbacks
-    void triggerAlerts(size_t currentUsage) {
-        std::lock_guard<std::mutex> lock(callbacksMutex_);
-        for (const auto& callback : alertCallbacks_) {
-            callback(currentUsage);
-        }
-    }
+    ~MemoryMonitor();
+    void monitorLoop();
+    void triggerAlerts(size_t currentUsage);
     
     std::atomic<bool> isRunning_;
     std::thread monitorThread_;
