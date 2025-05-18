@@ -21,6 +21,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 # add a macro to disable secure warnings
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
+# Prevent Windows min/max macros from conflicting with C++ std::min/std::max
+if(WIN32)
+  add_definitions(-DNOMINMAX)
+endif()
+
 # Include directories
 include_directories("${CMAKE_SOURCE_DIR}/third_party")
 
