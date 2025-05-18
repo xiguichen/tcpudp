@@ -2,6 +2,7 @@
 #include <Log.h>
 #include <Protocol.h>
 #include <thread>
+#include <format>
 #include "../common/PerformanceMonitor.h"
 using namespace Logger;
 
