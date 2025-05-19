@@ -2,6 +2,7 @@
 
 #include "UdpDataQueue.h"
 #include "UdpToTcpSocketMap.h"
+#include "SocketManager.h"
 #include <Log.h>
 #include <Socket.h>
 #ifndef _WIN32
@@ -23,7 +24,7 @@ void UdpQueueToTcpThreadPool::run() {
 }
 
 void UdpQueueToTcpThreadPool::processDataConcurrently() {
-  while (true) {
+  while (SocketManager::isServerRunning()) {
     // Dequeue data from the UDP data queue
     auto dataPair = UdpDataQueue::getInstance().dequeue();
     if (dataPair.first != -1) {

@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <Socket.h>
+#include "SocketManager.h"
 #include <vector>
 #ifndef _WIN32
 #include <sys/socket.h>
@@ -23,7 +24,7 @@ void UdpToQueueThread::run() {
     // Get a buffer from the memory pool with optimal size for UDP packets
     auto buffer = MemoryPool::getInstance().getBuffer(4096);
     
-    while (true) {
+    while (SocketManager::isServerRunning()) {
         // Check if socket is readable with a short timeout
         if (IsSocketReadable(socket_, 100)) { // 100ms timeout
             ssize_t bytesRead = readFromUdpSocket(buffer->data(), buffer->capacity());
@@ -52,8 +53,9 @@ void UdpToQueueThread::run() {
         }
     }
     
-    // Recycle the buffer (though this code is unreachable in the current implementation)
+    // Recycle the buffer when the thread exits
     MemoryPool::getInstance().recycleBuffer(buffer);
+    Log::getInstance().info("UDP to Queue thread exiting");
 }
 
 size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {

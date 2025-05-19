@@ -4,6 +4,7 @@
 #include <thread>
 #include <Socket.h>
 #include <vector>
+#include <atomic>
 
 class SocketManager {
 public:
@@ -21,12 +22,17 @@ public:
     
     // Shutdown mechanism
     void shutdown();
-    bool isRunning() const { return running; }
+    bool isRunning() const;
+    
+    // Static method to check if server is running
+    static bool isServerRunning();
 
   private:
     int serverSocket;
     std::vector<std::thread> threads;
-    bool running;
+    
+    // Static atomic flag for controlling all threads
+    static std::atomic<bool> s_running;
     
     // Prevent threads from joining multiple times during cleanup
     bool threadsJoined;
