@@ -17,7 +17,10 @@
 #include <Log.h>
 using namespace Logger;
 
-SocketManager::SocketManager() : serverSocket(-1), running(true), threadsJoined(false) {}
+// Static variable for running state
+std::atomic<bool> SocketManager::s_running(true);
+
+SocketManager::SocketManager() : serverSocket(-1), threadsJoined(false) {}
 
 SocketManager::~SocketManager() {
     // Call shutdown to ensure proper cleanup
@@ -29,7 +32,7 @@ void SocketManager::shutdown() {
     Log::getInstance().info("Shutting down server...");
     
     // Set running flag to false to stop all threads
-    running = false;
+    s_running.store(false);
     
     // Wait a short time for threads to notice the running flag change
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -113,7 +116,7 @@ void SocketManager::listenForConnections() {
 
 void SocketManager::acceptConnection() {
     // Check if server should still be running
-    if (!running) {
+    if (!isServerRunning()) {
         return;
     }
     

@@ -1,5 +1,6 @@
 #include "TcpToQueueThread.h"
 #include "TcpDataQueue.h"
+#include "SocketManager.h"
 #include <Log.h>
 #include <Protocol.h>
 #include <Socket.h>
@@ -118,7 +119,7 @@ void TcpToQueueThread::run() {
   buffer->resize(bufferSize);
 
   // Main processing loop
-  while (true) {
+  while (SocketManager::isServerRunning()) {
     // Check if socket is readable with a short timeout
     if (IsSocketReadable(socket_, 100)) { // 100ms timeout
       Log::getInstance().info("Client -> Server (Receive TCP Data)");
