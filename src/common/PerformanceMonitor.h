@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 #include <mutex>
+#include <future>
 
 class PerformanceMonitor {
 public:
@@ -22,22 +23,51 @@ public:
     }
     
     void startMonitoring(int intervalSeconds = 10) {
-        if (monitoringActive.exchange(true)) {
-            return; // Already running
+        // If already running, stop it first
+        if (monitoringActive.load(std::memory_order_acquire)) {
+            stopMonitoring();
         }
         
+        // Set active flag and start thread
+        monitoringActive.store(true, std::memory_order_release);
         monitoringThread = std::thread([this, intervalSeconds]() {
             while (monitoringActive.load(std::memory_order_acquire)) {
-                std::this_thread::sleep_for(std::chrono::seconds(intervalSeconds));
-                printPerformanceReport();
+                // Use a shorter sleep with periodic checks
+                for (int i = 0; i < intervalSeconds && monitoringActive.load(std::memory_order_acquire); i++) {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+                
+                if (monitoringActive.load(std::memory_order_acquire)) {
+                    printPerformanceReport();
+                }
             }
+            
+            // Final report when stopping
+            printPerformanceReport();
         });
         
-        monitoringThread.detach();
+        // Don't detach immediately - keep thread joinable
     }
     
     void stopMonitoring() {
+        // Set the atomic flag to false
         monitoringActive.store(false, std::memory_order_release);
+        
+        // Join the thread if it's joinable
+        if (monitoringThread.joinable()) {
+            // Wait with timeout
+            std::future<void> future = std::async(std::launch::async, [this]() {
+                if (monitoringThread.joinable()) {
+                    monitoringThread.join();
+                }
+            });
+            
+            // Wait for 1 second max
+            if (future.wait_for(std::chrono::seconds(1)) == std::future_status::timeout) {
+                // If thread doesn't respond, detach it
+                monitoringThread.detach();
+            }
+        }
     }
     
     void printPerformanceReport() {

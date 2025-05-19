@@ -1,6 +1,7 @@
 #include "TcpQueueToUdpThreadPool.h"
 #include "TcpDataQueue.h"
 #include "Configuration.h"
+#include "SocketManager.h"
 #include "TcpToUdpSocketMap.h"
 #include "ClientUdpSocketManager.h"
 #include <Protocol.h>
@@ -14,12 +15,15 @@
 using namespace Logger;
 
 void TcpQueueToUdpThreadPool::run() {
-    while (true) {
+    while (SocketManager::isServerRunning()) {
         processData();
     }
 }
 
 void TcpQueueToUdpThreadPool::processData() {
+    // Check running state before processing
+    if (!SocketManager::isServerRunning()) return;
+    
     auto dataPair = TcpDataQueue::getInstance().dequeue();
     if (dataPair.second) {
         sendDataViaUdp(dataPair.first, dataPair.second);
