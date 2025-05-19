@@ -24,6 +24,10 @@ void signalHandler(int signum) {
         return;
     }
     
+    // Stop performance monitoring
+    Log::getInstance().info("Stopping performance monitoring...");
+    PerformanceMonitor::getInstance().stopMonitoring();
+    
     if (g_socketManager != nullptr) {
         Log::getInstance().info("Starting graceful shutdown...");
         g_socketManager->shutdown();
@@ -31,6 +35,17 @@ void signalHandler(int signum) {
         // Setting the socket manager to nullptr after shutdown
         g_socketManager = nullptr;
     }
+    
+    // Force exit after a timeout if server is still hanging
+    std::thread([signum]() {
+        // Wait 5 seconds for graceful shutdown
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        
+        if (g_shutdownInProgress.load()) {
+            Log::getInstance().warning("Forced exit after timeout");
+            exit(128 + signum);
+        }
+    }).detach();
     
     // Don't call exit() here - let the main loop detect that isRunning() is false
     // and perform a clean exit
@@ -105,8 +120,14 @@ int main(int argc, char* argv[]) {
     // Additional cleanup before exiting
     Log::getInstance().info("Main loop exited, performing final cleanup...");
     
+    // Stop performance monitoring if still running
+    PerformanceMonitor::getInstance().stopMonitoring();
+    
     // Reset global pointer
     g_socketManager = nullptr;
+    
+    // Reset shutdown flag
+    g_shutdownInProgress.store(false);
     
     Log::getInstance().info("Server terminated successfully");
     return 0;

@@ -1,5 +1,6 @@
 #include "SocketManager.h"
 #include <iostream>
+#include <future>  // for std::async
 #ifndef _WIN32
 #include <sys/socket.h>
 #include <unistd.h>
@@ -17,7 +18,10 @@
 #include <Log.h>
 using namespace Logger;
 
-SocketManager::SocketManager() : serverSocket(-1), running(true), threadsJoined(false) {}
+// Static variable for running state
+std::atomic<bool> SocketManager::s_running(true);
+
+SocketManager::SocketManager() : serverSocket(-1), threadsJoined(false) {}
 
 SocketManager::~SocketManager() {
     // Call shutdown to ensure proper cleanup
@@ -29,32 +33,55 @@ void SocketManager::shutdown() {
     Log::getInstance().info("Shutting down server...");
     
     // Set running flag to false to stop all threads
-    running = false;
+    s_running.store(false);
     
     // Wait a short time for threads to notice the running flag change
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
+    // Close server socket first to prevent accepting new connections
+    if (serverSocket != -1) {
+        Log::getInstance().info("Closing server socket");
+        SocketClose(serverSocket);
+        serverSocket = -1;
+    }
+    
     // Only join threads if they haven't been joined already
     if (!threadsJoined) {
         Log::getInstance().info("Waiting for all threads to complete...");
+        
+        // Join each thread with a timeout
         for (auto& thread : threads) {
             if (thread.joinable()) {
                 try {
-                    thread.join();
+                    // Create a future to track if the thread join completes
+                    std::future<void> future = std::async(std::launch::async, [&thread]() {
+                        try {
+                            if (thread.joinable()) {
+                                thread.join();
+                            }
+                        } catch (const std::exception& e) {
+                            Log::getInstance().error(std::string("Exception in thread join: ") + e.what());
+                        }
+                    });
+                    
+                    // Wait for thread join with timeout
+                    auto status = future.wait_for(std::chrono::milliseconds(500)); // 500ms timeout
+                    
+                    if (status == std::future_status::timeout) {
+                        // Thread join timed out
+                        Log::getInstance().warning("Thread join timed out, detaching");
+                        thread.detach(); // Detach the original thread
+                    }
                 } catch (const std::exception& e) {
                     Log::getInstance().error(std::string("Exception joining thread: ") + e.what());
                 }
             }
         }
+        
+        // Clear the thread vector
+        threads.clear();
         threadsJoined = true;
-        Log::getInstance().info("All threads joined successfully");
-    }
-    
-    // Close server socket if open
-    if (serverSocket != -1) {
-        Log::getInstance().info("Closing server socket");
-        SocketClose(serverSocket);
-        serverSocket = -1;
+        Log::getInstance().info("All threads processed");
     }
     
     Log::getInstance().info("Server shutdown complete");
@@ -111,9 +138,17 @@ void SocketManager::listenForConnections() {
     Log::getInstance().info("Server socket listening for connections");
 }
 
+bool SocketManager::isRunning() const {
+    return s_running.load();
+}
+
+bool SocketManager::isServerRunning() {
+    return s_running.load();
+}
+
 void SocketManager::acceptConnection() {
     // Check if server should still be running
-    if (!running) {
+    if (!isServerRunning()) {
         return;
     }
     
