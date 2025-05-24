@@ -57,19 +57,63 @@ void TcpToQueueThread::run() {
 
   auto & allowedClientIds = Configuration::getInstance()->getAllowedClientIds();
 
+  // Log the list of allowed client IDs for debugging
+  std::string allowedIdsStr = "Allowed client IDs: ";
+  for (auto id : allowedClientIds) {
+    allowedIdsStr += std::to_string(id) + ", ";
+  }
+  Log::getInstance().info(allowedIdsStr);
+  
   auto bAllow = allowedClientIds.find(bind.clientId) != allowedClientIds.end();
   if(bAllow) {
     Log::getInstance().info(std::format("Client Id: {} is allowed", bind.clientId));
+    
+    // Create a new connection for this client
+    pConnection connection = ConnectionManager::getInstance().createConnection(bind.clientId);
+    MsgBindResponse bindResponse;
+    bindResponse.connectionId = connection->connectionId;
+    
+    // Get a buffer for the acceptance response
+    auto acceptBuffer = MemoryPool::getInstance().getBuffer(0);
+    UvtUtils::AppendMsgBindResponse(bindResponse, *acceptBuffer);
+    
+    // Send acceptance with timeout
+    Log::getInstance().info(std::format("Sending acceptance response to client {}, connectionId: {}", bind.clientId, bindResponse.connectionId));
+    int result = SendTcpDataNonBlocking(socket_, acceptBuffer->data(), acceptBuffer->size(), 0, 5000);
+    
+    // Check result of sending
+    if (result <= 0) {
+      Log::getInstance().error(std::format("Failed to send acceptance response with error code: {}", result));
+      MemoryPool::getInstance().recycleBuffer(acceptBuffer);
+      SocketClose(socket_);
+      return;
+    }
+    
+    // Recycle buffer
+    MemoryPool::getInstance().recycleBuffer(acceptBuffer);
   } else {
     Log::getInstance().error(std::format("Client Id: {} is not allowed", bind.clientId));
+    
+    // Send a rejection response instead of silently closing the socket
+    MsgBindResponse rejectResponse;
+    rejectResponse.connectionId = 0; // Use 0 to indicate rejection
+    
+    // Get a buffer for the reject response
+    auto rejectBuffer = MemoryPool::getInstance().getBuffer(0);
+    UvtUtils::AppendMsgBindResponse(rejectResponse, *rejectBuffer);
+    
+    // Send rejection with timeout
+    Log::getInstance().info("Sending rejection response to unauthorized client");
+    SendTcpDataNonBlocking(socket_, rejectBuffer->data(), rejectBuffer->size(), 0, 5000);
+    
+    // Recycle buffer and close socket
+    MemoryPool::getInstance().recycleBuffer(rejectBuffer);
     SocketClose(socket_);
     return;
   }
 
-  // Create a new connection for this client
-  pConnection connection = ConnectionManager::getInstance().createConnection(bind.clientId);
-  MsgBindResponse bindResponse;
-  bindResponse.connectionId = connection->connectionId;
+  // Connection was already created and bind response already sent
+  // Use the connectionId already created and sent in the bind response
 
   // Get or create a UDP socket for this client
   int udpSocket = ClientUdpSocketManager::getInstance().getOrCreateUdpSocket(bind.clientId);
@@ -93,20 +137,8 @@ void TcpToQueueThread::run() {
   Log::getInstance().info(std::format("Mapped TCP socket {} to UDP socket {} for client ID: {}", 
                                      socket_, udpSocket, bind.clientId));
 
-  // Get a buffer for the response
-  auto outputBuffer = MemoryPool::getInstance().getBuffer(0);
-  UvtUtils::AppendMsgBindResponse(bindResponse, *outputBuffer);
-
-  // Send response with timeout
-  result = SendTcpDataNonBlocking(socket_, outputBuffer->data(), outputBuffer->size(), 0, 5000); // 5 seconds timeout
-  if (result != static_cast<int>(outputBuffer->size())) {
-    Log::getInstance().error(std::format("Failed to send tcp data with return code: {}", result));
-    SocketClose(socket_);
-    return;
-  }
-
-  // Recycle the output buffer
-  MemoryPool::getInstance().recycleBuffer(outputBuffer);
+  // Log that the handshake response was already sent earlier
+  Log::getInstance().info("Handshake response already sent during client authorization check");
 
   Log::getInstance().info("End capability negotiate");
 
