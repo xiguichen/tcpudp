@@ -51,6 +51,7 @@ void SocketManager::manageSockets() {
 
 void SocketManager::localHostReadTask(bool& running) {
     try {
+        Log::getInstance().info("Starting LocalHostReadThread");
         while (running) {
             // Non-blocking receive with short timeout
             std::vector<char> data = localUdpSocket.receive();
@@ -107,7 +108,7 @@ void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket
         peerTcpSocket.completeHandshake();
         
         int emptyDataCount = 0;
-        const int MAX_EMPTY_DATA_COUNT = 10; // Allow some empty receives before considering connection dead
+        const int MAX_EMPTY_DATA_COUNT = 1000; // Allow some empty receives before considering connection dead
         
         while (running) {
             // Receive data with non-blocking I/O

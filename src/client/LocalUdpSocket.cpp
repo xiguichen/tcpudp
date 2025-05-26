@@ -89,17 +89,23 @@ std::vector<char> LocalUdpSocket::receive() {
   std::vector<char> buffer(4096);
   socklen_t addrLen = sizeof(localAddress);
 
+  Log::getInstance().debug(std::format("UDP receive attempt - socketFd: {}", socketFd));
+  Log::getInstance().debug(std::format("Local address: {}", inet_ntoa(localAddress.sin_addr)));
+
   // Check if socket is readable with a short timeout
   if (!IsSocketReadable(socketFd, 100)) { // 100ms timeout
-    // No data available, return empty buffer
+    Log::getInstance().debug("Socket not readable within 100ms timeout");
     return {};
   }
+  Log::getInstance().debug("Socket is readable");
 
   // Receive data non-blocking with timeout
+  Log::getInstance().debug("Attempting to receive UDP data with 1000ms timeout");
   ssize_t receivedBytes = RecvUdpDataNonBlocking(socketFd, buffer.data(), buffer.size(), 0,
                                                (struct sockaddr *)&localAddress, &addrLen, 1000); // 1 second timeout
   
   if (receivedBytes < 0) {
+    Log::getInstance().error(std::format("Failed to receive UDP data, error code: {}", receivedBytes));
     if (receivedBytes == SOCKET_ERROR_TIMEOUT) {
       Log::getInstance().info("Timeout while receiving UDP data");
     } else if (receivedBytes == SOCKET_ERROR_WOULD_BLOCK) {
@@ -110,6 +116,8 @@ std::vector<char> LocalUdpSocket::receive() {
     }
     return {};
   }
+  
+  Log::getInstance().info(std::format("Successfully received {} bytes of UDP data", receivedBytes));
   
   // Resize buffer to actual received bytes
   buffer.resize(receivedBytes);

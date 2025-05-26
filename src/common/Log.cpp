@@ -1,5 +1,8 @@
 #include "Log.h"
 #include <iostream>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 namespace Logger {
 
@@ -26,10 +29,26 @@ void Log::log(LogLevel level, const std::string &message) {
     return;
   }
   std::lock_guard<std::mutex> lock(logMutex);
+  
+  // Get current timestamp with milliseconds
+  auto now = std::chrono::system_clock::now();
+  auto now_c = std::chrono::system_clock::to_time_t(now);
+  
+  // Get milliseconds
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      now - std::chrono::system_clock::from_time_t(now_c)).count();
+  
+  std::stringstream ss;
+  ss << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S") << "." << std::setw(3) << std::setfill('0') << ms;
+  std::string timestamp = ss.str();
+  
+  // Format the log message with timestamp
+  std::string formattedMessage = std::format("{} [{}] {}", timestamp, getLogLevelString(level), message);
+  
   if (logFile.is_open()) {
-    logFile << "[" << getLogLevelString(level) << "] " << message << std::endl;
+    logFile << formattedMessage << std::endl;
   } else {
-    std::cout << "[" << getLogLevelString(level) << "] " << message << std::endl;
+    std::cout << formattedMessage << std::endl;
   }
 }
 

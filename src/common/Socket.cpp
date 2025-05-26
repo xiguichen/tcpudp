@@ -202,6 +202,9 @@ ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flag
 
 // Non-blocking I/O operations with timeout
 ssize_t SendTcpDataNonBlocking(SocketFd socketFd, const void *data, size_t length, int flags, int timeoutMs) {
+
+    Log::getInstance().info(std::format("Try to send {} bytes data", length));
+
     // Check if socket is writable within timeout
     if (!IsSocketWritable(socketFd, timeoutMs)) {
         return SOCKET_ERROR_TIMEOUT;

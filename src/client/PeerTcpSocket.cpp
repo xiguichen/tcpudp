@@ -64,6 +64,10 @@ void PeerTcpSocket::send(const std::vector<char> &data) {
     throw std::runtime_error("Cannot send data: Socket not authenticated");
   }
 
+  // log the data size
+  Log::getInstance().info(std::format("vector size: {}", data.size()));
+
+
   // Send data with timeout
   ssize_t result = SendTcpDataNonBlocking(socketFd, data.data(), data.size(), 0, 5000); // 5 seconds timeout
   if (result != static_cast<ssize_t>(data.size())) {
@@ -85,7 +89,7 @@ std::vector<char> PeerTcpSocket::receive() {
 
   // Check if socket is readable with timeout
   if (!IsSocketReadable(socketFd, 1000)) { // 1 second timeout
-    Log::getInstance().info("Socket not readable within timeout");
+    Log::getInstance().debug("Socket not readable within timeout");
     return {};
   }
 

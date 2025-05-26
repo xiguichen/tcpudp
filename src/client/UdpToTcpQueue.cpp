@@ -155,6 +155,9 @@ void UdpToTcpQueue::enqueueAndNotify(const std::vector<char> &data,
     // Get a new buffer from the memory pool
     auto newBuffer = MemoryPool::getInstance().getBuffer(
         (bufferedNewData->size() + data.size()) * 1.2);  // Add 20% extra space
+
+    newBuffer->resize(0);  // Clear the new buffer
+
     
     // Copy buffered data if any
     if (!bufferedNewData->empty()) {
@@ -168,14 +171,20 @@ void UdpToTcpQueue::enqueueAndNotify(const std::vector<char> &data,
     
     // Append new data
     UvtUtils::AppendUdpData(data, sendId.fetch_add(1, std::memory_order_relaxed), *newBuffer);
+
+    Log::getInstance().info(std::format("Appended data size: {}, New buffer size: {}", 
+                                        data.size(), newBuffer->size()));
     
     // Try to enqueue the buffer
     while (!queue.enqueue(newBuffer)) {
         // If queue is full, yield to allow consumers to process
+        Log::getInstance().info("Queue full, yielding to allow processing");
         std::this_thread::yield();
     }
     
     // Update statistics
+    Log::getInstance().info(std::format("Enqueued data size: {}, Current queue size: {}", 
+                                        newBuffer->size(), queue.size()));
     size_t currentSize = queue.size();
     size_t peak = peakQueueSize.load(std::memory_order_relaxed);
     if (currentSize > peak) {
