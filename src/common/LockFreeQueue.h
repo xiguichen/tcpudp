@@ -8,11 +8,14 @@
 #include <thread>
 #include <chrono>
 #include <condition_variable>
-#include <mutex>
 
 // A simple lock-free queue implementation using a fixed-size ring buffer
 template<typename T>
 class LockFreeQueue {
+    std::atomic<bool> has_data_;
+    std::condition_variable not_empty_;
+    std::mutex notify_mutex_;
+
 public:
     explicit LockFreeQueue(size_t capacity = 1024) 
         : buffer_(new Node[capacity + 1]), // +1 to distinguish between empty and full
@@ -28,7 +31,6 @@ public:
 
     // Enqueue an item, returns true if successful, false if queue is full
     bool enqueue(const T& item) {
-        std::lock_guard<std::mutex> lock(mutex_);
         size_t head = head_.load(std::memory_order_relaxed);
         size_t next_head = (head + 1) % capacity_;
         
@@ -40,15 +42,17 @@ public:
         head_.store(next_head, std::memory_order_release);
         
         // Notify waiting consumers
-        has_data_ = true;
-        not_empty_.notify_one();
+        {
+            std::lock_guard<std::mutex> lock(notify_mutex_);
+            has_data_ = true;
+            not_empty_.notify_one();
+        }
         
         return true;
     }
 
     // Dequeue an item, returns true if successful, false if queue is empty
     bool dequeue(T& item) {
-        std::lock_guard<std::mutex> lock(mutex_);
         size_t tail = tail_.load(std::memory_order_relaxed);
         
         if (tail == head_.load(std::memory_order_acquire)) {
@@ -58,28 +62,45 @@ public:
         item = buffer_[tail].data;
         tail_.store((tail + 1) % capacity_, std::memory_order_release);
         
-        // Update has_data_ flag
-        has_data_ = !empty();
+        // Update has_data_ flag when needed
+        if (empty()) {
+            std::lock_guard<std::mutex> lock(notify_mutex_);
+            has_data_.store(false, std::memory_order_release);
+        }
         
         return true;
     }
 
     // Try to dequeue with a timeout
     bool dequeue_with_timeout(T& item, int timeout_ms) {
-        std::unique_lock<std::mutex> lock(mutex_);
-        
-        // Wait for data to be available with timeout
-        if (!has_data_ && !not_empty_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this] { return has_data_; })) {
-            return false; // Timeout occurred
-        }
-        
-        // Data is available, try to dequeue
+        // First try a quick non-blocking dequeue
         if (dequeue(item)) {
             return true;
         }
         
-        // If we got here, the queue was empty after the wait
-        return false;
+        // If no data available, wait with timeout
+        std::unique_lock<std::mutex> lock(notify_mutex_);
+        
+        // Check if queue is empty again (might have changed)
+        if (!empty()) {
+            // Queue now has data, try again after releasing the lock
+            lock.unlock();
+            return dequeue(item);
+        }
+        
+        // Wait for data to become available with timeout
+        bool has_data = not_empty_.wait_for(lock, std::chrono::milliseconds(timeout_ms), 
+            [this] { return !this->empty(); });
+            
+        // Unlock before returning or dequeueing
+        lock.unlock();
+        
+        if (!has_data) {
+            return false; // Timeout occurred
+        }
+        
+        // Try to dequeue again after waiting
+        return dequeue(item);
     }
 
     // Check if the queue is empty
@@ -114,13 +135,11 @@ private:
     // Tail is where we dequeue
     std::atomic<size_t> tail_;
     
-    // Synchronization primitives
-    std::mutex mutex_;
-    std::condition_variable not_empty_;
-    bool has_data_;
+    // Prevent false sharing for notification variables
     
     // Prevent false sharing
     char padding_[64 - sizeof(std::atomic<size_t>)];
 };
+
 
 #endif // LOCK_FREE_QUEUE_H
