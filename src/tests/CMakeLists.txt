@@ -18,6 +18,11 @@ FetchContent_MakeAvailable(googletest)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+# Enable proper exception handling
+if(MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc")
+endif()
+
 # add a macro to disable secure warnings
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 

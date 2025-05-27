@@ -26,7 +26,9 @@ void UdpQueueToTcpThreadPool::run() {
 void UdpQueueToTcpThreadPool::processDataConcurrently() {
   while (SocketManager::isServerRunning()) {
     // Dequeue data from the UDP data queue
+    Log::getInstance().info("Processing data from UDP queue...");
     auto dataPair = UdpDataQueue::getInstance().dequeue();
+    Log::getInstance().info("Get data from UDP queue...");
     if (dataPair.first != -1) {
       // Extract socket and data
       int udpSocket = dataPair.first;

@@ -7,53 +7,13 @@
 using namespace Logger;
 
 void UdpDataQueue::enqueue(int socket,
-                           const std::shared_ptr<std::vector<char>> &data) {
-
-#ifdef BUFFER_UDP_DATA
-  // Lock only for accessing the buffer map
-  std::vector<char>* bufferedNewData;
-  {
-    std::lock_guard<std::mutex> lock(bufferMutex);
-    bufferedNewData = &bufferedNewDataMap[socket];
-  }
-
-  Log::getInstance().info(
-      std::format("previous buffer size: {}", bufferedNewData->size()));
-
-  // 1. If the buffered data size + data size great than 1400, let's send it now
-  if (bufferedNewData->size() + data->size() > 1400) {
-    Log::getInstance().info("Get enough data for send");
-    this->enqueueAndNotify(socket, data, *bufferedNewData);
-  }
-  // 2. Check if we get enough time to send the data
-  else {
-    auto currentTime = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-        currentTime - lastEmitTime);
-    if (duration.count() > 50) {
-      Log::getInstance().info("Time reached for send");
-      this->enqueueAndNotify(socket, data, *bufferedNewData);
-    }
-    // We should buffer the data for next time to send
-    else {
-      // Lock for modifying the buffer
-      std::lock_guard<std::mutex> lock(bufferMutex);
-      UvtUtils::AppendUdpData(*data, sendId.fetch_add(1, std::memory_order_relaxed), *bufferedNewData);
-      Log::getInstance().info(
-          std::format("new buffer size: {}", bufferedNewData->size()));
-    }
-  }
-
-#else
-    
-    Log::getInstance().info("Buffer is not used for UDP data");
+                           const std::shared_ptr<std::vector<char>> &data) {   
     std::vector<char>* bufferedNewData;
     {
       std::lock_guard<std::mutex> lock(bufferMutex);
       bufferedNewData = &bufferedNewDataMap[socket];
     }
     this->enqueueAndNotify(socket, data, *bufferedNewData);
-#endif
 
 }
 
@@ -90,6 +50,7 @@ void UdpDataQueue::enqueueAndNotify(
     int socket, const std::shared_ptr<std::vector<char>> &data,
     std::vector<char> &bufferedNewData) {
   
+  Log::getInstance().info("Enqueueing data to UDP queue...");
   auto startTime = std::chrono::high_resolution_clock::now();
   
   std::shared_ptr<std::vector<char>> newData =
