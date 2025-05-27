@@ -114,6 +114,11 @@ private:
     // Tail is where we dequeue
     std::atomic<size_t> tail_;
     
+    // Synchronization primitives
+    std::mutex mutex_;
+    std::condition_variable not_empty_;
+    bool has_data_;
+    
     // Prevent false sharing
     char padding_[64 - sizeof(std::atomic<size_t>)];
 };
