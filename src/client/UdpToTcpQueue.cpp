@@ -3,12 +3,12 @@
 #include <Log.h>
 #include <format>
 #include <thread>
+#include <PerformanceMonitor.h>
 
 using namespace Logger;
 
-UdpToTcpQueue::UdpToTcpQueue() 
-    : queue(8192),  // Use a larger capacity for better performance
-      lastEmitTime(std::chrono::high_resolution_clock::now()) {
+UdpToTcpQueue::UdpToTcpQueue()
+    : lastEmitTime(std::chrono::high_resolution_clock::now()) {
     
     // Initialize the buffer with memory from our pool
     bufferedNewData = MemoryPool::getInstance().getBuffer(0);
@@ -88,47 +88,29 @@ void UdpToTcpQueue::enqueue(const std::vector<char>& data) {
 
 std::vector<char> UdpToTcpQueue::dequeue() {
     auto startTime = std::chrono::steady_clock::now();
-    
-    std::shared_ptr<std::vector<char>> result;
-    
-    // Try to dequeue with a timeout
-    while (!queue.dequeue_with_timeout(result, 100)) {
-        // If timeout occurs, check if we should continue waiting
-        if (shouldCancel.load(std::memory_order_acquire)) {
-            return {};
-        }
-        
-        if (!dataAvailable.load(std::memory_order_acquire)) {
-            // No data is expected, yield and try again
-            std::this_thread::yield();
-        }
+    std::unique_lock<std::mutex> lock(queueMutex);
+    // Block until queue is not empty or shouldCancel is true
+    queueCondVar.wait(lock, [this]{ return !queue.empty() || shouldCancel.load(std::memory_order_acquire); });
+    if (shouldCancel.load(std::memory_order_acquire)) {
+        return {};
     }
-    
-    // If queue is now empty, update the dataAvailable flag
-    if (queue.empty()) {
-        dataAvailable.store(false, std::memory_order_release);
-    }
-    
+    std::shared_ptr<std::vector<char>> result = queue.front();
+    queue.pop();
+    lock.unlock();
     // Update statistics
     totalDequeued.fetch_add(1, std::memory_order_relaxed);
-    
     // Calculate wait time
     auto endTime = std::chrono::steady_clock::now();
     auto waitTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-    
     totalWaitTimeMs.fetch_add(waitTime.count(), std::memory_order_relaxed);
     waitTimeCount.fetch_add(1, std::memory_order_relaxed);
-    
     // Return a copy of the data
     if (result) {
         std::vector<char> dataCopy(*result);
-        
         // Recycle the buffer
         MemoryPool::getInstance().recycleBuffer(result);
-        
         return dataCopy;
     }
-    
     return {};
 }
 
@@ -136,13 +118,14 @@ void UdpToTcpQueue::cancel() {
     shouldCancel.store(true, std::memory_order_release);
     
     // Clear the queue and recycle all buffers
-    std::shared_ptr<std::vector<char>> item;
-    while (queue.dequeue(item)) {
+    std::lock_guard<std::mutex> lock(queueMutex);
+    while (!queue.empty()) {
+        auto item = queue.front();
+        queue.pop();
         if (item) {
             MemoryPool::getInstance().recycleBuffer(item);
         }
     }
-    
     // Recycle the buffered data
     if (bufferedNewData) {
         MemoryPool::getInstance().recycleBuffer(bufferedNewData);
@@ -151,51 +134,45 @@ void UdpToTcpQueue::cancel() {
 }
 
 void UdpToTcpQueue::enqueueAndNotify(const std::vector<char> &data,
-                                    std::shared_ptr<std::vector<char>> &bufferedNewData) {
+                                     std::shared_ptr<std::vector<char>> &bufferedNewData) {
+    auto startTime = std::chrono::high_resolution_clock::now();
     // Get a new buffer from the memory pool
-    auto newBuffer = MemoryPool::getInstance().getBuffer(
-        (bufferedNewData->size() + data.size()) * 1.2);  // Add 20% extra space
+    auto newBuffer = MemoryPool::getInstance().getBuffer(static_cast<size_t>((bufferedNewData->size() + data.size()) * 1.2));  // Add 20% extra space
 
     newBuffer->resize(0);  // Clear the new buffer
 
-    
     // Copy buffered data if any
     if (!bufferedNewData->empty()) {
         newBuffer->insert(newBuffer->end(), 
                          bufferedNewData->begin(), 
                          bufferedNewData->end());
-        
-        // Clear the buffer
         bufferedNewData->clear();
     }
-    
+
     // Append new data
     UvtUtils::AppendUdpData(data, sendId.fetch_add(1, std::memory_order_relaxed), *newBuffer);
 
-    Log::getInstance().info(std::format("Appended data size: {}, New buffer size: {}", 
-                                        data.size(), newBuffer->size()));
-    
-    // Try to enqueue the buffer
-    while (!queue.enqueue(newBuffer)) {
-        // If queue is full, yield to allow consumers to process
-        Log::getInstance().info("Queue full, yielding to allow processing");
-        std::this_thread::yield();
+    // Enqueue to the standard queue with locking
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        queue.push(newBuffer);
+        size_t currentSize = queue.size();
+        size_t peak = peakQueueSize.load(std::memory_order_relaxed);
+        if (currentSize > peak) {
+            peakQueueSize.store(currentSize, std::memory_order_relaxed);
+        }
     }
-    
-    // Update statistics
-    Log::getInstance().info(std::format("Enqueued data size: {}, Current queue size: {}", 
-                                        newBuffer->size(), queue.size()));
-    size_t currentSize = queue.size();
-    size_t peak = peakQueueSize.load(std::memory_order_relaxed);
-    if (currentSize > peak) {
-        peakQueueSize.store(currentSize, std::memory_order_relaxed);
-    }
-    
-    // Signal that data is available
-    dataAvailable.store(true, std::memory_order_release);
-    
+    queueCondVar.notify_one();
+
     // Update last emit time
     lastEmitTime = std::chrono::high_resolution_clock::now();
+
+    // Record performance metrics
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+    if (newBuffer) {
+        PerformanceMonitor::getInstance().recordPacketProcessed(newBuffer->size(), duration);
+    }
 }
 
 UdpToTcpQueue::QueueStats UdpToTcpQueue::getStats() const {

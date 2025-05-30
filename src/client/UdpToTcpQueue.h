@@ -5,7 +5,6 @@
 #include <chrono>
 #include <atomic>
 #include <memory>
-#include <LockFreeQueue.h>
 #include <MemoryPool.h>
 #include <MemoryMonitor.h>
 
@@ -40,11 +39,10 @@ private:
     void enqueueAndNotify(const std::vector<char> &data,
                          std::shared_ptr<std::vector<char>> &bufferedNewData);
     
-    // Lock-free queue for better performance
-    LockFreeQueue<std::shared_ptr<std::vector<char>>> queue;
-    
-    // Atomic flag for signaling when data is available
-    std::atomic<bool> dataAvailable{false};
+    // Standard queue for UDP-to-TCP data
+    std::queue<std::shared_ptr<std::vector<char>>> queue;
+    std::mutex queueMutex; // Mutex for queue protection
+    std::condition_variable queueCondVar; // Condition variable for producer-consumer
     
     // Cancellation flag
     std::atomic<bool> shouldCancel{false};

@@ -5,7 +5,6 @@
 #include <atomic>
 #include <memory>
 #include <chrono>
-#include <LockFreeQueue.h>
 #include <MemoryPool.h>
 #include <MemoryMonitor.h>
 
@@ -36,11 +35,10 @@ public:
     QueueStats getStats() const;
 
 private:
-    // Lock-free queue for better performance
-    LockFreeQueue<std::shared_ptr<std::vector<char>>> queue;
-    
-    // Atomic flag for signaling when data is available
-    std::atomic<bool> dataAvailable{false};
+    // Standard queue for TCP-to-UDP data
+    std::queue<std::shared_ptr<std::vector<char>>> queue;
+    std::mutex queueMutex; // Mutex for queue protection
+    std::condition_variable queueCondVar; // Condition variable for producer-consumer
     
     // Cancellation flag
     std::atomic<bool> shouldCancel{false};

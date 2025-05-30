@@ -7,8 +7,9 @@
 #include <vector>
 #include <unordered_map>
 #include <atomic>
-#include "../common/LockFreeQueue.h"
-#include <mutex> // Still needed for bufferedNewDataMap access
+#include <queue>
+#include <mutex>
+#include <condition_variable> // For producer-consumer synchronization
 
 class UdpDataQueue {
 public:
@@ -30,12 +31,11 @@ private:
   UdpDataQueue &operator=(const UdpDataQueue &) = delete;
   void enqueueAndNotify(int socket, const std::shared_ptr<std::vector<char>> &data, std::vector<char>& bufferedNewData);
 
-  // Using our lock-free queue implementation with larger capacity for UDP
-  LockFreeQueue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue{8192};
-  
-  // Atomic flag for signaling when data is available
-  std::atomic<bool> dataAvailable{false};
-  
+  // Standard queue for UDP data
+  std::queue<std::pair<int, std::shared_ptr<std::vector<char>>>> queue;
+  std::mutex queueMutex; // Mutex for queue protection
+  std::condition_variable queueCondVar; // Condition variable for producer-consumer
+
   // We still need a mutex for the buffered data map
   std::mutex bufferMutex;
   std::atomic<uint8_t> sendId{0};

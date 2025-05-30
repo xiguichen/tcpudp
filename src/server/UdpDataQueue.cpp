@@ -14,35 +14,23 @@ void UdpDataQueue::enqueue(int socket,
       bufferedNewData = &bufferedNewDataMap[socket];
     }
     this->enqueueAndNotify(socket, data, *bufferedNewData);
+} // No change needed here, all logic is in enqueueAndNotify
 
-}
 
 std::pair<int, std::shared_ptr<std::vector<char>>> UdpDataQueue::dequeue() {
     auto startTime = std::chrono::high_resolution_clock::now();
-    
-    std::pair<int, std::shared_ptr<std::vector<char>>> result;
-    
-    // Try to dequeue with a timeout
-    while (!queue.dequeue_with_timeout(result, 100)) {
-        // If timeout occurs, check if we should continue waiting
-        if (!dataAvailable.load(std::memory_order_acquire)) {
-            // No data is expected, yield and try again
-            std::this_thread::yield();
-        }
-    }
-    
-    // If queue is now empty, update the dataAvailable flag
-    if (queue.empty()) {
-        dataAvailable.store(false, std::memory_order_release);
-    }
-    
+    std::unique_lock<std::mutex> lock(queueMutex);
+    // Block until queue is not empty
+    queueCondVar.wait(lock, [this]{ return !queue.empty(); });
+    std::pair<int, std::shared_ptr<std::vector<char>>> result = queue.front();
+    queue.pop();
+    lock.unlock();
     // Record performance metrics
     auto endTime = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
     if (result.second) {
         PerformanceMonitor::getInstance().recordPacketProcessed(result.second->size(), duration);
     }
-    
     return result;
 }
 
@@ -69,19 +57,17 @@ void UdpDataQueue::enqueueAndNotify(
   // Append new data
   UvtUtils::AppendUdpData(*data, sendId.fetch_add(1, std::memory_order_relaxed), *newData);
   
-  // Enqueue to the lock-free queue
+  // Enqueue to the standard queue with locking
   auto item = std::make_pair(socket, newData);
-  while (!queue.enqueue(item)) {
-    // If queue is full, yield to allow consumers to process
-    std::this_thread::yield();
+  {
+    std::lock_guard<std::mutex> lock(queueMutex);
+    queue.push(item);
   }
-  
-  // Signal that data is available
-  dataAvailable.store(true, std::memory_order_release);
-  
+  queueCondVar.notify_one();
+
   // Update last emit time
   lastEmitTime = std::chrono::high_resolution_clock::now();
-  
+
   // Record performance metrics
   auto endTime = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
