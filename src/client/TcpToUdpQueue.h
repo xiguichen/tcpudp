@@ -7,6 +7,7 @@
 #include <chrono>
 #include <MemoryPool.h>
 #include <MemoryMonitor.h>
+#include <condition_variable>
 
 class TcpToUdpQueue {
 public:

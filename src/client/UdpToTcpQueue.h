@@ -7,6 +7,7 @@
 #include <memory>
 #include <MemoryPool.h>
 #include <MemoryMonitor.h>
+#include <condition_variable>
 
 class UdpToTcpQueue {
 public:

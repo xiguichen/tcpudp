@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 #include <memory>
+#include <condition_variable>
 #include <atomic>
 #include <queue>
 #include <mutex>
