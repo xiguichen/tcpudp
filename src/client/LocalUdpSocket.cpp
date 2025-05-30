@@ -5,12 +5,13 @@
 #ifndef _WIN32
 #include <sys/socket.h>
 #include <unistd.h>
+#else
+#include <Ws2tcpip.h>
 #endif
 #include <vector>
 #include <Socket.h>
 #include <Log.h>
 #include <format>
-#include <Ws2tcpip.h>
 
 using namespace Logger;
 
@@ -92,7 +93,11 @@ std::vector<char> LocalUdpSocket::receive() {
 
   Log::getInstance().debug(std::format("UDP receive attempt - socketFd: {}", socketFd));
   char addrStr[INET_ADDRSTRLEN] = {0};
+#ifdef _WIN32
   InetNtopA(AF_INET, &localAddress.sin_addr, addrStr, INET_ADDRSTRLEN);
+#else
+  inet_ntop(AF_INET, &localAddress.sin_addr, addrStr, INET_ADDRSTRLEN);
+#endif
   Log::getInstance().debug(std::format("Local address: {}", addrStr));
 
   // Check if socket is readable with a short timeout
