@@ -31,59 +31,7 @@ UdpToTcpQueue::~UdpToTcpQueue() {
 void UdpToTcpQueue::enqueue(const std::vector<char>& data) {
     // Track this operation for statistics
     totalEnqueued.fetch_add(1, std::memory_order_relaxed);
-    
-    #ifdef BUFFER_UDP_DATA
-    // Get the current buffer size without locking
-    size_t currentBufferSize = bufferedNewData->size();
-    
-    Log::getInstance().info(std::format("Previous buffer size: {}", currentBufferSize));
-    
-    // 1. If the buffered data size + data size greater than 1400, send it now
-    if (currentBufferSize + data.size() > 1400) {
-        Log::getInstance().info("Buffer full, sending data");
-        this->enqueueAndNotify(data, bufferedNewData);
-    }
-    // 2. Check if enough time has passed to send the data
-    else {
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-            currentTime - lastEmitTime);
-            
-        if (duration.count() > 50) {
-            Log::getInstance().info("Time threshold reached, sending data");
-            this->enqueueAndNotify(data, bufferedNewData);
-        }
-        // Buffer the data for next time
-        else {
-            // Get a new buffer if needed
-            if (bufferedNewData->capacity() < currentBufferSize + data.size() + 100) {
-                // Get a larger buffer from the pool
-                auto newBuffer = MemoryPool::getInstance().getBuffer(
-                    (currentBufferSize + data.size()) * 2);
-                
-                // Copy existing data
-                if (!bufferedNewData->empty()) {
-                    newBuffer->insert(newBuffer->end(), 
-                                     bufferedNewData->begin(), 
-                                     bufferedNewData->end());
-                }
-                
-                // Recycle the old buffer
-                MemoryPool::getInstance().recycleBuffer(bufferedNewData);
-                
-                // Use the new buffer
-                bufferedNewData = newBuffer;
-            }
-            
-            // Append the data
-            UvtUtils::AppendUdpData(data, sendId.fetch_add(1, std::memory_order_relaxed), *bufferedNewData);
-            
-            Log::getInstance().info(std::format("New buffer size: {}", bufferedNewData->size()));
-        }
-    }
-    #else
-        this->enqueueAndNotify(data, bufferedNewData);
-    #endif
+    this->enqueueAndNotify(data, bufferedNewData);
 }
 
 std::vector<char> UdpToTcpQueue::dequeue() {

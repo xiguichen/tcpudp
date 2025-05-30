@@ -10,6 +10,7 @@
 #include <Socket.h>
 #include <Log.h>
 #include <format>
+#include <Ws2tcpip.h>
 
 using namespace Logger;
 
@@ -90,7 +91,9 @@ std::vector<char> LocalUdpSocket::receive() {
   socklen_t addrLen = sizeof(localAddress);
 
   Log::getInstance().debug(std::format("UDP receive attempt - socketFd: {}", socketFd));
-  Log::getInstance().debug(std::format("Local address: {}", inet_ntoa(localAddress.sin_addr)));
+  char addrStr[INET_ADDRSTRLEN] = {0};
+  InetNtopA(AF_INET, &localAddress.sin_addr, addrStr, INET_ADDRSTRLEN);
+  Log::getInstance().debug(std::format("Local address: {}", addrStr));
 
   // Check if socket is readable with a short timeout
   if (!IsSocketReadable(socketFd, 100)) { // 100ms timeout
