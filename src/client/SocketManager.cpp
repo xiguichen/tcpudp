@@ -9,7 +9,7 @@ using namespace Logger;
 SocketManager::SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections, uint32_t clientId)
     : localUdpSocket(udpPort) {
     for (const auto& connection : peerConnections) {
-        peerTcpSockets.emplace_back(connection.first, connection.second, clientId);
+        peerTcpSockets.emplace_back(std::make_shared<PeerTcpSocket>(connection.first, connection.second, clientId));
     }
 }
 
@@ -29,13 +29,13 @@ void SocketManager::manageSockets() {
     // PeerHostReadThreads
     std::vector<std::thread> peerHostReadThreads;
     for (auto& peerTcpSocket : peerTcpSockets) {
-        peerHostReadThreads.emplace_back(&SocketManager::peerHostReadTask, this, std::ref(running), std::ref(peerTcpSocket));
+        peerHostReadThreads.emplace_back(&SocketManager::peerHostReadTask, this, std::ref(running), std::ref(*peerTcpSocket));
     }
 
     // PeerHostWriteThreads
     std::vector<std::thread> peerHostWriteThreads;
     for (auto& peerTcpSocket : peerTcpSockets) {
-        peerHostWriteThreads.emplace_back(&SocketManager::peerHostWriteTask, this, std::ref(running), std::ref(peerTcpSocket));
+        peerHostWriteThreads.emplace_back(&SocketManager::peerHostWriteTask, this, std::ref(running), std::ref(*peerTcpSocket));
     }
 
     // Join threads
@@ -77,10 +77,11 @@ void SocketManager::localHostWriteTask(bool& running) {
             std::vector<char> data = udpToTcpQueue.dequeue();
             if(data.size()) {
                 try {
+                    Log::getInstance().info(std::format("send tcp via connection {}", i));
                     // Only send if the socket is authenticated
-                    if (peerTcpSockets[i].isAuthenticated()) {
+                    if (peerTcpSockets[i]->isAuthenticated()) {
                         // Send data with non-blocking I/O
-                        peerTcpSockets[i].send(data);
+                        peerTcpSockets[i]->send(data);
                     } else {
                         Log::getInstance().warning(std::format("Socket {} not authenticated, skipping send", i));
                     }

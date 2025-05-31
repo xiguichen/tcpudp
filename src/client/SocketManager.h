@@ -22,7 +22,7 @@ private:
     void peerHostWriteTask(bool& running, PeerTcpSocket& peerTcpSocket);
 private:
     LocalUdpSocket localUdpSocket;
-    std::vector<PeerTcpSocket> peerTcpSockets;
+    std::vector<std::shared_ptr<PeerTcpSocket>> peerTcpSockets;
     UdpToTcpQueue udpToTcpQueue;
     TcpToUdpQueue tcpToUdpQueue;
 };

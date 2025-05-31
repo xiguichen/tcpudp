@@ -22,14 +22,16 @@ PeerTcpSocket::PeerTcpSocket(const std::string &address, int port, uint32_t clie
     throw std::runtime_error("Failed to create TCP socket");
   }
   
+  
+  this->connect(address, port);
+
   // Set socket to non-blocking mode
   if (SetSocketNonBlocking(socketFd) < 0) {
     Log::getInstance().error("Failed to set socket to non-blocking mode");
     SocketClose(socketFd);
     throw std::runtime_error("Failed to set socket to non-blocking mode");
   }
-  
-  this->connect(address, port);
+
 }
 
 void PeerTcpSocket::connect(const std::string &address, int port) {
@@ -44,14 +46,20 @@ void PeerTcpSocket::connect(const std::string &address, int port) {
   inet_pton(AF_INET, address.c_str(), &peerAddress.sin_addr);
   
   // Connect with timeout
-  int result = SocketConnectNonBlocking(socketFd, (struct sockaddr *)&peerAddress, sizeof(peerAddress), 5000); // 5 seconds timeout
-  if (result < 0) {
-    Log::getInstance().error(std::format("Failed to connect to {}:{}", address, port));
-    SocketLogLastError();
-    close();
-    throw std::runtime_error("Failed to connect to peer");
+  // int result = SocketConnectNonBlocking(socketFd, (struct sockaddr *)&peerAddress, sizeof(peerAddress), 5000); // 5 seconds timeout
+  // if (result < 0) {
+  //   Log::getInstance().error(std::format("Failed to connect to {}:{}", address, port));
+  //   SocketLogLastError();
+  //   close();
+  //   throw std::runtime_error("Failed to connect to peer");
+  // }
+  int result = SocketConnect(socketFd, (struct sockaddr *)&peerAddress, sizeof(peerAddress));
+  if(result)
+  {
+      Log::getInstance().info("something wrong happend during connect to remote server");
   }
-  
+
+
   isConnected = true;
   state = ConnectionState::CONNECTED;
   Log::getInstance().info(std::format("Connected to peer at {}:{}", address, port));
@@ -153,6 +161,8 @@ PeerTcpSocket::~PeerTcpSocket() {
 }
 
 void PeerTcpSocket::close() {
+  
+  Log::getInstance().info("PeerTcpSocket close");
   if (socketFd >= 0) {
     SocketClose(socketFd);
     socketFd = -1;

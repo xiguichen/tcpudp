@@ -210,11 +210,6 @@ ssize_t SendTcpDataNonBlocking(SocketFd socketFd, const void *data, size_t lengt
         return SOCKET_ERROR_TIMEOUT;
     }
     
-    // Save current blocking state
-    bool wasNonBlocking = IsSocketNonBlocking(socketFd);
-    if (!wasNonBlocking) {
-        SetSocketNonBlocking(socketFd);
-    }
     
     // Try to send data
 #if defined(_WIN32)
@@ -227,6 +222,7 @@ ssize_t SendTcpDataNonBlocking(SocketFd socketFd, const void *data, size_t lengt
     if (bytesSent < 0) {
 #ifdef _WIN32
         int error = WSAGetLastError();
+        Log::getInstance().info(std::format("error: {}", error));
         if (error == WSAEWOULDBLOCK) {
             bytesSent = SOCKET_ERROR_WOULD_BLOCK;
         }
@@ -239,10 +235,6 @@ ssize_t SendTcpDataNonBlocking(SocketFd socketFd, const void *data, size_t lengt
 #endif
     }
     
-    // Restore blocking state if needed
-    if (!wasNonBlocking) {
-        SetSocketBlocking(socketFd);
-    }
     
     if (bytesSent > 0) {
         Log::getInstance().info(std::format("SendTcpDataNonBlocking: sent {} bytes of data", bytesSent));
@@ -256,12 +248,6 @@ ssize_t SendUdpDataNonBlocking(SocketFd socketFd, const void *data, size_t lengt
     // Check if socket is writable within timeout
     if (!IsSocketWritable(socketFd, timeoutMs)) {
         return SOCKET_ERROR_TIMEOUT;
-    }
-    
-    // Save current blocking state
-    bool wasNonBlocking = IsSocketNonBlocking(socketFd);
-    if (!wasNonBlocking) {
-        SetSocketNonBlocking(socketFd);
     }
     
     // Try to send data
@@ -287,10 +273,6 @@ ssize_t SendUdpDataNonBlocking(SocketFd socketFd, const void *data, size_t lengt
 #endif
     }
     
-    // Restore blocking state if needed
-    if (!wasNonBlocking) {
-        SetSocketBlocking(socketFd);
-    }
     
     if (bytesSent > 0) {
         Log::getInstance().info(std::format("SendUdpDataNonBlocking: sent {} bytes of data", bytesSent));
@@ -303,12 +285,6 @@ ssize_t RecvTcpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
     // Check if socket is readable within timeout
     if (!IsSocketReadable(socketFd, timeoutMs)) {
         return SOCKET_ERROR_TIMEOUT;
-    }
-    
-    // Save current blocking state
-    bool wasNonBlocking = IsSocketNonBlocking(socketFd);
-    if (!wasNonBlocking) {
-        SetSocketNonBlocking(socketFd);
     }
     
     // Try to receive data
@@ -337,11 +313,6 @@ ssize_t RecvTcpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
         bytesReceived = SOCKET_ERROR_CLOSED;
     }
     
-    // Restore blocking state if needed
-    if (!wasNonBlocking) {
-        SetSocketBlocking(socketFd);
-    }
-    
     if (bytesReceived > 0) {
         Log::getInstance().info(std::format("RecvTcpDataNonBlocking: received {} bytes of data", bytesReceived));
     }
@@ -356,11 +327,6 @@ ssize_t RecvUdpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
         return SOCKET_ERROR_TIMEOUT;
     }
     
-    // Save current blocking state
-    bool wasNonBlocking = IsSocketNonBlocking(socketFd);
-    if (!wasNonBlocking) {
-        SetSocketNonBlocking(socketFd);
-    }
     
     // Try to receive data
 #if defined(_WIN32)
@@ -385,11 +351,6 @@ ssize_t RecvUdpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
 #endif
     }
     
-    // Restore blocking state if needed
-    if (!wasNonBlocking) {
-        SetSocketBlocking(socketFd);
-    }
-    
     if (bytesReceived > 0) {
         Log::getInstance().info(std::format("RecvUdpDataNonBlocking: received {} bytes of data", bytesReceived));
     }
@@ -407,11 +368,6 @@ int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t 
 }
 
 int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen, int timeoutMs) {
-    // Save current blocking state
-    bool wasNonBlocking = IsSocketNonBlocking(socketFd);
-    if (!wasNonBlocking) {
-        SetSocketNonBlocking(socketFd);
-    }
     
     // Attempt to connect
     int result = connect(socketFd, destAddr, destAddrLen);
@@ -463,15 +419,12 @@ int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr,
 #endif
     }
     
-    // Restore blocking state if needed
-    if (!wasNonBlocking) {
-        SetSocketBlocking(socketFd);
-    }
     
     return result;
 }
 
 int SocketClose(SocketFd socketFd) {
+    Log::getInstance().info("close the socket");
 #ifdef _WIN32
     return closesocket(socketFd);
 #else
@@ -508,11 +461,6 @@ ssize_t RecvTcpDataWithSizeNonBlocking(SocketFd socketFd, void *buffer, size_t b
     char *bufPtr = static_cast<char *>(buffer);
     ssize_t totalBytesRead = 0;
     
-    // Save current blocking state
-    bool wasNonBlocking = IsSocketNonBlocking(socketFd);
-    if (!wasNonBlocking) {
-        SetSocketNonBlocking(socketFd);
-    }
     
     // Calculate deadline
     auto startTime = std::chrono::steady_clock::now();
@@ -522,10 +470,6 @@ ssize_t RecvTcpDataWithSizeNonBlocking(SocketFd socketFd, void *buffer, size_t b
         // Calculate remaining timeout
         auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
-            // Timeout occurred
-            if (!wasNonBlocking) {
-                SetSocketBlocking(socketFd);
-            }
             return SOCKET_ERROR_TIMEOUT;
         }
         
@@ -533,9 +477,6 @@ ssize_t RecvTcpDataWithSizeNonBlocking(SocketFd socketFd, void *buffer, size_t b
         
         // Check if socket is readable
         if (!IsSocketReadable(socketFd, remainingTimeoutMs)) {
-            if (!wasNonBlocking) {
-                SetSocketBlocking(socketFd);
-            }
             return SOCKET_ERROR_TIMEOUT;
         }
         
@@ -566,25 +507,14 @@ ssize_t RecvTcpDataWithSizeNonBlocking(SocketFd socketFd, void *buffer, size_t b
 #endif
             // Other error
             SocketLogLastError();
-            if (!wasNonBlocking) {
-                SetSocketBlocking(socketFd);
-            }
             return -1;
         } else if (bytesRead == 0) {
             // Connection closed
             Log::getInstance().info("RecvTcpDataWithSizeNonBlocking: connection closed by peer");
-            if (!wasNonBlocking) {
-                SetSocketBlocking(socketFd);
-            }
             return totalBytesRead;
         }
         
         totalBytesRead += bytesRead;
-    }
-    
-    // Restore blocking state if needed
-    if (!wasNonBlocking) {
-        SetSocketBlocking(socketFd);
     }
     
     Log::getInstance().info(std::format("RecvTcpDataWithSizeNonBlocking: successfully received {} bytes of data", totalBytesRead));

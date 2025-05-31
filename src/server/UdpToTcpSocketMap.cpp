@@ -1,5 +1,9 @@
 #include "UdpToTcpSocketMap.h"
 #include <algorithm> // For std::find
+#include <Log.h>
+#include <format>
+
+using namespace Logger;
 
 void UdpToTcpSocketMap::mapSockets(int udpSocket, int tcpSocket) {
     auto & vec = socketMap[udpSocket];
@@ -24,6 +28,7 @@ int UdpToTcpSocketMap::retrieveMappedTcpSocket(int udpSocket) {
     }
     
     index = (index) % vec.size();
+    Log::getInstance().info(std::format("use the socket at index: {}", index));
     return vec[index++];
 }
 
