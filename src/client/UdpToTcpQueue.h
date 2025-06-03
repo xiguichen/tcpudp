@@ -37,8 +37,7 @@ public:
 
 private:
     // Process and buffer data before enqueueing
-    void enqueueAndNotify(const std::vector<char> &data,
-                         std::shared_ptr<std::vector<char>> &bufferedNewData);
+    void enqueueAndNotify(const std::vector<char> &data);
     
     // Standard queue for UDP-to-TCP data
     std::queue<std::shared_ptr<std::vector<char>>> queue;

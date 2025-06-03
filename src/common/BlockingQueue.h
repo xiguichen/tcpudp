@@ -1,5 +1,5 @@
-#ifndef UDP_DATA_QUEUE_H
-#define UDP_DATA_QUEUE_H
+#ifndef BLOCKING_QUEUE_H
+#define BLOCKING_QUEUE_H
 
 #include <memory>
 #include <condition_variable>
@@ -8,9 +8,9 @@
 #include <mutex>
 #include <condition_variable>
 
-class UdpDataQueue {
+class BlockingQueue {
 public:
-  UdpDataQueue() {};
+  BlockingQueue() {};
 
   void enqueue(const std::shared_ptr<std::vector<char>> &data);
   std::shared_ptr<std::vector<char>> dequeue();
@@ -24,4 +24,4 @@ private:
 
 };
 
-#endif // UDP_DATA_QUEUE_H
+#endif // BLOCKING_QUEUE_H

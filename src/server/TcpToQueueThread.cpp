@@ -18,6 +18,7 @@
 #include "TcpToUdpSocketMap.h"
 #include "UdpToTcpSocketMap.h"
 #include "UdpToQueueThread.h"
+#include "ServerQueueManager.h"
 
 using namespace Logger;
 
@@ -130,7 +131,8 @@ void TcpToQueueThread::run() {
   // Start UDP thread if this is the first connection for this client
   if (ConnectionManager::getInstance().getClientConnectionCount(bind.clientId) == 1) {
     // Start a thread to handle UDP data for this client
-    startUdpToQueueThread(udpSocket);
+    auto queue = ServerQueueManager::getInstance().getQueueForClient(bind.clientId);
+    startUdpToQueueThread(udpSocket,queue);
     Log::getInstance().info(std::format("Started UDP thread for client ID: {}", bind.clientId));
   }
   
@@ -247,7 +249,7 @@ void TcpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffe
   // Note: The buffer is now owned by the queue and will be recycled when no longer needed
 }
 
-void TcpToQueueThread::startUdpToQueueThread(int udpSocket) {
+void TcpToQueueThread::startUdpToQueueThread(int udpSocket, std::shared_ptr<BlockingQueue>& queue) {
   auto thread = std::thread([udpSocket]() {
     UdpToQueueThread udpToQueueThread(udpSocket);
     udpToQueueThread.run();

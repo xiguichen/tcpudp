@@ -1,7 +1,5 @@
 #include "UdpQueueToTcpThreadPool.h"
 
-#include "UdpDataQueue.h"
-#include "UdpToTcpSocketMap.h"
 #include "SocketManager.h"
 #include <Log.h>
 #include <Socket.h>
@@ -10,11 +8,15 @@
 #include <sys/socket.h>
 #endif
 #include <Protocol.h>
-#include <cstring>
 #include <format>
 #include <thread>
+#include <MemoryPool.h>
+#include <atomic>
 
 using namespace Logger;
+
+static std::atomic<uint8_t> gMsgId(0);
+
 
 void UdpQueueToTcpThreadPool::run() {
   // Start a thread to process data concurrently
@@ -27,26 +29,23 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
   while (SocketManager::isServerRunning()) {
     // Dequeue data from the UDP data queue
     Log::getInstance().info("Processing data from UDP queue...");
-    auto dataPair = UdpDataQueue::getInstance().dequeue();
+    auto data = udpDataQueue->dequeue();
     Log::getInstance().info("Get data from UDP queue...");
-    if (dataPair.first != -1) {
-      // Extract socket and data
-      int udpSocket = dataPair.first;
-      auto data = dataPair.second;
 
-      // Retrieve mapped TCP socket
-      int tcpSocket =
-          UdpToTcpSocketMap::getInstance().retrieveMappedTcpSocket(udpSocket);
+    // use gMsgId as the msg id and increase it
+    uint8_t msgId = gMsgId.fetch_add(1, std::memory_order_relaxed);
+    auto newData = MemoryPool::getInstance().getBuffer(data->size() + 20);
+    UvtUtils::AppendUdpData(*data, msgId, *newData);
 
-      // Send data via TCP
-      Log::getInstance().info(std::format("Server -> Client (TCP Data), Length: {}", data->size()));
-      sendDataViaTcp(tcpSocket, *data);
-    }
+    // Send data via TCP
+    Log::getInstance().info(
+        std::format("Server -> Client (TCP Data), Length: {}", data->size()));
+    sendDataViaTcp(tcpSocket_, *data);
   }
 }
 
-void UdpQueueToTcpThreadPool::sendDataViaTcp(
-    int tcpSocket, const std::vector<char> &data) {
+void UdpQueueToTcpThreadPool::sendDataViaTcp(int tcpSocket,
+                                             const std::vector<char> &data) {
   if (tcpSocket != -1) {
     SendTcpData(tcpSocket, data.data(), data.size(), 0);
   } else {

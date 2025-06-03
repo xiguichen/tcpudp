@@ -8,7 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
-#include "UdpDataQueue.h"
+#include "ServerQueueManager.h"
 #include <Socket.h>
 #include <Log.h>
 
@@ -84,11 +84,9 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
 }
 
 void UdpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer) {
-    // The buffer is already properly sized by the caller
+
     Log::getInstance().info(std::format("UDP -> Queue: Data Enqueue, Length: {}", dataBuffer->size()));
     
     // Enqueue the data buffer directly (no need to copy)
-    UdpDataQueue::getInstance().enqueue(socket_, dataBuffer);
-    
-    // Note: The buffer is now owned by the queue and will be recycled when no longer needed
+    queue->enqueue(dataBuffer);
 }

@@ -5,6 +5,7 @@
 #include <Socket.h>
 #include <vector>
 #include <atomic>
+#include "BlockingQueue.h"
 
 class SocketManager {
 public:
@@ -16,7 +17,7 @@ public:
     void listenForConnections();
     void acceptConnection();
     void startTcpToQueueThread(int clientSocket);
-    void startUdpToQueueThread(int clientSocket);
+    void startUdpToQueueThread(int clientSocket, std::shared_ptr<BlockingQueue>& queue);
     void startTcpQueueToUdpThreadPool();
     void startUdpQueueToTcpThreadPool();
     

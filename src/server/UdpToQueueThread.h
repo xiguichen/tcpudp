@@ -1,6 +1,7 @@
 #ifndef UDP_TO_QUEUE_THREAD_H
 #define UDP_TO_QUEUE_THREAD_H
 
+#include "BlockingQueue.h"
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -9,7 +10,8 @@
 
 class UdpToQueueThread {
 public:
-    explicit UdpToQueueThread(int socket) : socket_(socket) {}
+    UdpToQueueThread(int socket, const std::shared_ptr<BlockingQueue>& queue)
+        : socket_(socket), queue(queue) {}
     void run();
     
 private:
@@ -17,6 +19,7 @@ private:
     void enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer);
 
     int socket_;
+    std::shared_ptr<BlockingQueue> queue;
 };
 
 #endif // UDP_TO_QUEUE_THREAD_H

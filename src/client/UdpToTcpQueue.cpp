@@ -31,7 +31,7 @@ UdpToTcpQueue::~UdpToTcpQueue() {
 void UdpToTcpQueue::enqueue(const std::vector<char>& data) {
     // Track this operation for statistics
     totalEnqueued.fetch_add(1, std::memory_order_relaxed);
-    this->enqueueAndNotify(data, bufferedNewData);
+    this->enqueueAndNotify(data);
 }
 
 std::vector<char> UdpToTcpQueue::dequeue() {
@@ -81,29 +81,14 @@ void UdpToTcpQueue::cancel() {
     }
 }
 
-void UdpToTcpQueue::enqueueAndNotify(const std::vector<char> &data,
-                                     std::shared_ptr<std::vector<char>> &bufferedNewData) {
+void UdpToTcpQueue::enqueueAndNotify(const std::vector<char> &data) {
+
     auto startTime = std::chrono::high_resolution_clock::now();
-    // Get a new buffer from the memory pool
-    auto newBuffer = MemoryPool::getInstance().getBuffer(static_cast<size_t>((bufferedNewData->size() + data.size()) * 1.2));  // Add 20% extra space
-
-    newBuffer->resize(0);  // Clear the new buffer
-
-    // Copy buffered data if any
-    if (!bufferedNewData->empty()) {
-        newBuffer->insert(newBuffer->end(), 
-                         bufferedNewData->begin(), 
-                         bufferedNewData->end());
-        bufferedNewData->clear();
-    }
-
-    // Append new data
-    UvtUtils::AppendUdpData(data, sendId.fetch_add(1, std::memory_order_relaxed), *newBuffer);
 
     // Enqueue to the standard queue with locking
     {
         std::lock_guard<std::mutex> lock(queueMutex);
-        queue.push(newBuffer);
+        queue.push(std::make_shared<std::vector<char>>(data));
         size_t currentSize = queue.size();
         size_t peak = peakQueueSize.load(std::memory_order_relaxed);
         if (currentSize > peak) {
@@ -118,8 +103,8 @@ void UdpToTcpQueue::enqueueAndNotify(const std::vector<char> &data,
     // Record performance metrics
     auto endTime = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
-    if (newBuffer) {
-        PerformanceMonitor::getInstance().recordPacketProcessed(newBuffer->size(), duration);
+    if (data.size()) {
+        PerformanceMonitor::getInstance().recordPacketProcessed(data.size(), duration);
     }
 }
 

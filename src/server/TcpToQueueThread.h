@@ -21,7 +21,7 @@ private:
     void enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer);
     
     // Start a thread to handle UDP data
-    void startUdpToQueueThread(int udpSocket);
+    void startUdpToQueueThread(int udpSocket, std::shared_ptr<BlockingQueue>& queue);
     
     int socket_;
 };

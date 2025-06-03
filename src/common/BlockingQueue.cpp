@@ -1,11 +1,8 @@
-#include "UdpDataQueue.h"
-#include <Log.h>
-#include <Protocol.h>
-using namespace Logger;
+#include "BlockingQueue.h"
+#include <vector>
+#include <memory>
 
-void UdpDataQueue::enqueue(const std::shared_ptr<std::vector<char>> &data) {
-
-  Log::getInstance().info("Enqueueing data to UDP queue...");
+void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data) {
 
   // Enqueue to the standard queue with locking
   {
@@ -16,7 +13,7 @@ void UdpDataQueue::enqueue(const std::shared_ptr<std::vector<char>> &data) {
   queueCondVar.notify_one();
 }
 
-std::shared_ptr<std::vector<char>> UdpDataQueue::dequeue() {
+std::shared_ptr<std::vector<char>> BlockingQueue::dequeue() {
 
   std::unique_lock<std::mutex> lock(queueMutex);
   // Block until queue is not empty

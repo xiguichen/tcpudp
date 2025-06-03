@@ -3,6 +3,7 @@
 #include <thread>
 #include <exception>
 #include <Log.h>
+#include <Protocol.h>
 
 using namespace Logger;
 
@@ -71,6 +72,7 @@ void SocketManager::localHostReadTask(bool& running) {
 
 void SocketManager::localHostWriteTask(bool& running) {
     int i = 0;
+    uint8_t msgId = 0;
     try {
         while (running) {
             // Dequeue data with timeout
@@ -81,7 +83,11 @@ void SocketManager::localHostWriteTask(bool& running) {
                     // Only send if the socket is authenticated
                     if (peerTcpSockets[i]->isAuthenticated()) {
                         // Send data with non-blocking I/O
-                        peerTcpSockets[i]->send(data);
+                        auto outputData = MemoryPool::getInstance().getBuffer(data.size() + 20);
+                        outputData->resize(0);
+                        Log::getInstance().info(std::format("send msg {}", msgId));
+                        UvtUtils::AppendUdpData(data, msgId++, *outputData);
+                        peerTcpSockets[i]->send(*outputData);
                     } else {
                         Log::getInstance().warning(std::format("Socket {} not authenticated, skipping send", i));
                     }
