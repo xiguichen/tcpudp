@@ -15,7 +15,7 @@
 #include <Log.h>
 #include "Configuration.h"
 #include "ClientUdpSocketManager.h"
-#include "ServerQueueManager.h"
+#include "QueueManager.h"
 using namespace Logger;
 
 // Static variable for running state
@@ -202,9 +202,9 @@ void SocketManager::acceptConnection() {
     SocketFd udpSocket;
     if(this->CapabilityNegotiate(clientSocket, clientId, udpSocket))
     {
-        std::shared_ptr<BlockingQueue> tcpToUdpQueue =  ServerQueueManager::getInstance().getTcpToUdpQueueForClient(clientId);
+        std::shared_ptr<BlockingQueue> tcpToUdpQueue =  QueueManager::getInstance().getTcpToUdpQueueForClient(clientId);
 
-        std::shared_ptr<BlockingQueue> udpToTcpQueue =  ServerQueueManager::getInstance().getUdpToTcpQueueForClient(clientId);
+        std::shared_ptr<BlockingQueue> udpToTcpQueue =  QueueManager::getInstance().getUdpToTcpQueueForClient(clientId);
 
         // TCP to UDP
         startTcpToQueueThread(clientSocket, udpSocket, clientId);
@@ -345,5 +345,7 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
     SocketClose(tcpSocket);
     return false;
   }
+
+  return true;
 }
 

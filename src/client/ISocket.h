@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string>
+#include <memory>
 
 // Interface for socket operations
 class ISocket {
@@ -16,7 +17,7 @@ public:
     virtual void send(const std::vector<char>& data) = 0;
     
     // Receive data
-    virtual std::vector<char> receive() = 0;
+    virtual std::shared_ptr<std::vector<char>> receive() = 0;
     
     // Close the socket
     virtual void close() = 0;

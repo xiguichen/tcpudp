@@ -88,7 +88,7 @@ void PeerTcpSocket::send(const std::vector<char> &data) {
   }
 }
 
-std::vector<char> PeerTcpSocket::receive() {
+std::shared_ptr<std::vector<char>> PeerTcpSocket::receive() {
   // Check if we're connected
   if (state != ConnectionState::CONNECTED && state != ConnectionState::AUTHENTICATED) {
     Log::getInstance().error("Cannot receive data: Socket not connected");
@@ -126,10 +126,10 @@ std::vector<char> PeerTcpSocket::receive() {
       header.id, messageLength, header.checksum));
 
   // Prepare a buffer to receive the actual message
-  std::vector<char> buffer(messageLength);
+  auto buffer = std::make_shared<std::vector<char>>(messageLength);
 
   // Receive message body with timeout
-  ssize_t bytesReceived = RecvTcpDataWithSizeNonBlocking(socketFd, buffer.data(), messageLength, 0, messageLength, 5000); // 5 seconds timeout
+  ssize_t bytesReceived = RecvTcpDataWithSizeNonBlocking(socketFd, buffer->data(), messageLength, 0, messageLength, 5000); // 5 seconds timeout
   
   if (bytesReceived != static_cast<ssize_t>(messageLength)) {
     if (bytesReceived == SOCKET_ERROR_TIMEOUT) {
@@ -147,7 +147,7 @@ std::vector<char> PeerTcpSocket::receive() {
   }
   
   // Verify checksum
-  uint8_t checksum = xor_checksum((uint8_t *)buffer.data(), messageLength);
+  uint8_t checksum = xor_checksum((uint8_t *)buffer->data(), messageLength);
   if (checksum != header.checksum) {
     Log::getInstance().error("Tcp -> Queue: Checksum verify failed");
     return {};
@@ -184,11 +184,11 @@ void PeerTcpSocket::sendHandshake() {
   msgBind.clientId = this->clientId;
   
   // Create a buffer to hold the serialized MsgBind structure
-  std::vector<char> buffer(sizeof(MsgBind));
-  std::memcpy(buffer.data(), &msgBind, sizeof(MsgBind));
+  auto buffer = std::make_shared<std::vector<char>>(sizeof(MsgBind));
+  std::memcpy(buffer->data(), &msgBind, sizeof(MsgBind));
   
   // Send handshake with timeout
-  ssize_t result = SendTcpDataNonBlocking(socketFd, buffer.data(), sizeof(MsgBind), 0, 5000); // 5 seconds timeout
+  ssize_t result = SendTcpDataNonBlocking(socketFd, buffer->data(), sizeof(MsgBind), 0, 5000); // 5 seconds timeout
   if (result != sizeof(MsgBind)) {
     Log::getInstance().error(std::format("Failed to send handshake, sent {} bytes instead of {}", 
                                         result, sizeof(MsgBind)));

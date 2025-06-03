@@ -1,5 +1,4 @@
-#ifndef SOCKET_MANAGER_H
-#define SOCKET_MANAGER_H
+#pragma once
 
 #include <thread>
 #include <Socket.h>
@@ -44,4 +43,3 @@ public:
     bool threadsJoined;
 };
 
-#endif // SOCKET_MANAGER_H

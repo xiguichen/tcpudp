@@ -8,7 +8,7 @@ public:
     virtual ~ISocket() = default;
     virtual void connect(const std::string& address, int port) = 0;
     virtual void send(const std::vector<char>& data) = 0;
-    virtual std::vector<char> receive() = 0;
+    virtual std::shared_ptr<std::vector<char>> receive() = 0;
     virtual void close() = 0;
 };
 
@@ -36,7 +36,7 @@ public:
         sentData.insert(sentData.end(), data.begin(), data.end());
     }
     
-    std::vector<char> receive() override {
+    std::shared_ptr<std::vector<char>> receive() override {
         if (!isConnected) {
             throw std::runtime_error("Not connected (mock)");
         }
@@ -47,7 +47,8 @@ public:
         
         std::vector<char> data = receiveQueue.front();
         receiveQueue.erase(receiveQueue.begin());
-        return data;
+        printf("Received data of size: %zu\n", data.size());
+        return std::make_shared<std::vector<char>>(data);
     }
     
     void close() override {
@@ -135,7 +136,7 @@ TEST_F(PeerTcpSocketTest, HandshakeProcess) {
     mockSocket->queueDataForReceive(responseBuffer);
     
     // Receive the response
-    std::vector<char> receivedData = mockSocket->receive();
+    std::vector<char>& receivedData = *(mockSocket->receive());
     ASSERT_EQ(receivedData.size(), sizeof(MsgBindResponse));
     
     // Verify the received data
@@ -217,7 +218,9 @@ TEST_F(PeerTcpSocketTest, CompleteHandshakeFlow) {
     mockSocket->queueDataForReceive(responseBuffer);
     
     // Receive the response
-    std::vector<char> receivedData = mockSocket->receive();
+    auto tempData = mockSocket->receive();
+    printf("Received data size: %zu\n", tempData->size());
+    std::vector<char>& receivedData = *tempData;
     ASSERT_EQ(receivedData.size(), sizeof(MsgBindResponse));
     
     // Verify the received data

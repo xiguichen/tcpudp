@@ -21,7 +21,7 @@ public:
     // ISocket interface implementation
     void connect(const std::string& address, int port) override;
     void send(const std::vector<char>& data) override;
-    std::vector<char> receive() override;
+    std::shared_ptr<std::vector<char>> receive() override;
     void close() override;
     
     // Additional methods specific to PeerTcpSocket

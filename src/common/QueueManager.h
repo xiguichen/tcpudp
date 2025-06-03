@@ -1,16 +1,15 @@
-#ifndef SERVER_QUEUE_MANAGER_H
-#define SERVER_QUEUE_MANAGER_H
+#pragma once
 
 #include "BlockingQueue.h" // Include the BlockingQueue header
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 
-class ServerQueueManager {
+class QueueManager {
 public:
   // Get the singleton instance
-  static ServerQueueManager &getInstance() {
-    static ServerQueueManager instance;
+  static QueueManager &getInstance() {
+    static QueueManager instance;
     return instance;
   }
 
@@ -21,8 +20,8 @@ public:
   std::shared_ptr<BlockingQueue> getUdpToTcpQueueForClient(int clientId);
 
   // Delete copy constructor and assignment operator
-  ServerQueueManager(const ServerQueueManager &) = delete;
-  ServerQueueManager &operator=(const ServerQueueManager &) = delete;
+  QueueManager(const QueueManager &) = delete;
+  QueueManager &operator=(const QueueManager &) = delete;
 
 
 private:
@@ -30,7 +29,7 @@ private:
   std::shared_ptr<BlockingQueue> getQueueForClient(int clientId, std::unordered_map<int, std::shared_ptr<BlockingQueue>>& queueMap); 
 
   // Private constructor
-  ServerQueueManager() = default;
+  QueueManager() = default;
 
   std::unordered_map<int, std::shared_ptr<BlockingQueue>> tcpToUdpQueues_;
 
@@ -39,4 +38,3 @@ private:
   std::mutex mutex_; // Mutex to protect access to the map
 };
 
-#endif // SERVER_QUEUE_MANAGER_H

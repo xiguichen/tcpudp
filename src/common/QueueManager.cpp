@@ -1,6 +1,6 @@
-#include "ServerQueueManager.h"
+#include "QueueManager.h"
 
-std::shared_ptr<BlockingQueue> ServerQueueManager::getQueueForClient(int clientId, std::unordered_map<int, std::shared_ptr<BlockingQueue>>& queueMap) {
+std::shared_ptr<BlockingQueue> QueueManager::getQueueForClient(int clientId, std::unordered_map<int, std::shared_ptr<BlockingQueue>>& queueMap) {
     std::lock_guard<std::mutex> lock(mutex_); // Lock the mutex for thread safety
 
     // Check if the queue for the client ID already exists
@@ -15,10 +15,10 @@ std::shared_ptr<BlockingQueue> ServerQueueManager::getQueueForClient(int clientI
     return newQueue;
 }
 
-std::shared_ptr<BlockingQueue> ServerQueueManager::getTcpToUdpQueueForClient(int clientId) {
+std::shared_ptr<BlockingQueue> QueueManager::getTcpToUdpQueueForClient(int clientId) {
     return getQueueForClient(clientId, tcpToUdpQueues_);
 }
 
-std::shared_ptr<BlockingQueue> ServerQueueManager::getUdpToTcpQueueForClient(int clientId) {
+std::shared_ptr<BlockingQueue> QueueManager::getUdpToTcpQueueForClient(int clientId) {
     return getQueueForClient(clientId, udpToTcpQueues_);
 }

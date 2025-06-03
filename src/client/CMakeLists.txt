@@ -11,15 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Add source files
-set(SOURCES
-    main.cpp
-    Client.cpp
-    SocketManager.cpp
-    LocalUdpSocket.cpp
-    PeerTcpSocket.cpp
-    UdpToTcpQueue.cpp
-    TcpToUdpQueue.cpp
-)
+file(GLOB SOURCES "*.cpp")
 
 # Add executable
 add_executable(udp_client ${SOURCES})

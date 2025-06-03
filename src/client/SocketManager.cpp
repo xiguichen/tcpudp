@@ -4,6 +4,7 @@
 #include <exception>
 #include <Log.h>
 #include <Protocol.h>
+#include <MemoryPool.h>
 
 using namespace Logger;
 
@@ -57,7 +58,8 @@ void SocketManager::localHostReadTask(bool& running) {
             // Non-blocking receive with short timeout
             std::vector<char> data = localUdpSocket.receive();
             if(data.size() != 0) {
-                udpToTcpQueue.enqueue(data);
+                auto dataPtr = std::make_shared<std::vector<char>>(std::move(data));
+                udpToTcpQueue.enqueue(dataPtr);
             } else {
                 // No data available, yield to other threads
                 std::this_thread::yield();
@@ -75,31 +77,28 @@ void SocketManager::localHostWriteTask(bool& running) {
     uint8_t msgId = 0;
     try {
         while (running) {
+
             // Dequeue data with timeout
-            std::vector<char> data = udpToTcpQueue.dequeue();
-            if(data.size()) {
-                try {
-                    Log::getInstance().info(std::format("send tcp via connection {}", i));
-                    // Only send if the socket is authenticated
-                    if (peerTcpSockets[i]->isAuthenticated()) {
-                        // Send data with non-blocking I/O
-                        auto outputData = MemoryPool::getInstance().getBuffer(data.size() + 20);
-                        outputData->resize(0);
-                        Log::getInstance().info(std::format("send msg {}", msgId));
-                        UvtUtils::AppendUdpData(data, msgId++, *outputData);
-                        peerTcpSockets[i]->send(*outputData);
-                    } else {
-                        Log::getInstance().warning(std::format("Socket {} not authenticated, skipping send", i));
-                    }
-                    i = (i + 1) % peerTcpSockets.size();
-                } catch (const std::exception& e) {
-                    Log::getInstance().error(std::format("Failed to send data to peer: {}", e.what()));
-                    // Continue with next peer if one fails
-                    i = (i + 1) % peerTcpSockets.size();
+            auto data = udpToTcpQueue.dequeue();
+            try {
+                Log::getInstance().info(std::format("send tcp via connection {}", i));
+                // Only send if the socket is authenticated
+                if (peerTcpSockets[i]->isAuthenticated()) {
+                    // Send data with non-blocking I/O
+                    auto outputData = MemoryPool::getInstance().getBuffer(data->size() + 20);
+                    outputData->resize(0);
+                    Log::getInstance().info(std::format("send msg {}", msgId));
+                    UvtUtils::AppendUdpData(*data, msgId++, *outputData);
+                    peerTcpSockets[i]->send(*outputData);
+                } else {
+                    Log::getInstance().warning(std::format("Socket {} not authenticated, skipping send", i));
                 }
-            } else {
-                // No data available, yield to other threads
-                std::this_thread::yield();
+                i = (i + 1) % peerTcpSockets.size();
+            } 
+            catch (const std::exception& e) {
+                Log::getInstance().error(std::format("Failed to send data to peer: {}", e.what()));
+                // Continue with next peer if one fails
+                i = (i + 1) % peerTcpSockets.size();
             }
         }
     } catch (const std::exception& e) {
@@ -119,9 +118,9 @@ void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket
         
         while (running) {
             // Receive data with non-blocking I/O
-            std::vector<char> data = peerTcpSocket.receive();
+            auto data = peerTcpSocket.receive();
             
-            if(data.size()) {
+            if(data->size()) {
                 // Reset empty data counter on successful receive
                 emptyDataCount = 0;
                 tcpToUdpQueue.enqueue(data);
@@ -132,8 +131,6 @@ void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket
                 if (emptyDataCount > MAX_EMPTY_DATA_COUNT) {
                     Log::getInstance().error("SocketManager: Too many empty data receives, connection may be dead");
                     running = false;
-                    this->udpToTcpQueue.cancel();
-                    this->tcpToUdpQueue.cancel();
                     this->localUdpSocket.close();
                 } else {
                     // No data available, yield to other threads
@@ -152,15 +149,8 @@ void SocketManager::peerHostWriteTask(bool& running, PeerTcpSocket& peerTcpSocke
     try {
         while (running) {
             // Dequeue data with timeout
-            std::vector<char> data = tcpToUdpQueue.dequeue();
-            
-            if(data.size()) {
-                // Send data with non-blocking I/O
-                localUdpSocket.send(data);
-            } else {
-                // No data available, yield to other threads
-                std::this_thread::yield();
-            }
+            auto data = tcpToUdpQueue.dequeue();
+            localUdpSocket.send(*data);
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": PeerHostWriteThread error: " << e.what() << std::endl;

@@ -8,7 +8,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
-#include "ServerQueueManager.h"
 #include <Socket.h>
 #include <Log.h>
 

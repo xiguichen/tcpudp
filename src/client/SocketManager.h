@@ -4,8 +4,7 @@
 #include <string>
 #include "LocalUdpSocket.h"
 #include "PeerTcpSocket.h"
-#include "UdpToTcpQueue.h"
-#include "TcpToUdpQueue.h"
+#include "BlockingQueue.h"
 #include <vector>
 
 class SocketManager {
@@ -23,8 +22,8 @@ private:
 private:
     LocalUdpSocket localUdpSocket;
     std::vector<std::shared_ptr<PeerTcpSocket>> peerTcpSockets;
-    UdpToTcpQueue udpToTcpQueue;
-    TcpToUdpQueue tcpToUdpQueue;
+    BlockingQueue udpToTcpQueue;
+    BlockingQueue tcpToUdpQueue;
 };
 
 #endif // SOCKETMANAGER_H

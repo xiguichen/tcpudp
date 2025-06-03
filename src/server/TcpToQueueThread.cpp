@@ -16,7 +16,7 @@
 #include "TcpToUdpSocketMap.h"
 #include "UdpToTcpSocketMap.h"
 #include "UdpToQueueThread.h"
-#include "ServerQueueManager.h"
+#include "QueueManager.h"
 
 using namespace Logger;
 
@@ -34,7 +34,7 @@ void TcpToQueueThread::run() {
   // Start UDP thread if this is the first connection for this client
   if (ConnectionManager::getInstance().getClientConnectionCount(clientId_) == 1) {
     // Start a thread to handle UDP data for this client
-    auto queue = ServerQueueManager::getInstance().getTcpToUdpQueueForClient(clientId_);
+    auto queue = QueueManager::getInstance().getTcpToUdpQueueForClient(clientId_);
     startUdpToQueueThread(udpSocket_,queue);
     Log::getInstance().info(std::format("Started UDP thread for client ID: {}", clientId_));
   }
