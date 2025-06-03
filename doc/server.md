@@ -71,7 +71,7 @@ end
 
 ### Writer
 
-#### TcpQueueToUdpThreadPool for sending data from TCP to UDP
+#### TcpQueueToUdpThread for sending data from TCP to UDP
 
 @startuml
 participant UdpSocket
@@ -79,7 +79,7 @@ queue TcpDataQueue
 collections TcpToUdpSocketMap
 collections UdpSocketAddressMap
 
-group TcpQueueToUdpThreadPool
+group TcpQueueToUdpThread
     loop Process data
         TcpDataQueue -> TcpQueueToUdpThread: Dequeue data
         TcpQueueToUdpThread -> TcpQueueToUdpThread: Extract socket and data
@@ -92,19 +92,19 @@ end
 @enduml
 
 
-#### UdpQueueToTcpThreadPool for sending data from UDP to TCP
+#### UdpQueueToTcpThread for sending data from UDP to TCP
 
 @startuml
 participant TcpSocket
 queue UdpDataQueue
 collections UdpToTcpSocketMap
 
-group UdpQueueToTcpThreadPool
+group UdpQueueToTcpThread
     loop Process data concurrently
-        UdpDataQueue -> UdpQueueToTcpThreadPool: Dequeue data
-        UdpQueueToTcpThreadPool -> UdpQueueToTcpThreadPool: Extract socket and data
-        UdpQueueToTcpThreadPool -> UdpToTcpSocketMap: Retrieve mapped TCP socket
-        UdpQueueToTcpThreadPool -> TcpSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
+        UdpDataQueue -> UdpQueueToTcpThread: Dequeue data
+        UdpQueueToTcpThread -> UdpQueueToTcpThread: Extract socket and data
+        UdpQueueToTcpThread -> UdpToTcpSocketMap: Retrieve mapped TCP socket
+        UdpQueueToTcpThread -> TcpSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
     end
 end
 
@@ -127,8 +127,8 @@ class SocketManager {
   + acceptConnection(): void
   + startTcpToQueueThread(clientSocket: int): void
   + startUdpToQueueThread(clientSocket: int): void
-  + startTcpQueueToUdpThreadPool(): void
-  + startUdpQueueToTcpThreadPool(): void
+  + startTcpQueueToUdpThread(): void
+  + startUdpQueueToTcpThread(): void
 }
 
 ' Socket Maps
@@ -196,13 +196,13 @@ class UdpToQueueThread {
   + run(): void
 }
 
-class TcpQueueToUdpThreadPool {
+class TcpQueueToUdpThread {
   - processData(): void
   - sendDataViaUdp(socket: int, data: shared_ptr<vector<char>>): void
   + run(): void
 }
 
-class UdpQueueToTcpThreadPool {
+class UdpQueueToTcpThread {
   - processDataConcurrently(): void
   - sendDataViaTcp(tcpSocket: int, data: const vector<char>&): void
   + run(): void
@@ -231,8 +231,8 @@ class UdpSocketAddressMap {
 ' SocketManager creates and manages threads
 SocketManager "1" o--> "*" TcpToQueueThread : creates >
 SocketManager "1" o--> "*" UdpToQueueThread : creates >
-SocketManager "1" o--> "*" TcpQueueToUdpThreadPool : creates >
-SocketManager "1" o--> "*" UdpQueueToTcpThreadPool : creates >
+SocketManager "1" o--> "*" TcpQueueToUdpThread : creates >
+SocketManager "1" o--> "*" UdpQueueToTcpThread : creates >
 
 ' SocketManager uses socket maps
 SocketManager "1" --> "1" TcpToUdpSocketMap : uses >
@@ -241,12 +241,12 @@ SocketManager "1" --> "1" UdpToTcpSocketMap : uses >
 ' Thread classes use data queues
 TcpToQueueThread "*" --> "1" TcpDataQueue : enqueues data >
 UdpToQueueThread "*" --> "1" UdpDataQueue : enqueues data >
-TcpQueueToUdpThreadPool "*" --> "1" TcpDataQueue : dequeues data >
-UdpQueueToTcpThreadPool "*" --> "1" UdpDataQueue : dequeues data >
+TcpQueueToUdpThread "*" --> "1" TcpDataQueue : dequeues data >
+UdpQueueToTcpThread "*" --> "1" UdpDataQueue : dequeues data >
 
 ' Thread pools use socket maps
-TcpQueueToUdpThreadPool "*" --> "1" TcpToUdpSocketMap : looks up UDP socket >
-UdpQueueToTcpThreadPool "*" --> "1" UdpToTcpSocketMap : looks up TCP socket >
+TcpQueueToUdpThread "*" --> "1" TcpToUdpSocketMap : looks up UDP socket >
+UdpQueueToTcpThread "*" --> "1" UdpToTcpSocketMap : looks up TCP socket >
 
 ' Socket maps store mappings
 TcpToUdpSocketMap "1" o--> "*" "TCP-UDP Mapping" : contains >

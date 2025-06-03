@@ -1,4 +1,4 @@
-#include "UdpQueueToTcpThreadPool.h"
+#include "UdpQueueToTcpThread.h"
 
 #include "SocketManager.h"
 #include <Log.h>
@@ -18,14 +18,14 @@ using namespace Logger;
 static std::atomic<uint8_t> gMsgId(0);
 
 
-void UdpQueueToTcpThreadPool::run() {
+void UdpQueueToTcpThread::run() {
   // Start a thread to process data concurrently
   std::thread processingThread(
-      &UdpQueueToTcpThreadPool::processDataConcurrently, this);
+      &UdpQueueToTcpThread::processDataConcurrently, this);
   processingThread.detach(); // Detach the thread to run independently
 }
 
-void UdpQueueToTcpThreadPool::processDataConcurrently() {
+void UdpQueueToTcpThread::processDataConcurrently() {
   while (SocketManager::isServerRunning()) {
     // Dequeue data from the UDP data queue
     Log::getInstance().info("Processing data from UDP queue...");
@@ -44,7 +44,7 @@ void UdpQueueToTcpThreadPool::processDataConcurrently() {
   }
 }
 
-void UdpQueueToTcpThreadPool::sendDataViaTcp(int tcpSocket,
+void UdpQueueToTcpThread::sendDataViaTcp(int tcpSocket,
                                              const std::vector<char> &data) {
   if (tcpSocket != -1) {
     SendTcpData(tcpSocket, data.data(), data.size(), 0);

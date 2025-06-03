@@ -1,15 +1,15 @@
-#ifndef UDP_QUEUE_TO_TCP_THREAD_POOL_H
-#define UDP_QUEUE_TO_TCP_THREAD_POOL_H
+#ifndef UDP_QUEUE_TO_TCP_THREAD_H
+#define UDP_QUEUE_TO_TCP_THREAD_H
 
 #include <vector>
 #include <BlockingQueue.h>
 #include <Socket.h>
 
 
-class UdpQueueToTcpThreadPool {
+class UdpQueueToTcpThread {
 public:
     // Constructor that takes a tcpSocket as input
-    explicit UdpQueueToTcpThreadPool(SocketFd tcpSocket);
+    explicit UdpQueueToTcpThread(SocketFd tcpSocket);
     void run();
 private:
     void processDataConcurrently();
@@ -18,4 +18,4 @@ private:
     std::shared_ptr<BlockingQueue> udpDataQueue;
 };
 
-#endif // UDP_QUEUE_TO_TCP_THREAD_POOL_H
+#endif // UDP_QUEUE_TO_TCP_THREAD_H

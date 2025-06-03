@@ -16,11 +16,16 @@ public:
     void bindToPort(int port);
     void listenForConnections();
     void acceptConnection();
-    void startTcpToQueueThread(int clientSocket);
+    void startTcpToQueueThread(SocketFd clientSocket, SocketFd udpSocket, uint32_t clientId);
     void startUdpToQueueThread(int clientSocket, std::shared_ptr<BlockingQueue>& queue);
-    void startTcpQueueToUdpThreadPool();
-    void startUdpQueueToTcpThreadPool();
-    
+    void startTcpQueueToUdpThread(SocketFd udpSocket, std::shared_ptr<BlockingQueue>& queue);
+    void StartUdpQueueToTcpThread(int clientSocket, std::shared_ptr<BlockingQueue>& queue)
+    {
+
+
+    }
+    bool CapabilityNegotiate(SocketFd socket, uint32_t& clientId, SocketFd& udpSocket);
+
     // Shutdown mechanism
     void shutdown();
     bool isRunning() const;

@@ -12,9 +12,7 @@
 #include <cstring>
 #include <format>
 #include <vector>
-#include "Configuration.h"
 #include "Protocol.h"
-#include "ClientUdpSocketManager.h"
 #include "TcpToUdpSocketMap.h"
 #include "UdpToTcpSocketMap.h"
 #include "UdpToQueueThread.h"
@@ -26,118 +24,23 @@ void TcpToQueueThread::run() {
   // Initialize memory monitoring
   MemoryMonitor::getInstance().start();
   
-  // Get a buffer from the memory pool with optimal size for TCP packets
   const int bufferSize = 65535;
   auto buffer = MemoryPool::getInstance().getBuffer(bufferSize);
-  
-  // Set socket to non-blocking mode
-  SetSocketNonBlocking(socket_);
-  
-  // Wait for socket to be readable with timeout
-  if (!IsSocketReadable(socket_, 2000)) { // 2 seconds timeout
-    Log::getInstance().error("Socket not readable within timeout");
-    SocketClose(socket_);
-    return;
-  }
-
-  Log::getInstance().info("Begin capability negotiate");
-
-  // Receive handshake data with timeout
-  int result = RecvTcpDataWithSizeNonBlocking(socket_, buffer->data(), buffer->capacity(), 0, sizeof(MsgBind), 5000); // 5 seconds timeout
-  if (result != sizeof(MsgBind)) {
-    Log::getInstance().error(std::format("Failed to recv tcp data with return code: {}", result));
-    SocketClose(socket_);
-    return;
-  }
-
-  // Resize buffer to actual data size
-  buffer->resize(sizeof(MsgBind));
-
-  MsgBind bind;
-  UvtUtils::ExtractMsgBind(*buffer, bind);
-
-  auto & allowedClientIds = Configuration::getInstance()->getAllowedClientIds();
-
-  // Log the list of allowed client IDs for debugging
-  std::string allowedIdsStr = "Allowed client IDs: ";
-  for (auto id : allowedClientIds) {
-    allowedIdsStr += std::to_string(id) + ", ";
-  }
-  Log::getInstance().info(allowedIdsStr);
-  
-  auto bAllow = allowedClientIds.find(bind.clientId) != allowedClientIds.end();
-  if(bAllow) {
-    Log::getInstance().info(std::format("Client Id: {} is allowed", bind.clientId));
-    
-    // Create a new connection for this client
-    pConnection connection = ConnectionManager::getInstance().createConnection(bind.clientId);
-    MsgBindResponse bindResponse;
-    bindResponse.connectionId = connection->connectionId;
-    
-    // Get a buffer for the acceptance response
-    auto acceptBuffer = MemoryPool::getInstance().getBuffer(0);
-    UvtUtils::AppendMsgBindResponse(bindResponse, *acceptBuffer);
-    
-    // Send acceptance with timeout
-    Log::getInstance().info(std::format("Sending acceptance response to client {}, connectionId: {}", bind.clientId, bindResponse.connectionId));
-    int result = SendTcpDataNonBlocking(socket_, acceptBuffer->data(), acceptBuffer->size(), 0, 5000);
-    
-    // Check result of sending
-    if (result <= 0) {
-      Log::getInstance().error(std::format("Failed to send acceptance response with error code: {}", result));
-      MemoryPool::getInstance().recycleBuffer(acceptBuffer);
-      SocketClose(socket_);
-      return;
-    }
-    
-    // Recycle buffer
-    MemoryPool::getInstance().recycleBuffer(acceptBuffer);
-  } else {
-    Log::getInstance().error(std::format("Client Id: {} is not allowed", bind.clientId));
-    
-    // Send a rejection response instead of silently closing the socket
-    MsgBindResponse rejectResponse;
-    rejectResponse.connectionId = 0; // Use 0 to indicate rejection
-    
-    // Get a buffer for the reject response
-    auto rejectBuffer = MemoryPool::getInstance().getBuffer(0);
-    UvtUtils::AppendMsgBindResponse(rejectResponse, *rejectBuffer);
-    
-    // Send rejection with timeout
-    Log::getInstance().info("Sending rejection response to unauthorized client");
-    SendTcpDataNonBlocking(socket_, rejectBuffer->data(), rejectBuffer->size(), 0, 5000);
-    
-    // Recycle buffer and close socket
-    MemoryPool::getInstance().recycleBuffer(rejectBuffer);
-    SocketClose(socket_);
-    return;
-  }
-
-  // Connection was already created and bind response already sent
-  // Use the connectionId already created and sent in the bind response
-
-  // Get or create a UDP socket for this client
-  int udpSocket = ClientUdpSocketManager::getInstance().getOrCreateUdpSocket(bind.clientId);
-  if (udpSocket < 0) {
-    Log::getInstance().error(std::format("Failed to create UDP socket for client ID: {}", bind.clientId));
-    SocketClose(socket_);
-    return;
-  }
 
   // Map the TCP and UDP sockets
-  UdpToTcpSocketMap::getInstance().mapSockets(udpSocket, socket_);
-  TcpToUdpSocketMap::getInstance().mapSockets(socket_, udpSocket);
+  UdpToTcpSocketMap::getInstance().mapSockets(udpSocket_, socket_);
+  TcpToUdpSocketMap::getInstance().mapSockets(socket_, udpSocket_);
   
   // Start UDP thread if this is the first connection for this client
-  if (ConnectionManager::getInstance().getClientConnectionCount(bind.clientId) == 1) {
+  if (ConnectionManager::getInstance().getClientConnectionCount(clientId_) == 1) {
     // Start a thread to handle UDP data for this client
-    auto queue = ServerQueueManager::getInstance().getQueueForClient(bind.clientId);
-    startUdpToQueueThread(udpSocket,queue);
-    Log::getInstance().info(std::format("Started UDP thread for client ID: {}", bind.clientId));
+    auto queue = ServerQueueManager::getInstance().getTcpToUdpQueueForClient(clientId_);
+    startUdpToQueueThread(udpSocket_,queue);
+    Log::getInstance().info(std::format("Started UDP thread for client ID: {}", clientId_));
   }
   
   Log::getInstance().info(std::format("Mapped TCP socket {} to UDP socket {} for client ID: {}", 
-                                     socket_, udpSocket, bind.clientId));
+                                     socket_, udpSocket_, clientId_));
 
   // Log that the handshake response was already sent earlier
   Log::getInstance().info("Handshake response already sent during client authorization check");
@@ -159,7 +62,7 @@ void TcpToQueueThread::run() {
       Log::getInstance().info("Client -> Server (Receive TCP Data)");
       
       // Receive data non-blocking with timeout
-      result = RecvTcpDataNonBlocking(socket_, buffer->data(), buffer->capacity(), 0, 1000); // 1 second timeout
+      auto result = RecvTcpDataNonBlocking(socket_, buffer->data(), buffer->capacity(), 0, 1000); // 1 second timeout
       
       if (result == SOCKET_ERROR_TIMEOUT) {
         // Timeout, just continue the loop
@@ -250,8 +153,8 @@ void TcpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffe
 }
 
 void TcpToQueueThread::startUdpToQueueThread(int udpSocket, std::shared_ptr<BlockingQueue>& queue) {
-  auto thread = std::thread([udpSocket]() {
-    UdpToQueueThread udpToQueueThread(udpSocket);
+  auto thread = std::thread([udpSocket, &queue]() {
+    UdpToQueueThread udpToQueueThread(udpSocket, queue);
     udpToQueueThread.run();
   });
   thread.detach(); // Detach the thread to let it run independently

@@ -6,16 +6,16 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #endif
-#include "TcpToUdpSocketMap.h"
-#include "UdpToTcpSocketMap.h"
 #include "TcpToQueueThread.h"
 #include "UdpToQueueThread.h"
-#include "UdpQueueToTcpThreadPool.h"
-#include "TcpQueueToUdpThreadPool.h"
-#include "ClientUdpSocketManager.h"
+#include "UdpQueueToTcpThread.h"
+#include "TcpQueueToUdpThread.h"
 #include <Protocol.h>
 #include <Socket.h>
 #include <Log.h>
+#include "Configuration.h"
+#include "ClientUdpSocketManager.h"
+#include "ServerQueueManager.h"
 using namespace Logger;
 
 // Static variable for running state
@@ -198,49 +198,152 @@ void SocketManager::acceptConnection() {
     inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIP, INET_ADDRSTRLEN);
     Log::getInstance().info(std::format("Accepted connection from {}:{}", clientIP, ntohs(clientAddr.sin_port)));
 
-    // Start TCP thread to handle the handshake and get the clientId
-    startTcpToQueueThread(clientSocket);
-    
-    // Note: UDP socket will be created after the handshake when we know the clientId
+    uint32_t clientId;
+    SocketFd udpSocket;
+    if(this->CapabilityNegotiate(clientSocket, clientId, udpSocket))
+    {
+        std::shared_ptr<BlockingQueue> tcpToUdpQueue =  ServerQueueManager::getInstance().getTcpToUdpQueueForClient(clientId);
+
+        std::shared_ptr<BlockingQueue> udpToTcpQueue =  ServerQueueManager::getInstance().getUdpToTcpQueueForClient(clientId);
+
+        // TCP to UDP
+        startTcpToQueueThread(clientSocket, udpSocket, clientId);
+        startTcpQueueToUdpThread(udpSocket, tcpToUdpQueue);
+
+        // UDP to TCP
+        startUdpToQueueThread(udpSocket, udpToTcpQueue);
+        StartUdpQueueToTcpThread(clientSocket, udpToTcpQueue);
+    }
 }
 
 
 
-void SocketManager::startTcpToQueueThread(int clientSocket) {
+void SocketManager::startTcpToQueueThread(SocketFd clientSocket, SocketFd udpSocket, uint32_t clientId) {
 
-    auto thread = std::thread([clientSocket]() {
-        TcpToQueueThread tcpToQueueThread(clientSocket);
+    auto thread = std::thread([clientSocket, udpSocket, clientId]() {
+        TcpToQueueThread tcpToQueueThread(clientSocket, udpSocket, clientId);
         tcpToQueueThread.run();
     });
     threads.push_back(std::move(thread));
 }
 
-void SocketManager::startUdpToQueueThread(int clientSocket) {
-    auto thread = std::thread([clientSocket]() {
-        UdpToQueueThread udpToQueueThread(clientSocket);
+void SocketManager::startUdpToQueueThread(int clientSocket, std::shared_ptr<BlockingQueue>& queue) {
+    auto thread = std::thread([clientSocket, &queue]() {
+        UdpToQueueThread udpToQueueThread(clientSocket, queue);
         udpToQueueThread.run();
     });
     threads.push_back(std::move(thread));
 }
-void SocketManager::startTcpQueueToUdpThreadPool() {
-  for (int i = 0; i < 5; ++i) {
-      auto thread = std::thread([]() {
-          // Assuming TcpQueueToUdpThread is a class that handles the processing
-          TcpQueueToUdpThreadPool tcpQueueToUdpThreadPool;
-          tcpQueueToUdpThreadPool.run();
-      });
-      threads.push_back(std::move(thread));
-  }
+
+void SocketManager::startTcpQueueToUdpThread(SocketFd udpSocket, std::shared_ptr<BlockingQueue>& queue) {
+    auto thread = std::thread([&udpSocket, &queue]() {
+        // Assuming TcpQueueToUdpThread is a class that handles the processing
+        TcpQueueToUdpThread tcpQueueToUdpThread(udpSocket, queue);
+        tcpQueueToUdpThread.run();
+    });
+    threads.push_back(std::move(thread));
 }
 
-void SocketManager::startUdpQueueToTcpThreadPool() {
-    for (int i = 0; i < 1; ++i) {
-        auto thread = std::thread([]() {
-            // Assuming UdpQueueToTcpThread is a class that handles the processing
-            UdpQueueToTcpThreadPool udpQueueToTcpThreadPool;
-            udpQueueToTcpThreadPool.run();
-        });
-        threads.push_back(std::move(thread));
+bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, SocketFd& udpSocket)
+{
+
+  // Get a buffer from the memory pool with optimal size for TCP packets
+  const int bufferSize = 65535;
+  auto buffer = MemoryPool::getInstance().getBuffer(bufferSize);
+  
+  // Set socket to non-blocking mode
+  SetSocketNonBlocking(tcpSocket);
+  
+  // Wait for socket to be readable with timeout
+  if (!IsSocketReadable(tcpSocket, 2000)) { // 2 seconds timeout
+    Log::getInstance().error("Socket not readable within timeout");
+    SocketClose(tcpSocket);
+    return false;
+  }
+
+  Log::getInstance().info("Begin capability negotiate");
+
+  // Receive handshake data with timeout
+  int result = RecvTcpDataWithSizeNonBlocking(tcpSocket, buffer->data(), buffer->capacity(), 0, sizeof(MsgBind), 5000); // 5 seconds timeout
+  if (result != sizeof(MsgBind)) {
+    Log::getInstance().error(std::format("Failed to recv tcp data with return code: {}", result));
+    SocketClose(tcpSocket);
+    return false;
+  }
+
+  // Resize buffer to actual data size
+  buffer->resize(sizeof(MsgBind));
+
+  MsgBind bind;
+  UvtUtils::ExtractMsgBind(*buffer, bind);
+
+  auto & allowedClientIds = Configuration::getInstance()->getAllowedClientIds();
+
+  // Log the list of allowed client IDs for debugging
+  std::string allowedIdsStr = "Allowed client IDs: ";
+  for (auto id : allowedClientIds) {
+    allowedIdsStr += std::to_string(id) + ", ";
+  }
+  Log::getInstance().info(allowedIdsStr);
+  
+      clientId = bind.clientId;
+      auto bAllow = allowedClientIds.find(clientId) != allowedClientIds.end();
+  if(bAllow) {
+    Log::getInstance().info(std::format("Client Id: {} is allowed", bind.clientId));
+    
+    // Create a new connection for this client
+    pConnection connection = ConnectionManager::getInstance().createConnection(bind.clientId);
+    MsgBindResponse bindResponse;
+    bindResponse.connectionId = connection->connectionId;
+    
+    // Get a buffer for the acceptance response
+    auto acceptBuffer = MemoryPool::getInstance().getBuffer(0);
+    UvtUtils::AppendMsgBindResponse(bindResponse, *acceptBuffer);
+    
+    // Send acceptance with timeout
+    Log::getInstance().info(std::format("Sending acceptance response to client {}, connectionId: {}", bind.clientId, bindResponse.connectionId));
+    int result = SendTcpDataNonBlocking(tcpSocket, acceptBuffer->data(), acceptBuffer->size(), 0, 5000);
+    
+    // Check result of sending
+    if (result <= 0) {
+      Log::getInstance().error(std::format("Failed to send acceptance response with error code: {}", result));
+      MemoryPool::getInstance().recycleBuffer(acceptBuffer);
+      SocketClose(tcpSocket);
+      return false;
     }
+    
+    // Recycle buffer
+    MemoryPool::getInstance().recycleBuffer(acceptBuffer);
+  } else {
+    Log::getInstance().error(std::format("Client Id: {} is not allowed", bind.clientId));
+    
+    // Send a rejection response instead of silently closing the socket
+    MsgBindResponse rejectResponse;
+    rejectResponse.connectionId = 0; // Use 0 to indicate rejection
+    
+    // Get a buffer for the reject response
+    auto rejectBuffer = MemoryPool::getInstance().getBuffer(0);
+    UvtUtils::AppendMsgBindResponse(rejectResponse, *rejectBuffer);
+    
+    // Send rejection with timeout
+    Log::getInstance().info("Sending rejection response to unauthorized client");
+    SendTcpDataNonBlocking(tcpSocket, rejectBuffer->data(), rejectBuffer->size(), 0, 5000);
+    
+    // Recycle buffer and close socket
+    MemoryPool::getInstance().recycleBuffer(rejectBuffer);
+    SocketClose(tcpSocket);
+    return false;
+  }
+
+  // Connection was already created and bind response already sent
+  // Use the connectionId already created and sent in the bind response
+
+  // Get or create a UDP socket for this client
+  udpSocket = ClientUdpSocketManager::getInstance().getOrCreateUdpSocket(clientId);
+  if (udpSocket < 0) {
+    Log::getInstance().error(std::format("Failed to create UDP socket for client ID: {}", bind.clientId));
+    SocketClose(tcpSocket);
+    return false;
+  }
 }
 

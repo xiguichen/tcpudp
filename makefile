@@ -1,7 +1,5 @@
-.PHONY: all clean
+compile:
+	cd Build && cmake -G Ninja ../src && ninja
 
-
-build:
-	cd Build && cmake -G Ninja ../src && ninja 
-test: build
+test: compile
 	cd Build && tests/CommonTest

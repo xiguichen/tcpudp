@@ -15,17 +15,27 @@ public:
   }
 
   // Get or create a BlockingQueue for a given client ID
-  std::shared_ptr<BlockingQueue> getQueueForClient(int clientId);
+  std::shared_ptr<BlockingQueue> getTcpToUdpQueueForClient(int clientId);
+
+  // Get or create a BlockingQueue for a given client ID
+  std::shared_ptr<BlockingQueue> getUdpToTcpQueueForClient(int clientId);
 
   // Delete copy constructor and assignment operator
   ServerQueueManager(const ServerQueueManager &) = delete;
   ServerQueueManager &operator=(const ServerQueueManager &) = delete;
 
+
 private:
+
+  std::shared_ptr<BlockingQueue> getQueueForClient(int clientId, std::unordered_map<int, std::shared_ptr<BlockingQueue>>& queueMap); 
+
   // Private constructor
   ServerQueueManager() = default;
 
-  std::unordered_map<int, std::shared_ptr<BlockingQueue>> clientQueues_;
+  std::unordered_map<int, std::shared_ptr<BlockingQueue>> tcpToUdpQueues_;
+
+  std::unordered_map<int, std::shared_ptr<BlockingQueue>> udpToTcpQueues_;
+
   std::mutex mutex_; // Mutex to protect access to the map
 };
 

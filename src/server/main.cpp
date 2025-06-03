@@ -120,8 +120,6 @@ int main(int argc, char* argv[]) {
     socketManager.createSocket();
     socketManager.bindToPort(6001);
     socketManager.listenForConnections();
-    socketManager.startTcpQueueToUdpThreadPool();
-    socketManager.startUdpQueueToTcpThreadPool();
     
     Log::getInstance().info("Server started successfully with lock-free queues");
     Log::getInstance().info("Press Ctrl+C to shut down the server gracefully");
