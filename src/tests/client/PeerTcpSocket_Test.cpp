@@ -47,7 +47,6 @@ public:
         
         std::vector<char> data = receiveQueue.front();
         receiveQueue.erase(receiveQueue.begin());
-        printf("Received data of size: %zu\n", data.size());
         return std::make_shared<std::vector<char>>(data);
     }
     
@@ -136,12 +135,12 @@ TEST_F(PeerTcpSocketTest, HandshakeProcess) {
     mockSocket->queueDataForReceive(responseBuffer);
     
     // Receive the response
-    std::vector<char>& receivedData = *(mockSocket->receive());
-    ASSERT_EQ(receivedData.size(), sizeof(MsgBindResponse));
+    std::shared_ptr<std::vector<char>> receivedData = mockSocket->receive();
+    ASSERT_EQ(receivedData->size(), sizeof(MsgBindResponse));
     
     // Verify the received data
     MsgBindResponse receivedResponse;
-    std::memcpy(&receivedResponse, receivedData.data(), sizeof(MsgBindResponse));
+    std::memcpy(&receivedResponse, receivedData->data(), sizeof(MsgBindResponse));
     EXPECT_EQ(receivedResponse.connectionId, bindResponse.connectionId);
 }
 
@@ -219,7 +218,6 @@ TEST_F(PeerTcpSocketTest, CompleteHandshakeFlow) {
     
     // Receive the response
     auto tempData = mockSocket->receive();
-    printf("Received data size: %zu\n", tempData->size());
     std::vector<char>& receivedData = *tempData;
     ASSERT_EQ(receivedData.size(), sizeof(MsgBindResponse));
     
