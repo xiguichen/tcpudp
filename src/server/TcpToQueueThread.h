@@ -9,9 +9,6 @@
 #include <BlockingQueue.h>
 #include <Socket.h>
 
-// Forward declaration
-class UdpToQueueThread;
-
 class TcpToQueueThread {
 public:
     explicit TcpToQueueThread(int socket, int udpSocket, uint32_t clientId) : socket_(socket), udpSocket_(udpSocket), clientId_(clientId) {}

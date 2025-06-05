@@ -1,5 +1,4 @@
 #include "TcpToQueueThread.h"
-#include "TcpDataQueue.h"
 #include "SocketManager.h"
 #include <Log.h>
 #include <Protocol.h>
@@ -13,8 +12,6 @@
 #include <format>
 #include <vector>
 #include "Protocol.h"
-#include "TcpToUdpSocketMap.h"
-#include "UdpToTcpSocketMap.h"
 #include "UdpToQueueThread.h"
 #include "QueueManager.h"
 
@@ -26,21 +23,6 @@ void TcpToQueueThread::run() {
   
   const int bufferSize = 65535;
   auto buffer = MemoryPool::getInstance().getBuffer(bufferSize);
-
-  // Map the TCP and UDP sockets
-  UdpToTcpSocketMap::getInstance().mapSockets(udpSocket_, socket_);
-  TcpToUdpSocketMap::getInstance().mapSockets(socket_, udpSocket_);
-  
-  // Start UDP thread if this is the first connection for this client
-  if (ConnectionManager::getInstance().getClientConnectionCount(clientId_) == 1) {
-    // Start a thread to handle UDP data for this client
-    auto queue = QueueManager::getInstance().getTcpToUdpQueueForClient(clientId_);
-    startUdpToQueueThread(udpSocket_,queue);
-    Log::getInstance().info(std::format("Started UDP thread for client ID: {}", clientId_));
-  }
-  
-  Log::getInstance().info(std::format("Mapped TCP socket {} to UDP socket {} for client ID: {}", 
-                                     socket_, udpSocket_, clientId_));
 
   // Log that the handshake response was already sent earlier
   Log::getInstance().info("Handshake response already sent during client authorization check");
@@ -127,27 +109,13 @@ void TcpToQueueThread::run() {
   MemoryPool::getInstance().recycleBuffer(decodedData);
 }
 
-void TcpToQueueThread::enqueueData(const char *data, size_t length) {
-  // Create a buffer from the memory pool
-  auto dataVector = MemoryPool::getInstance().getBuffer(length);
-  
-  // Copy the data
-  dataVector->assign(data, data + length);
-  
-  // Enqueue the data
-  TcpDataQueue::getInstance().enqueue(socket_, dataVector);
-  
-  Log::getInstance().info(
-      std::format("TCP -> Queue: Decoded Data enqueued. Length: {}", length));
-}
-
 void TcpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer) {
   // The buffer is already properly sized by the caller
   Log::getInstance().info(
       std::format("TCP -> Queue: Decoded Data enqueued. Length: {}", dataBuffer->size()));
   
   // Enqueue the data buffer directly (no need to copy)
-  TcpDataQueue::getInstance().enqueue(socket_, dataBuffer);
+  QueueManager::getInstance().getTcpToUdpQueueForClient(clientId_)->enqueue(dataBuffer);
   
   // Note: The buffer is now owned by the queue and will be recycled when no longer needed
 }
