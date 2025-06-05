@@ -120,7 +120,7 @@ void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket
             // Receive data with non-blocking I/O
             auto data = peerTcpSocket.receive();
             
-            if(data->size()) {
+            if(data && data->size()) {
                 // Reset empty data counter on successful receive
                 emptyDataCount = 0;
                 tcpToUdpQueue.enqueue(data);

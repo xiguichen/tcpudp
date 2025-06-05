@@ -18,7 +18,7 @@ public:
     void startTcpToQueueThread(SocketFd clientSocket, SocketFd udpSocket, uint32_t clientId);
     void startUdpToQueueThread(int clientSocket, std::shared_ptr<BlockingQueue>& queue);
     void startTcpQueueToUdpThread(SocketFd udpSocket, std::shared_ptr<BlockingQueue>& queue);
-    void StartUdpQueueToTcpThread(int clientSocket, std::shared_ptr<BlockingQueue>& queue)
+    void startUdpQueueToTcpThread(int clientSocket, std::shared_ptr<BlockingQueue>& queue)
     {
 
 

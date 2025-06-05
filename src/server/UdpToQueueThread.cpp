@@ -16,6 +16,8 @@ using namespace Logger;
 void UdpToQueueThread::run() {
     // Set socket to non-blocking mode
     SetSocketNonBlocking(socket_);
+
+    Log::getInstance().info("Starting UdpToQueueThread");
     
     // Initialize memory monitoring
     MemoryMonitor::getInstance().start();

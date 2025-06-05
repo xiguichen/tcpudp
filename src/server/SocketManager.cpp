@@ -134,6 +134,29 @@ void SocketManager::listenForConnections() {
         SocketClose(serverSocket);
         exit(EXIT_FAILURE);
     }
+
+    auto config = Configuration::getInstance();
+
+    // for each allowed client id
+    for (const auto& clientId : config->getAllowedClientIds()) {
+        // Create a UDP socket for this client
+        SocketFd udpSocket = ClientUdpSocketManager::getInstance().getOrCreateUdpSocket(clientId);
+        if (udpSocket < 0) {
+            std::cerr << "Failed to create UDP socket for client ID: " << clientId << std::endl;
+            continue; // Skip this client if UDP socket creation failed
+        }
+        
+        // Log the creation of the UDP socket
+        Log::getInstance().info(std::format("Created UDP socket for client ID: {}", clientId));
+
+        std::shared_ptr<BlockingQueue> udpToTcpQueue =  QueueManager::getInstance().getUdpToTcpQueueForClient(clientId);
+
+        // Start the udp to queue thread for this client
+        startUdpToQueueThread(udpSocket, udpToTcpQueue);
+
+    }
+
+
     
     Log::getInstance().info("Server socket listening for connections");
 }
@@ -212,7 +235,6 @@ void SocketManager::acceptConnection() {
 
         // UDP to TCP
         startUdpToQueueThread(udpSocket, udpToTcpQueue);
-        StartUdpQueueToTcpThread(clientSocket, udpToTcpQueue);
     }
 }
 
