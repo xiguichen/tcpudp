@@ -8,6 +8,7 @@
 using namespace Logger;
 
 void TcpQueueToUdpThread::run() {
+    Log::getInstance().info("Starting TcpQueueToUdpThread");
     while (SocketManager::isServerRunning()) {
         processData();
     }
@@ -17,6 +18,7 @@ void TcpQueueToUdpThread::processData() {
     // Check running state before processing
     if (!SocketManager::isServerRunning()) return;
 
+    Log::getInstance().info("Processing data from TCP queue to UDP");
     auto data = queue_->dequeue();
     sendDataViaUdp(data);
 }

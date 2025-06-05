@@ -110,6 +110,7 @@ void TcpToQueueThread::run() {
 }
 
 void TcpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer) {
+
   // The buffer is already properly sized by the caller
   Log::getInstance().info(
       std::format("TCP -> Queue: Decoded Data enqueued. Length: {}", dataBuffer->size()));
