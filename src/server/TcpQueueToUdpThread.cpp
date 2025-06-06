@@ -4,6 +4,7 @@
 #include <Log.h>
 #include "SocketManager.h"
 #include "Configuration.h"
+#include <format>
 
 using namespace Logger;
 
@@ -18,7 +19,7 @@ void TcpQueueToUdpThread::processData() {
     // Check running state before processing
     if (!SocketManager::isServerRunning()) return;
 
-    Log::getInstance().info("Processing data from TCP queue to UDP");
+    Log::getInstance().info(std::format("Processing data from TCP queue to UDP, queue: {:p}", static_cast<void*>(queue_.get())));
     auto data = queue_->dequeue();
     sendDataViaUdp(data);
 }

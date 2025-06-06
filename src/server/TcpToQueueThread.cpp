@@ -59,9 +59,6 @@ void TcpToQueueThread::run() {
         break;
       }
       
-      // Track memory allocation
-      MemoryMonitor::getInstance().trackAllocation(result);
-      
       // Resize buffer to actual data size
       buffer->resize(result);
       
@@ -119,12 +116,4 @@ void TcpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffe
   QueueManager::getInstance().getTcpToUdpQueueForClient(clientId_)->enqueue(dataBuffer);
   
   // Note: The buffer is now owned by the queue and will be recycled when no longer needed
-}
-
-void TcpToQueueThread::startUdpToQueueThread(int udpSocket, std::shared_ptr<BlockingQueue>& queue) {
-  auto thread = std::thread([udpSocket, &queue]() {
-    UdpToQueueThread udpToQueueThread(udpSocket, queue);
-    udpToQueueThread.run();
-  });
-  thread.detach(); // Detach the thread to let it run independently
 }

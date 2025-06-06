@@ -15,13 +15,13 @@ void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data) {
     queue.push(data);
   }
 
-  Log::getInstance().info(std::format("Enqueued data, Queue address: {:p}", static_cast<const void*>(&queue)));
+  Log::getInstance().info(std::format("Enqueued data, Queue address: {:p}", static_cast<const void*>(this)));
   queueCondVar.notify_one();
 }
 
 std::shared_ptr<std::vector<char>> BlockingQueue::dequeue() {
 
-  Log::getInstance().info(std::format("Wait for queue data , Queue address: {:p}", static_cast<const void*>(&queue)));
+  Log::getInstance().info(std::format("Wait for queue data , Queue address: {:p}", static_cast<const void*>(this)));
 
   std::unique_lock<std::mutex> lock(queueMutex);
   // Block until queue is not empty
