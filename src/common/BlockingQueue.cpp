@@ -21,6 +21,8 @@ void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data) {
 
 std::shared_ptr<std::vector<char>> BlockingQueue::dequeue() {
 
+  Log::getInstance().info(std::format("Wait for queue data , Queue address: {:p}", static_cast<const void*>(&queue)));
+
   std::unique_lock<std::mutex> lock(queueMutex);
   // Block until queue is not empty
   queueCondVar.wait(lock, [this] { return !queue.empty(); });
