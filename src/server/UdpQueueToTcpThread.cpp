@@ -40,7 +40,7 @@ void UdpQueueToTcpThread::processDataConcurrently() {
     // Send data via TCP
     Log::getInstance().info(
         std::format("Server -> Client (TCP Data), Length: {}", data->size()));
-    sendDataViaTcp(tcpSocket_, *data);
+    sendDataViaTcp(tcpSocket_, *newData);
   }
 }
 
