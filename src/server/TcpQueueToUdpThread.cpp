@@ -35,6 +35,6 @@ void TcpQueueToUdpThread::sendDataViaUdp(std::shared_ptr<std::vector<char>> data
 
     ssize_t sentBytes = SendUdpData(udpSocket_, data->data(), data->size(), 0, (struct sockaddr*)&udpAddr, sizeof(udpAddr));
     if (sentBytes < 0) {
-        Log::getInstance().error("Failed to send data via UDP");
+        Log::getInstance().error(std::format("Failed to send data via UDP, socket: {}", udpSocket_));
     }
 }

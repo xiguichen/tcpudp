@@ -4,6 +4,8 @@
 #include <map>
 #include <mutex>
 #include <Socket.h>
+#include <Log.h>
+using namespace Logger;
 
 class ClientUdpSocketManager {
 public:
@@ -24,6 +26,7 @@ public:
         // Check if client already has a UDP socket
         auto it = clientUdpSockets.find(clientId);
         if (it != clientUdpSockets.end()) {
+            Log::getInstance().info(std::format("Using existing UDP socket for client ID: {}, Socket: {}", clientId, it->second));
             return it->second;
         }
         
@@ -41,6 +44,7 @@ public:
         
         // Store the UDP socket for this client
         clientUdpSockets[clientId] = udpSocket;
+        Log::getInstance().info(std::format("Using new UDP socket for client ID: {}, Socket: {}", clientId, it->second));
         return udpSocket;
     }
     
