@@ -8,13 +8,13 @@
 
 class TcpQueueToUdpThread {
 public:
-    TcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue& queue) 
+    TcpQueueToUdpThread(const SocketFd& udpSocket, BlockingQueue& queue) 
         : udpSocket_(udpSocket), queue_(queue) {}
     void run();
 private:
     void processData();
     void sendDataViaUdp(std::shared_ptr<std::vector<char>> data);
-    SocketFd udpSocket_;
+    const SocketFd& udpSocket_;
     BlockingQueue& queue_;
 
 };

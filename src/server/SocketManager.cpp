@@ -229,6 +229,8 @@ void SocketManager::acceptConnection() {
 
         // TCP to UDP
         startTcpToQueueThread(clientSocket, udpSocket, clientId);
+
+        Log::getInstance().info(std::format("Starting TcpQueueToUdpThread for client ID: {}, udpSocket: {}", clientId, udpSocket));
         startTcpQueueToUdpThread(udpSocket, *tcpToUdpQueue);
 
         // UDP to TCP
@@ -255,11 +257,12 @@ void SocketManager::startUdpToQueueThread(int clientSocket, BlockingQueue& queue
     threads.push_back(std::move(thread));
 }
 
-void SocketManager::startTcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue& queue) {
+void SocketManager::startTcpQueueToUdpThread(const SocketFd& udpSocket, BlockingQueue& queue) {
 
-    Log::getInstance().info("Starting TcpQueueToUdpThread");
+    Log::getInstance().info(std::format("Starting TcpQueueToUdpThread, socket: {}", udpSocket));
     auto thread = std::thread([&udpSocket, &queue]() {
         // Assuming TcpQueueToUdpThread is a class that handles the processing
+        Log::getInstance().info(std::format("TcpQueueToUdpThread started for UDP socket: {}", udpSocket));
         TcpQueueToUdpThread tcpQueueToUdpThread(udpSocket, queue);
         tcpQueueToUdpThread.run();
     });

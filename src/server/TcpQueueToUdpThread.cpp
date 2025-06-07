@@ -10,6 +10,9 @@ using namespace Logger;
 
 void TcpQueueToUdpThread::run() {
     Log::getInstance().info("Starting TcpQueueToUdpThread");
+
+    Log::getInstance().info(std::format("UDP socket: {}, queue: {:p}", udpSocket_, static_cast<void*>(&queue_)));
+
     while (SocketManager::isServerRunning()) {
         processData();
     }
