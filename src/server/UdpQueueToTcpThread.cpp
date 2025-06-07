@@ -34,7 +34,9 @@ void UdpQueueToTcpThread::processDataConcurrently() {
 
     // use gMsgId as the msg id and increase it
     uint8_t msgId = gMsgId.fetch_add(1, std::memory_order_relaxed);
+    Log::getInstance().info(std::format("MsgId: {}", msgId));
     auto newData = MemoryPool::getInstance().getBuffer(data->size() + 20);
+    newData->resize(0);
     UvtUtils::AppendUdpData(*data, msgId, *newData);
 
     // Send data via TCP

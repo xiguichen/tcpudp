@@ -103,6 +103,7 @@ std::shared_ptr<std::vector<char>> PeerTcpSocket::receive() {
 
   // Receive header with timeout
   UvtHeader header;
+  Log::getInstance().info("recv header");
   ssize_t lengthBytesReceived = RecvTcpDataWithSizeNonBlocking(socketFd, &header, HEADER_SIZE, 0, HEADER_SIZE, 5000); // 5 seconds timeout
   
   if (lengthBytesReceived != HEADER_SIZE) {
