@@ -260,7 +260,7 @@ void SocketManager::startUdpToQueueThread(int clientSocket, BlockingQueue& queue
 void SocketManager::startTcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue& queue) {
 
     Log::getInstance().info(std::format("Starting TcpQueueToUdpThread, socket: {}", udpSocket));
-    auto thread = std::thread([&udpSocket, &queue]() {
+    auto thread = std::thread([udpSocket, &queue]() {
         // Assuming TcpQueueToUdpThread is a class that handles the processing
         Log::getInstance().info(std::format("TcpQueueToUdpThread started for UDP socket: {}", udpSocket));
         TcpQueueToUdpThread tcpQueueToUdpThread(udpSocket, queue);
