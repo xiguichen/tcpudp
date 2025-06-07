@@ -29,7 +29,7 @@ void UdpQueueToTcpThread::processDataConcurrently() {
   while (SocketManager::isServerRunning()) {
     // Dequeue data from the UDP data queue
     Log::getInstance().info("Processing data from UDP queue...");
-    auto data = udpDataQueue->dequeue();
+    auto data = udpDataQueue.dequeue();
     Log::getInstance().info("Get data from UDP queue...");
 
     // use gMsgId as the msg id and increase it

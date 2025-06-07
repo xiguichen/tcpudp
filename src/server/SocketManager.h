@@ -17,9 +17,9 @@ public:
   void acceptConnection();
   void startTcpToQueueThread(SocketFd clientSocket, SocketFd udpSocket,
                              uint32_t clientId);
-  void startUdpToQueueThread(int clientSocket, BlockingQueue &queue);
+  void startUdpToQueueThread(SocketFd clientSocket, BlockingQueue &queue);
   void startTcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue &queue);
-  void startUdpQueueToTcpThread(int clientSocket, BlockingQueue &queue) {}
+  void startUdpQueueToTcpThread(SocketFd clientSocket, BlockingQueue &queue);
   bool CapabilityNegotiate(SocketFd socket, uint32_t &clientId,
                            SocketFd &udpSocket);
 

@@ -8,6 +8,7 @@
 #endif
 #include "TcpToQueueThread.h"
 #include "UdpToQueueThread.h"
+#include "UdpQueueToTcpThread.h"
 #include "TcpQueueToUdpThread.h"
 #include <Protocol.h>
 #include <Socket.h>
@@ -234,7 +235,7 @@ void SocketManager::acceptConnection() {
         startTcpQueueToUdpThread(udpSocket, *tcpToUdpQueue);
 
         // UDP to TCP
-        startUdpToQueueThread(udpSocket, *udpToTcpQueue);
+        startUdpQueueToTcpThread(udpSocket, *udpToTcpQueue);
     }
 }
 
@@ -249,10 +250,20 @@ void SocketManager::startTcpToQueueThread(SocketFd clientSocket, SocketFd udpSoc
     threads.push_back(std::move(thread));
 }
 
-void SocketManager::startUdpToQueueThread(int clientSocket, BlockingQueue& queue) {
+void SocketManager::startUdpToQueueThread(SocketFd clientSocket, BlockingQueue& queue) {
     auto thread = std::thread([clientSocket, &queue]() {
         UdpToQueueThread udpToQueueThread(clientSocket, queue);
         udpToQueueThread.run();
+    });
+    threads.push_back(std::move(thread));
+}
+
+
+void SocketManager::startUdpQueueToTcpThread(SocketFd clientSocket, BlockingQueue &queue)
+{
+    auto thread = std::thread([clientSocket, &queue]() {
+        UdpQueueToTcpThread udpQueueToTcpThread(clientSocket, queue);
+        udpQueueToTcpThread.run();
     });
     threads.push_back(std::move(thread));
 }
