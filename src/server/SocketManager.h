@@ -18,7 +18,7 @@ public:
   void startTcpToQueueThread(SocketFd clientSocket, SocketFd udpSocket,
                              uint32_t clientId);
   void startUdpToQueueThread(int clientSocket, BlockingQueue &queue);
-  void startTcpQueueToUdpThread(const SocketFd& udpSocket, BlockingQueue &queue);
+  void startTcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue &queue);
   void startUdpQueueToTcpThread(int clientSocket, BlockingQueue &queue) {}
   bool CapabilityNegotiate(SocketFd socket, uint32_t &clientId,
                            SocketFd &udpSocket);

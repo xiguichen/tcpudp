@@ -257,7 +257,7 @@ void SocketManager::startUdpToQueueThread(int clientSocket, BlockingQueue& queue
     threads.push_back(std::move(thread));
 }
 
-void SocketManager::startTcpQueueToUdpThread(const SocketFd& udpSocket, BlockingQueue& queue) {
+void SocketManager::startTcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue& queue) {
 
     Log::getInstance().info(std::format("Starting TcpQueueToUdpThread, socket: {}", udpSocket));
     auto thread = std::thread([&udpSocket, &queue]() {
