@@ -29,6 +29,6 @@ std::shared_ptr<std::vector<char>> BlockingQueue::dequeue() {
   auto result = queue.front();
   queue.pop();
   lock.unlock();
-  Log::getInstance().info(std::format("Dequeued data of size: {}, Queue address: {:p}", result->size(), static_cast<const void*>(&queue)));
+  Log::getInstance().info(std::format("Dequeued data of size: {}, Queue address: {:p}", result->size(), static_cast<const void*>(this)));
   return result;
 }

@@ -19,8 +19,8 @@ void TcpQueueToUdpThread::processData() {
     // Check running state before processing
     if (!SocketManager::isServerRunning()) return;
 
-    Log::getInstance().info(std::format("Processing data from TCP queue to UDP, queue: {:p}", static_cast<void*>(queue_.get())));
-    auto data = queue_->dequeue();
+    Log::getInstance().info(std::format("Processing data from TCP queue to UDP, queue: {:p}", static_cast<void*>(&queue_)));
+    auto data = queue_.dequeue();
     sendDataViaUdp(data);
 }
 

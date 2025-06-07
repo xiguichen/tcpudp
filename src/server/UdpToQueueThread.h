@@ -10,7 +10,7 @@
 
 class UdpToQueueThread {
 public:
-    UdpToQueueThread(int socket, const std::shared_ptr<BlockingQueue>& queue)
+    UdpToQueueThread(int socket, BlockingQueue& queue)
         : socket_(socket), queue(queue) {}
     void run();
     
@@ -19,7 +19,7 @@ private:
     void enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer);
 
     int socket_;
-    std::shared_ptr<BlockingQueue> queue;
+    BlockingQueue& queue;
 };
 
 #endif // UDP_TO_QUEUE_THREAD_H

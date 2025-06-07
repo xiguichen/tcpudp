@@ -89,5 +89,5 @@ void UdpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffe
     Log::getInstance().info(std::format("UDP -> Queue: Data Enqueue, Length: {}", dataBuffer->size()));
     
     // Enqueue the data buffer directly (no need to copy)
-    queue->enqueue(dataBuffer);
+    queue.enqueue(dataBuffer);
 }

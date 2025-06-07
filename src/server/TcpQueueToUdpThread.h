@@ -8,14 +8,14 @@
 
 class TcpQueueToUdpThread {
 public:
-    TcpQueueToUdpThread(SocketFd udpSocket, std::shared_ptr<BlockingQueue> queue) 
+    TcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue& queue) 
         : udpSocket_(udpSocket), queue_(queue) {}
     void run();
 private:
     void processData();
     void sendDataViaUdp(std::shared_ptr<std::vector<char>> data);
     SocketFd udpSocket_;
-    std::shared_ptr<BlockingQueue> queue_;
+    BlockingQueue& queue_;
 
 };
 
