@@ -235,7 +235,7 @@ void SocketManager::acceptConnection() {
         startTcpQueueToUdpThread(udpSocket, *tcpToUdpQueue);
 
         // UDP to TCP
-        startUdpQueueToTcpThread(udpSocket, *udpToTcpQueue);
+        startUdpQueueToTcpThread(clientSocket, *udpToTcpQueue);
     }
 }
 
