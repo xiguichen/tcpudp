@@ -44,7 +44,7 @@ public:
         
         // Store the UDP socket for this client
         clientUdpSockets[clientId] = udpSocket;
-        Log::getInstance().info(std::format("Using new UDP socket for client ID: {}, Socket: {}", clientId, it->second));
+        Log::getInstance().info(std::format("Using new UDP socket for client ID: {}, Socket: {}", clientId, udpSocket));
         return udpSocket;
     }
     

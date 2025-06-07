@@ -146,7 +146,7 @@ void SocketManager::listenForConnections() {
         }
         
         // Log the creation of the UDP socket
-        Log::getInstance().info(std::format("Created UDP socket for client ID: {}", clientId));
+        Log::getInstance().info(std::format("Created UDP queue for client ID: {}", clientId));
 
         auto udpToTcpQueue =  QueueManager::getInstance().getUdpToTcpQueueForClient(clientId);
 
@@ -367,6 +367,8 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
     SocketClose(tcpSocket);
     return false;
   }
+
+  Log::getInstance().info(std::format("Created UDP socket for client ID: {}, Socket: {}", bind.clientId, udpSocket));
 
   return true;
 }
