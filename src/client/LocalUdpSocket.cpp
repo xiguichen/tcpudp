@@ -101,7 +101,7 @@ std::vector<char> LocalUdpSocket::receive() {
   Log::getInstance().debug(std::format("Local address: {}", addrStr));
 
   // Check if socket is readable with a short timeout
-  if (!IsSocketReadable(socketFd, 100)) { // 100ms timeout
+  if (!IsSocketReadable(socketFd, 1000)) { // 100ms timeout
     Log::getInstance().debug("Socket not readable within 100ms timeout");
     return {};
   }
