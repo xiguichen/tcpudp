@@ -4,7 +4,6 @@
 #include <memory>
 #include <vector>
 #include <MemoryPool.h>
-#include <MemoryMonitor.h>
 #include <BlockingQueue.h>
 #include <Socket.h>
 

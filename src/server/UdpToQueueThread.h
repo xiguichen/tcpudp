@@ -6,7 +6,6 @@
 #include <memory>
 #include <vector>
 #include <MemoryPool.h>
-#include <MemoryMonitor.h>
 
 class UdpToQueueThread {
 public:

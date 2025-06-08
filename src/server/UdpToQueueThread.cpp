@@ -19,8 +19,6 @@ void UdpToQueueThread::run() {
 
     Log::getInstance().info("Starting UdpToQueueThread");
     
-    // Initialize memory monitoring
-    MemoryMonitor::getInstance().start();
     
     // Get a buffer from the memory pool with optimal size for UDP packets
     auto buffer = MemoryPool::getInstance().getBuffer(4096);
@@ -47,11 +45,6 @@ void UdpToQueueThread::run() {
             std::this_thread::yield();
         }
         
-        // Periodically log memory usage (every ~1000 iterations)
-        static int counter = 0;
-        if (++counter % 1000 == 0) {
-            MemoryMonitor::getInstance().logMemoryUsage();
-        }
     }
     
     // Recycle the buffer when the thread exits
@@ -71,7 +64,6 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     
     if (bytesRead > 0) {
         // Data received successfully
-        MemoryMonitor::getInstance().trackAllocation(bytesRead);
     } else if (bytesRead == SOCKET_ERROR_TIMEOUT) {
         Log::getInstance().info("UDP socket read timeout");
     } else if (bytesRead == SOCKET_ERROR_WOULD_BLOCK) {

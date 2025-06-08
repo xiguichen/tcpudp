@@ -19,7 +19,6 @@ using namespace Logger;
 
 void TcpToQueueThread::run() {
   // Initialize memory monitoring
-  MemoryMonitor::getInstance().start();
   
   const int bufferSize = 4000;
   auto buffer = MemoryPool::getInstance().getBuffer(bufferSize);
@@ -40,16 +39,18 @@ void TcpToQueueThread::run() {
   // Main processing loop
   while (SocketManager::isServerRunning()) {
     // Check if socket is readable with a short timeout
-    if (IsSocketReadable(socket_, 100)) { // 100ms timeout
+    if (IsSocketReadable(socket_, 3000)) { // 100ms timeout
       Log::getInstance().info("Client -> Server (Receive TCP Data)");
       
       // Receive data non-blocking with timeout
-      auto result = RecvTcpDataNonBlocking(socket_, buffer->data(), buffer->capacity(), 0, 1000); // 1 second timeout
+      auto result = RecvTcpDataNonBlocking(socket_, buffer->data(), buffer->capacity(), 0, 3000); // 1 second timeout
       
       if (result == SOCKET_ERROR_TIMEOUT) {
         // Timeout, just continue the loop
+          Log::getInstance().warning("Timeout while receiving TCP data, continuing to next iteration");
         continue;
       } else if (result == SOCKET_ERROR_WOULD_BLOCK) {
+          Log::getInstance().warning("Would block while receiving TCP data, continuing to next iteration");
         // Would block, just continue the loop
         continue;
       } else if (result == SOCKET_ERROR_CLOSED || result <= 0) {
@@ -90,14 +91,6 @@ void TcpToQueueThread::run() {
       std::this_thread::yield();
     }
     
-    // Periodically log memory usage (every ~1000 iterations)
-    static int counter = 0;
-    if (++counter % 1000 == 0) {
-      MemoryMonitor::getInstance().logMemoryUsage();
-      
-      // Trim the memory pool to prevent memory bloat
-      MemoryPool::getInstance().trim(0.7f);
-    }
   }
   
   // Recycle all buffers
