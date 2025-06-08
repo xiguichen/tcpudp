@@ -284,14 +284,14 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
 {
 
   // Get a buffer from the memory pool with optimal size for TCP packets
-  const int bufferSize = 65535;
+  const int bufferSize = 20;
   auto buffer = MemoryPool::getInstance().getBuffer(bufferSize);
   
   // Set socket to non-blocking mode
   SetSocketNonBlocking(tcpSocket);
   
   // Wait for socket to be readable with timeout
-  if (!IsSocketReadable(tcpSocket, 2000)) { // 2 seconds timeout
+  if (!IsSocketReadable(tcpSocket, 5000)) { // 5 seconds timeout
     Log::getInstance().error("Socket not readable within timeout");
     SocketClose(tcpSocket);
     return false;

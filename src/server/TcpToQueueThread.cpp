@@ -21,7 +21,7 @@ void TcpToQueueThread::run() {
   // Initialize memory monitoring
   MemoryMonitor::getInstance().start();
   
-  const int bufferSize = 65535;
+  const int bufferSize = 4000;
   auto buffer = MemoryPool::getInstance().getBuffer(bufferSize);
 
   // Log that the handshake response was already sent earlier

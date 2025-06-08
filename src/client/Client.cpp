@@ -4,7 +4,7 @@
 #include <Log.h>
 #include <stdlib.h>
 
-const int TCP_CONNECTION_NUMBER = 1;
+const int TCP_CONNECTION_NUMBER = 30;
 
 using json = nlohmann::json;
 
