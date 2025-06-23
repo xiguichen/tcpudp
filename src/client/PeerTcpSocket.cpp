@@ -10,6 +10,7 @@
 #include <format>
 #include <vector>
 #include <Protocol.h>
+#include <message.pb.h>
 
 using namespace Logger;
 
@@ -183,9 +184,16 @@ void PeerTcpSocket::sendHandshake() {
   // Create and populate the MsgBind structure
   MsgBind msgBind;
   msgBind.clientId = this->clientId;
-  
-  // Create a buffer to hold the serialized MsgBind structure
+
+  // Sync sync;
+  // sync.set_clientid(this->clientId);
+  // sync.set_sequencenumber(0); // Initial sequence number
+  //
+  // // Create a buffer to hold the serialized MsgBind structure
+  // auto buffer = std::make_shared<std::vector<char>>(sync.ByteSizeLong() + sizeof(int));
+  //
   auto buffer = std::make_shared<std::vector<char>>(sizeof(MsgBind));
+  
   std::memcpy(buffer->data(), &msgBind, sizeof(MsgBind));
   
   // Send handshake with timeout

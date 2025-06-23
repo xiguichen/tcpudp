@@ -24,6 +24,7 @@ private:
     std::vector<std::shared_ptr<PeerTcpSocket>> peerTcpSockets;
     BlockingQueue udpToTcpQueue;
     BlockingQueue tcpToUdpQueue;
+    uint32_t _clientId;
 };
 
 #endif // SOCKETMANAGER_H

@@ -5,11 +5,13 @@
 #include <Log.h>
 #include <Protocol.h>
 #include <MemoryPool.h>
+#include <Counter.h>
 
 using namespace Logger;
 
 SocketManager::SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections, uint32_t clientId)
-    : localUdpSocket(udpPort) {
+    : localUdpSocket(udpPort), _clientId(clientId)
+{
     for (const auto& connection : peerConnections) {
         peerTcpSockets.emplace_back(std::make_shared<PeerTcpSocket>(connection.first, connection.second, clientId));
     }
@@ -75,6 +77,7 @@ void SocketManager::localHostReadTask(bool& running) {
 void SocketManager::localHostWriteTask(bool& running) {
     int i = 0;
     uint8_t msgId = 0;
+    // auto &counterManager = CounterManager::getInstance(_clientId); 
     try {
         while (running) {
 

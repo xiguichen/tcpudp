@@ -21,9 +21,13 @@ target_include_directories(udp_client PRIVATE ${CMAKE_SOURCE_DIR}/third_party/js
 
 # Add common library as dependency
 target_link_libraries(udp_client common)
+target_link_libraries(udp_client proto)
 
 # Add common library as include directory
 target_include_directories(udp_client PRIVATE ${CMAKE_SOURCE_DIR}/common)
+
+
+target_include_directories(udp_client PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../proto)
 
 # Copy config.json to the build directory
 configure_file(config.json config.json COPYONLY)
