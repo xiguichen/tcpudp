@@ -7,9 +7,7 @@
 using namespace Logger;
 
 void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data) {
-
-
-  // Enqueue to the standard queue with locking
+    // Enqueue to the standard queue with locking
     {
       std::lock_guard<std::mutex> lock(queueMutex);
       queue.push(data);

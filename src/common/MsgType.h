@@ -1,6 +1,8 @@
 #pragma once
 
-enum class MsgType {
+#include <cstdint>
+
+enum class MsgType: uint8_t {
     MSG_SYNC = 1,
     MSG_ACK = 2,
     MSG_BIND = 3,

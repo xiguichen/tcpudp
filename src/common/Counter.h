@@ -16,9 +16,19 @@ public:
         return count++;
     }
 
+    // Method to increase the current count and return the new value
+    T incrementAndGet() {
+        return ++count;
+    }
+
     // Reset the counter
     void reset() {
         count.store(0);
+    }
+
+    // Get the current count without incrementing
+    T get() const {
+        return count.load();
     }
 
 private:

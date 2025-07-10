@@ -16,6 +16,7 @@ file(GLOB_RECURSE ALL_CPP_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "*.cpp")
 add_library(common STATIC ${ALL_CPP_FILES})
 
 target_include_directories(common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../proto)
+target_link_libraries(common proto)
 
 # Enable /EHsc for Windows platform
 if (WIN32)

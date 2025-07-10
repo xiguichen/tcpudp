@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
+project(tcpudp)
 
 # export json for lsp
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -9,6 +10,7 @@ if(WIN32)
 endif()
 
 find_package(Protobuf REQUIRED)
+find_package(abseil REQUIRED)
 include_directories(${Protobuf_INCLUDE_DIRS})
 
 set(CMAKE_CXX_STANDARD 20)

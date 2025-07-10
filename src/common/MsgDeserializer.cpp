@@ -7,27 +7,31 @@ MsgType MsgDeserializer::deserializeMsgType(const std::vector<char> &data)
     }
     return static_cast<MsgType>(data[0]);
 }
-std::shared_ptr<Sync> MsgDeserializer::deserializeSync(const std::vector<char> &data)
+std::shared_ptr<Sync> MsgDeserializer::deserializeSync(const void* data, int size)
 {
+    const char* p = static_cast<const char*>(data);
     auto sync = std::make_shared<Sync>();
-    sync->ParseFromArray(data.data(), data.size());
+    sync->ParseFromArray(++p, --size);
     return sync;
 }
-std::shared_ptr<Ack> MsgDeserializer::deserializeAck(const std::vector<char> &data)
+std::shared_ptr<Ack> MsgDeserializer::deserializeAck(const void* data, int size)
 {
+    const char* p = static_cast<const char*>(data);
     auto ack = std::make_shared<Ack>();
-    ack->ParseFromArray(data.data(), data.size());
+    ack->ParseFromArray(++p, --size);
     return ack;
 }
-std::shared_ptr<Bind> MsgDeserializer::deserializeBind(const std::vector<char> &data)
+std::shared_ptr<Bind> MsgDeserializer::deserializeBind(const void* data, int size)
 {
+    const char* p = static_cast<const char*>(data);
     auto bind = std::make_shared<Bind>();
-    bind->ParseFromArray(data.data(), data.size());
+    bind->ParseFromArray(++p, --size);
     return bind;
 }
-std::shared_ptr<Data> MsgDeserializer::deserializeData(const std::vector<char> &data)
+std::shared_ptr<Data> MsgDeserializer::deserializeData(const void* data, int size)
 {
+    const char* p = static_cast<const char*>(data);
     auto messageData = std::make_shared<Data>();
-    messageData->ParseFromArray(data.data(), data.size());
+    messageData->ParseFromArray(++p, --size);
     return messageData;
 }
