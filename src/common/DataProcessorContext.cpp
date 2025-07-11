@@ -1,4 +1,5 @@
 #include "DataProcessorContext.h"
+#include <stdexcept>
 
 void DataProcessorContext::processData(const std::vector<char> &data)
 {

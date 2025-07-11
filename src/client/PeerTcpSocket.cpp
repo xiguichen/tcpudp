@@ -10,7 +10,6 @@
 #include <format>
 #include <vector>
 #include <Protocol.h>
-#include <message.pb.h>
 
 using namespace Logger;
 

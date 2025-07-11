@@ -2,6 +2,7 @@
 
 #include "DataProcessorState.h"
 #include <vector>
+#include <memory>
 
 class DataProcessorContext
 {

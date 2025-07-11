@@ -20,15 +20,10 @@ add_executable(udp_client ${SOURCES})
 target_include_directories(udp_client PRIVATE ${CMAKE_SOURCE_DIR}/third_party/json)
 
 # Add common library as dependency
-target_link_libraries(udp_client common proto absl::strings absl::log)
-# target_link_libraries(udp_client proto)
-# target_link_libraries(udp_client PRIVATE absl::log_internal)
+target_link_libraries(udp_client common)
 
 # Add common library as include directory
 target_include_directories(udp_client PRIVATE ${CMAKE_SOURCE_DIR}/common)
-
-
-target_include_directories(udp_client PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../proto)
 
 # Copy config.json to the build directory
 configure_file(config.json config.json COPYONLY)

@@ -9,14 +9,9 @@ if(WIN32)
   add_definitions(-DNOMINMAX)
 endif()
 
-find_package(Protobuf REQUIRED)
-find_package(abseil REQUIRED)
-include_directories(${Protobuf_INCLUDE_DIRS})
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-add_subdirectory(proto)
 add_subdirectory(common)
 add_subdirectory(client)
 add_subdirectory(server)
