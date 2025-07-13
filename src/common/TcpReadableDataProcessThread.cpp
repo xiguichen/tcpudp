@@ -1,11 +1,11 @@
-#include "TcpDataProcessThread.h"
+#include "TcpReadableDataProcessThread.h"
 #include "Socket.h"
 #include "Log.h"
 #include <format>
 
 using namespace Logger;
 
-std::shared_ptr<std::vector<char>> TcpDataProcessThread::read()
+std::shared_ptr<std::vector<char>> TcpReadableDataProcessThread::read()
 {
 
     // Read 4 bytes for the length of the data

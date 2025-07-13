@@ -1,12 +1,12 @@
 #pragma once
 #include "Socket.h"
-#include "DataProcessThread.h"
+#include "ReadableDataProcessThread.h"
 
-class TcpDataProcessThread : public DataProcessThread
+class TcpReadableDataProcessThread : public ReadableDataProcessThread
 {
   public:
-    TcpDataProcessThread() = default;
-    ~TcpDataProcessThread() override = default;
+    TcpReadableDataProcessThread() = default;
+    ~TcpReadableDataProcessThread() override = default;
 
   protected:
     // Read data from the TCP socket

@@ -4,10 +4,10 @@
 #include <vector>
 #include "StopableThread.h"
 
-class DataProcessThread : public StopableThread
+class ReadableDataProcessThread : public StopableThread
 {
   public:
-    DataProcessThread() = default;
+    ReadableDataProcessThread() = default;
 
   protected:
     // Read data from the socket

@@ -1,9 +1,9 @@
-#include "DataProcessThread.h"
+#include "ReadableDataProcessThread.h"
 #include "Log.h"
 
 using namespace Logger;
 
-void DataProcessThread::run()
+void ReadableDataProcessThread::run()
 {
     while (this->isRunning())
     {
