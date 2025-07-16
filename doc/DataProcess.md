@@ -1,11 +1,4 @@
 ```plantuml
-class ReadableDataProcessThread extends StopableThread {
-    +ReadableDataProcessThread()
-    ..protected..
-     #read() std::shared_ptr<std::vector<char>> 
-    #run()
-     #processData(data : std::vector<char>)
-}
 
 class StopableThread {
     +StopableThread()
@@ -22,20 +15,36 @@ class StopableThread {
 }
 
 
-class TcpReadableDataProcessThread extends ReadableDataProcessThread
-{
-    ..protected..
-    +read() std::shared_ptr<std::vector<char>> 
+class IDataProcessor {
+    +IDataProcessor()
+    +processData(data : char*, size : size_t)
+}
 
+class TcpDataReader extends IDataReader {
+    +TcpDataReader(socketFd : SocketFd)
+    +readData() std::shared_ptr<std::vector<char>>
+    +hasMoreData() : bool
     ..private..
     -_socketFd: SocketFd
 }
 
-
-class IDataProcessor {
-    +IDataProcessor()
-    +processData(data : std::vector<char>)
+class IDataReader {
+    +IDataReader()
+    +readData() std::shared_ptr<std::vector<char>>
+    +hasMoreData() : bool
 }
+
+class DataProcessorThread extends StopableThread {
+    +DataProcessorThread()
+    +run()
+    ..private..
+     -_dataReader : IDataReader
+    -_dataProcessor : IDataProcessor
+}
+
+
+IDataReader <... DataProcessorThread
+IDataProcessor <.. DataProcessorThread
 
 
 ```

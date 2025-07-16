@@ -2,8 +2,6 @@
 
 
 #include "VirtualChannel.h"
-#include "TcpReadableDataProcessThread.h"
-
 
 class MultipleTcpConnVirtualChannel : public VirtualChannel
 {
@@ -23,7 +21,5 @@ public:
 
     // Method to close the channel
     virtual void close() override;
-
-
-
 };
+
