@@ -28,6 +28,14 @@ class TcpDataReader extends IDataReader {
     -_socketFd: SocketFd
 }
 
+class QueueDataReader extends IDataReader {
+    +QueueDataReader(socketFd : SocketFd)
+    +readData() std::shared_ptr<std::vector<char>>
+    +hasMoreData() : bool
+    ..private..
+    -_queue: BlockingQueue
+}
+
 class IDataReader {
     +IDataReader()
     +readData() std::shared_ptr<std::vector<char>>
@@ -43,8 +51,8 @@ class DataProcessorThread extends StopableThread {
 }
 
 
-IDataReader <... DataProcessorThread
-IDataProcessor <.. DataProcessorThread
+DataProcessorThread *-- IDataReader
+DataProcessorThread *-- IDataProcessor
 
 
 ```
