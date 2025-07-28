@@ -96,6 +96,10 @@ VcDataAck *-> VcHeader
 
 ```plantuml
 
+queue "Data Queue" as DataQueue {
+}
+() "Data Dequeue" as DataDequeue
+DataQueue - DataDequeue
 
 component "Socket 1" as Socket1 {
 }
@@ -128,11 +132,12 @@ MapRemove -d- UnAckedDataMap
 
 
 SocketWrite -u- Socket1
-DataWriteThread -u-> SocketWrite: "1. Data 1\n 6. Data 2"
-DataWriteThread -l-> MapAdd : "2. Data 1, wait for Ack 1"
-DataReadThread -u-> SocketRead : "3. Ack 1"
-DataReadThread -d-> DataAckCallback : "4. Ack 1"
-DataAckCallback -> MapRemove : "5. Data 1"
+DataWriteThread --> DataDequeue : "1. Data 1\n 6. Data 2"
+DataWriteThread -u-> SocketWrite: "2. Data 1\n 7. Data 2"
+DataWriteThread -l-> MapAdd : "3. Data 1, wait for Ack 1"
+DataReadThread -u-> SocketRead : "4. Ack 1"
+DataReadThread -d-> DataAckCallback : "5. Ack 1"
+DataAckCallback -> MapRemove : "6. Data 1"
 
 ```
 
@@ -146,13 +151,28 @@ component "Socket 1" as Socket1 {
 () "Socket Read" as SocketRead
 SocketRead -u- Socket1
 
+
+component "Socket 2" as Socket2 {
+}
+() "Socket Write" as SocketWrite
+Socket2 -- SocketWrite
+
+
 component "DataReadThread" as DataReadThread {
 }
+
+queue "Ack Queue" as AckQueue {
+}
+() "Dequeue" as AckDequeue
+() "Enqueue" as AckEnqueue
+
+AckQueue - AckDequeue
+AckQueue -- AckEnqueue
 
 () "Parse Data" as ParseData
 DataReadThread -- ParseData
 
-component "DataWriteThread" as DataWriteThread {
+component "AckWriteThread" as AckWriteThread {
 }
 
 DataReadThread -u-> SocketRead : "1. Data 1"
@@ -161,11 +181,49 @@ database "Received Data Map" as ReceivedDataMap {
 }
 
 () "Map Add" as MapAdd
-() "Map Remove" as MapRemove
 ReceivedDataMap - MapAdd
-MapRemove -d- ReceivedDataMap
 
 ParseData --> MapAdd : "2. Data 1"
 
+MapAdd -> AckEnqueue : "3. Ack 1"
+AckWriteThread --> AckDequeue : "4. Ack 1"
+AckWriteThread -u-> SocketWrite : "5. Ack 1"
 
+
+```
+
+
+### Packet Reordering
+
+```plantuml
+database "Received Data Map" as ReceivedDataMap {
+}
+() "Remove" as MapRemove
+() "Add" as MapAdd
+ReceivedDataMap -l- MapRemove
+ReceivedDataMap  -r- MapAdd
+
+component "DataPorter" as DataPorter {
+}
+
+() "New Data Callback" as NewDataCallback
+DataPorter - NewDataCallback
+
+database "Reordered Data Queue" as ReorderedDataQueue {
+}
+() "Reorder Enqueue" as ReorderEnqueue
+ReorderedDataQueue -u- ReorderEnqueue
+
+component "PackerCounter" as PackerCounter {
+}
+() "Next Frame ID" as NextFrameId
+PackerCounter -d- NextFrameId
+
+
+MapAdd --> NewDataCallback : "1. Notify Data 1"
+DataPorter -d-> NextFrameId : "2. frame ID"
+DataPorter -> MapRemove : "3. Data 1 if frameId is next"
+DataPorter --> ReorderEnqueue : "4. Data 1"
+
+```
 ```
