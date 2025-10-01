@@ -2,6 +2,7 @@
 
 #include "StopableThread.h"
 #include "TcpConnection.h"
+#include <functional>
 #include <memory>
 #include <vector>
 

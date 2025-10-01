@@ -1,5 +1,6 @@
 #pragma once
 #include "StopableThread.h"
+#include <functional>
 #include <vector>
 
 class SocketWriteThread : public StopableThread

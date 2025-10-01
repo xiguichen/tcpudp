@@ -3,6 +3,7 @@
 #include "TcpVCReadThreadFactory.h"
 #include "TcpVCWriteThreadFactory.h"
 #include "VcProtocol.h"
+#include <format>
 
 void TcpVirtualChannel::open()
 {
