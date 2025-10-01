@@ -24,4 +24,5 @@ private:
 
 };
 
+typedef std::shared_ptr<BlockingQueue> BlockingQueueSp;
 #endif // BLOCKING_QUEUE_H

@@ -1,19 +1,15 @@
 #pragma once
+#include <vector>
 #include "VirtualChannel.h"
+#include "Socket.h"
 
-class VirtualChannelFactory {
+class VirtualChannelFactory
+{
 
-public:
+  public:
     VirtualChannelFactory() = default;
-    virtual ~VirtualChannelFactory() = default;
+    ~VirtualChannelFactory() = default;
 
     // Method to create a new virtual channel
-    virtual VirtualChannel* createChannel() = 0;
-
-    // Method to destroy a virtual channel
-    virtual void destroyChannel(VirtualChannel* channel) = 0;
-
-    // Method to get the type of the factory
-    virtual const char* getType() const = 0;
-
+    static VirtualChannelSp create(std::vector<SocketFd> fds);
 };

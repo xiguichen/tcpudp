@@ -2,12 +2,14 @@
 #include "StopableThread.h"
 #include <vector>
 
-class SocketWriteThread: public StopableThread
+class SocketWriteThread : public StopableThread
 {
   public:
     SocketWriteThread() = default;
     virtual ~SocketWriteThread();
 
+    // ack received function callback
+    std::function<void(unsigned long)> ackReceivedCallback;
 
   protected:
     // Write data to the socket

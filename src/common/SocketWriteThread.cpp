@@ -1,6 +1,5 @@
 #include "SocketWriteThread.h"
 
-
 void SocketWriteThread::run()
 {
 

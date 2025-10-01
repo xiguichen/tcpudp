@@ -93,3 +93,23 @@ void Log::warning(const std::string &message) {
 void Log::error(const std::string &message) { log(LogLevel::LOG_ERROR, message); }
 
 } // namespace Logger
+void info(const std::string &message)
+{
+    Logger::Log::getInstance().info(message);
+}
+
+void warning(const std::string &message)
+{
+    Logger::Log::getInstance().warning(message);
+}
+
+void error(const std::string &message)
+{
+    Logger::Log::getInstance().error(message);
+}
+
+void debug(const std::string &message)
+{
+    Logger::Log::getInstance().debug(message);
+}
+
