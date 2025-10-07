@@ -33,7 +33,7 @@ void TcpVirtualChannel::send(const char *data, size_t size)
     if (data != nullptr && size > 0)
     {
         auto messageId = this->lastSendMessageId.fetch_add(1);
-        auto messageIdNetwork = htonll(messageId);
+        auto messageIdNetwork = messageId;
         info(std::format("Sending message with ID: {}", messageId));
         auto dataVec = std::make_shared<std::vector<char>>();
 
@@ -120,7 +120,7 @@ void TcpVirtualChannel::sendAck(uint64_t messageId)
 
     // Ack:  | 1 byte type | 8 bytes messageId |
 
-    auto messageIdNetwork = htonll(messageId);
+    auto messageIdNetwork = messageId;
     VCAckPacket *packet = static_cast<VCAckPacket*>(std::malloc(sizeof(VCAckPacket)));
     packet->header.type = VcPacketType::ACK;
     packet->header.messageId = messageIdNetwork;
