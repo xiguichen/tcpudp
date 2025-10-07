@@ -15,7 +15,7 @@ void TcpVCWriteThread::run()
         }
 
         VCHeader* header = reinterpret_cast<VCHeader*>(data->data());
-        lastMessageId = ntohll(header->messageId);
+        lastMessageId = header->messageId;
         info("Sent message with ID: " + std::to_string(lastMessageId));
         connection->send(data->data(), data->size());
         if(header->type == VcPacketType::DATA)

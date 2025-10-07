@@ -104,7 +104,7 @@ int TcpVCReadThread::processAckBuffer(std::vector<char> &buffer)
 
     if (ackCallback)
     {
-        ackCallback(ntohll(ackPacket->header.messageId));
+        ackCallback(ackPacket->header.messageId);
     }
     return sizeof(VCAckPacket);
 }
@@ -122,7 +122,7 @@ int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
     std::copy(dataPacket->data, dataPacket->data + dataLength, data->data());
     if (dataCallback)
     {
-        dataCallback(ntohll(dataPacket->header.messageId), data);
+        dataCallback(dataPacket->header.messageId, data);
     }
     return sizeof(VCDataPacket) + dataLength;
 }
