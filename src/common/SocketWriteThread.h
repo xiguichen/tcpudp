@@ -2,6 +2,7 @@
 #include "StopableThread.h"
 #include <functional>
 #include <vector>
+#include <memory>
 
 class SocketWriteThread : public StopableThread
 {
