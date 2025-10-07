@@ -2,12 +2,14 @@
 
 #include "TcpVCReadThread.h"
 #include "VcProtocol.h"
-
+#include "Log.h"
 
 void TcpVCReadThread::run()
 {
+    info("TcpVCReadThread Start running");
+
     char buffer[1500];
-    while (this->isRunning())
+    while (this->isRunning() && this->connection->isConnected())
     {
         size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
         if (dataSize > 0)
@@ -30,6 +32,8 @@ void TcpVCReadThread::run()
             }
         }
     }
+
+    info("TcpVCReadThread end running");
 }
 
 int TcpVCReadThread::processBuffer(std::vector<char> &buffer)
