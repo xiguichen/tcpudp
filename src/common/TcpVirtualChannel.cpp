@@ -13,16 +13,10 @@ void TcpVirtualChannel::open()
         this->processReceivedData(messageId, data);
     };
 
-    auto ackCallback = [this](const uint64_t messageId) {
-        this->processAck(messageId);
-    };
-
-
     for (int i = 0; i < this->connections.size(); ++i)
     {
         auto readThread = TcpVCReadThreadFactory::createThread(this->connections[i]);
         readThread->setDataCallback(dataCallback);
-        readThread->setAckCallback(ackCallback);
         readThreads.emplace_back(readThread);
         writeThreads.emplace_back(TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i]));
     }
@@ -103,44 +97,11 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
             receiveCallback(it->second->data(), it->second->size());
         }
 
-        // Send an acknowledgment for the processed message
-        sendAck(it->first);
-
         // Remove the processed message from the map
         receivedDataMap.erase(it);
 
         // Move to the next expected message ID
         nextMessageId.fetch_add(1);
-    }
-}
-
-void TcpVirtualChannel::sendAck(uint64_t messageId)
-{
-    info(std::format("Sending ACK for message ID: {}", messageId));
-    auto ackVec = std::make_shared<std::vector<char>>();
-
-    // Ack:  | 1 byte type | 8 bytes messageId |
-
-    auto messageIdNetwork = messageId;
-    VCAckPacket *packet = static_cast<VCAckPacket*>(std::malloc(sizeof(VCAckPacket)));
-    packet->header.type = VcPacketType::ACK;
-    packet->header.messageId = messageIdNetwork;
-    ackVec->resize(sizeof(VCAckPacket));
-    std::memcpy(ackVec->data(), packet, sizeof(VCAckPacket));
-    std::free(packet);
-
-    sendQueue->enqueue(ackVec);
-}
-
-void TcpVirtualChannel::processAck(uint64_t messageId)
-{
-    info(std::format("Processing ACK for message ID: {}", messageId));
-    for (auto &writeThread : writeThreads)
-    {
-        if (writeThread)
-        {
-            writeThread->AckCallback(messageId);
-        }
     }
 }
 

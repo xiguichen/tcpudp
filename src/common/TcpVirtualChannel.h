@@ -36,10 +36,6 @@ class TcpVirtualChannel : public VirtualChannel
 
     void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data);
 
-    void processAck(uint64_t messageId);
-
-    void sendAck(uint64_t messageId);
-
     bool opened = false;
     std::atomic<long> lastSendMessageId = 0;
     std::atomic<long> nextMessageId = 0;

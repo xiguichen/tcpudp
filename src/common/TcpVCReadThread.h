@@ -29,8 +29,6 @@ class TcpVCReadThread : public StopableThread
 
     bool hasEnoughData(const char *buffer, size_t size);
 
-    bool hasEnoughDataForAck(const char *buffer, size_t size);
-
     bool hasEnoughDataForData(const char *buffer, size_t size);
 
     int processBuffer(std::vector<char> &buffer);
