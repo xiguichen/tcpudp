@@ -30,7 +30,7 @@ SocketManager::~SocketManager() {
 
 void SocketManager::shutdown() {
     // First log the shutdown attempt
-    info("Shutting down server...");
+    log_info("Shutting down server...");
     
     // Set running flag to false to stop all threads
     s_running.store(false);
@@ -40,14 +40,14 @@ void SocketManager::shutdown() {
     
     // Close server socket first to prevent accepting new connections
     if (serverSocket != -1) {
-        info("Closing server socket");
+        log_info("Closing server socket");
         SocketClose(serverSocket);
         serverSocket = -1;
     }
     
     // Only join threads if they haven't been joined already
     if (!threadsJoined) {
-        info("Waiting for all threads to complete...");
+        log_info("Waiting for all threads to complete...");
         
         // Join each thread with a timeout
         for (auto& thread : threads) {
@@ -60,7 +60,7 @@ void SocketManager::shutdown() {
                                 thread.join();
                             }
                         } catch (const std::exception& e) {
-                            error(std::string("Exception in thread join: ") + e.what());
+                            log_error(std::string("Exception in thread join: ") + e.what());
                         }
                     });
                     
@@ -69,11 +69,11 @@ void SocketManager::shutdown() {
                     
                     if (status == std::future_status::timeout) {
                         // Thread join timed out
-                        warning("Thread join timed out, detaching");
+                        log_warnning("Thread join timed out, detaching");
                         thread.detach(); // Detach the original thread
                     }
                 } catch (const std::exception& e) {
-                    error(std::string("Exception joining thread: ") + e.what());
+                    log_error(std::string("Exception joining thread: ") + e.what());
                 }
             }
         }
@@ -81,10 +81,10 @@ void SocketManager::shutdown() {
         // Clear the thread vector
         threads.clear();
         threadsJoined = true;
-        info("All threads processed");
+        log_info("All threads processed");
     }
     
-    info("Server shutdown complete");
+    log_info("Server shutdown complete");
 }
 
 void SocketManager::createSocket() {
@@ -110,7 +110,7 @@ void SocketManager::createSocket() {
         exit(EXIT_FAILURE);
     }
     
-    info("Created non-blocking server socket");
+    log_info("Created non-blocking server socket");
 }
 
 void SocketManager::bindToPort(int port) {
@@ -125,7 +125,7 @@ void SocketManager::bindToPort(int port) {
         exit(EXIT_FAILURE);
     }
     
-    info(std::format("Server socket bound to port {}", port));
+    log_info(std::format("Server socket bound to port {}", port));
 }
 
 void SocketManager::listenForConnections() {
@@ -147,7 +147,7 @@ void SocketManager::listenForConnections() {
         }
         
         // Log the creation of the UDP socket
-        info(std::format("Created UDP queue for client ID: {}", clientId));
+        log_info(std::format("Created UDP queue for client ID: {}", clientId));
 
         auto udpToTcpQueue =  QueueManager::getInstance().getUdpToTcpQueueForClient(clientId);
 
@@ -158,7 +158,7 @@ void SocketManager::listenForConnections() {
 
 
     
-    info("Server socket listening for connections");
+    log_info("Server socket listening for connections");
 }
 
 bool SocketManager::isRunning() const {
@@ -219,7 +219,7 @@ void SocketManager::acceptConnection() {
     // Log client connection
     char clientIP[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIP, INET_ADDRSTRLEN);
-    info(std::format("Accepted connection from {}:{}", clientIP, ntohs(clientAddr.sin_port)));
+    log_info(std::format("Accepted connection from {}:{}", clientIP, ntohs(clientAddr.sin_port)));
 
     uint32_t clientId;
     SocketFd udpSocket;
@@ -231,7 +231,7 @@ void SocketManager::acceptConnection() {
         // TCP to UDP
         startTcpToQueueThread(clientSocket, udpSocket, clientId);
 
-        info(std::format("Starting TcpQueueToUdpThread for client ID: {}, udpSocket: {}", clientId, udpSocket));
+        log_info(std::format("Starting TcpQueueToUdpThread for client ID: {}, udpSocket: {}", clientId, udpSocket));
         startTcpQueueToUdpThread(udpSocket, *tcpToUdpQueue);
 
         // UDP to TCP
@@ -270,10 +270,10 @@ void SocketManager::startUdpQueueToTcpThread(SocketFd clientSocket, BlockingQueu
 
 void SocketManager::startTcpQueueToUdpThread(SocketFd udpSocket, BlockingQueue& queue) {
 
-    info(std::format("Starting TcpQueueToUdpThread, socket: {}", udpSocket));
+    log_info(std::format("Starting TcpQueueToUdpThread, socket: {}", udpSocket));
     auto thread = std::thread([udpSocket, &queue]() {
         // Assuming TcpQueueToUdpThread is a class that handles the processing
-        info(std::format("TcpQueueToUdpThread started for UDP socket: {}", udpSocket));
+        log_info(std::format("TcpQueueToUdpThread started for UDP socket: {}", udpSocket));
         TcpQueueToUdpThread tcpQueueToUdpThread(udpSocket, queue);
         tcpQueueToUdpThread.run();
     });
@@ -292,17 +292,17 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
   
   // Wait for socket to be readable with timeout
   if (!IsSocketReadable(tcpSocket, 5000)) { // 5 seconds timeout
-    error("Socket not readable within timeout");
+    log_error("Socket not readable within timeout");
     SocketClose(tcpSocket);
     return false;
   }
 
-  info("Begin capability negotiate");
+  log_info("Begin capability negotiate");
 
   // Receive handshake data with timeout
   int result = RecvTcpDataWithSizeNonBlocking(tcpSocket, buffer->data(), buffer->capacity(), 0, sizeof(MsgBind), 5000); // 5 seconds timeout
   if (result != sizeof(MsgBind)) {
-    error(std::format("Failed to recv tcp data with return code: {}", result));
+    log_error(std::format("Failed to recv tcp data with return code: {}", result));
     SocketClose(tcpSocket);
     return false;
   }
@@ -320,12 +320,12 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
   for (auto id : allowedClientIds) {
     allowedIdsStr += std::to_string(id) + ", ";
   }
-  info(allowedIdsStr);
+  log_info(allowedIdsStr);
   
       clientId = bind.clientId;
       auto bAllow = allowedClientIds.find(clientId) != allowedClientIds.end();
   if(bAllow) {
-    info(std::format("Client Id: {} is allowed", bind.clientId));
+    log_info(std::format("Client Id: {} is allowed", bind.clientId));
     
     // Create a new connection for this client
     pConnection connection = ConnectionManager::getInstance().createConnection(bind.clientId);
@@ -337,12 +337,12 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
     UvtUtils::AppendMsgBindResponse(bindResponse, *acceptBuffer);
     
     // Send acceptance with timeout
-    info(std::format("Sending acceptance response to client {}, connectionId: {}", bind.clientId, bindResponse.connectionId));
+    log_info(std::format("Sending acceptance response to client {}, connectionId: {}", bind.clientId, bindResponse.connectionId));
     int result = SendTcpDataNonBlocking(tcpSocket, acceptBuffer->data(), acceptBuffer->size(), 0, 5000);
     
     // Check result of sending
     if (result <= 0) {
-      error(std::format("Failed to send acceptance response with error code: {}", result));
+      log_error(std::format("Failed to send acceptance response with log_error code: {}", result));
       MemoryPool::getInstance().recycleBuffer(acceptBuffer);
       SocketClose(tcpSocket);
       return false;
@@ -351,7 +351,7 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
     // Recycle buffer
     MemoryPool::getInstance().recycleBuffer(acceptBuffer);
   } else {
-    error(std::format("Client Id: {} is not allowed", bind.clientId));
+    log_error(std::format("Client Id: {} is not allowed", bind.clientId));
     
     // Send a rejection response instead of silently closing the socket
     MsgBindResponse rejectResponse;
@@ -362,7 +362,7 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
     UvtUtils::AppendMsgBindResponse(rejectResponse, *rejectBuffer);
     
     // Send rejection with timeout
-    info("Sending rejection response to unauthorized client");
+    log_info("Sending rejection response to unauthorized client");
     SendTcpDataNonBlocking(tcpSocket, rejectBuffer->data(), rejectBuffer->size(), 0, 5000);
     
     // Recycle buffer and close socket
@@ -377,12 +377,12 @@ bool SocketManager::CapabilityNegotiate(SocketFd tcpSocket, uint32_t& clientId, 
   // Get or create a UDP socket for this client
   udpSocket = ClientUdpSocketManager::getInstance().getOrCreateUdpSocket(clientId);
   if (udpSocket < 0) {
-    error(std::format("Failed to create UDP socket for client ID: {}", bind.clientId));
+    log_error(std::format("Failed to create UDP socket for client ID: {}", bind.clientId));
     SocketClose(tcpSocket);
     return false;
   }
 
-  info(std::format("Created UDP socket for client ID: {}, Socket: {}", bind.clientId, udpSocket));
+  log_info(std::format("Created UDP socket for client ID: {}, Socket: {}", bind.clientId, udpSocket));
 
   return true;
 }

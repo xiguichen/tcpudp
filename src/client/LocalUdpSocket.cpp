@@ -38,7 +38,7 @@ LocalUdpSocket::LocalUdpSocket(int port) {
     exit(EXIT_FAILURE);
   }
   
-  info("Created non-blocking UDP socket");
+  log_info("Created non-blocking UDP socket");
 
   // Bind the socket to the specified port
   bind(port);
@@ -65,7 +65,7 @@ void LocalUdpSocket::bind(int port) {
     exit(EXIT_FAILURE);
   }
   
-  info(std::format("UDP socket bound to port {}", port));
+  log_info(std::format("UDP socket bound to port {}", port));
 }
 
 void LocalUdpSocket::send(const std::vector<char> &data) {
@@ -75,15 +75,15 @@ void LocalUdpSocket::send(const std::vector<char> &data) {
   
   if (sentBytes < 0) {
     if (sentBytes == SOCKET_ERROR_TIMEOUT) {
-      error("Timeout while sending UDP data");
+      log_error("Timeout while sending UDP data");
     } else if (sentBytes == SOCKET_ERROR_WOULD_BLOCK) {
-      error("Would block while sending UDP data");
+      log_error("Would block while sending UDP data");
     } else {
-      error(std::format("Failed to send UDP data, error: {}", sentBytes));
+      log_error(std::format("Failed to send UDP data, log_error: {}", sentBytes));
       SocketLogLastError();
     }
   } else if (sentBytes != static_cast<ssize_t>(data.size())) {
-    error(std::format("Partial UDP data sent: {} of {} bytes", sentBytes, data.size()));
+    log_error(std::format("Partial UDP data sent: {} of {} bytes", sentBytes, data.size()));
   }
 }
 
@@ -91,33 +91,33 @@ std::vector<char> LocalUdpSocket::receive() {
   std::vector<char> buffer(4096);
   socklen_t addrLen = sizeof(localAddress);
 
-  debug(std::format("UDP receive attempt - socketFd: {}", socketFd));
+  log_debug(std::format("UDP receive attempt - socketFd: {}", socketFd));
   char addrStr[INET_ADDRSTRLEN] = {0};
 #ifdef _WIN32
   InetNtopA(AF_INET, &localAddress.sin_addr, addrStr, INET_ADDRSTRLEN);
 #else
   inet_ntop(AF_INET, &localAddress.sin_addr, addrStr, INET_ADDRSTRLEN);
 #endif
-  debug(std::format("Local address: {}", addrStr));
+  log_debug(std::format("Local address: {}", addrStr));
 
   // Check if socket is readable with a short timeout
   if (!IsSocketReadable(socketFd, 1000)) { // 100ms timeout
-    debug("Socket not readable within 100ms timeout");
+    log_debug("Socket not readable within 100ms timeout");
     return {};
   }
-  debug("Socket is readable");
+  log_debug("Socket is readable");
 
   // Receive data non-blocking with timeout
-  debug("Attempting to receive UDP data with 1000ms timeout");
+  log_debug("Attempting to receive UDP data with 1000ms timeout");
   ssize_t receivedBytes = RecvUdpDataNonBlocking(socketFd, buffer.data(), buffer.size(), 0,
                                                (struct sockaddr *)&localAddress, &addrLen, 1000); // 1 second timeout
   
   if (receivedBytes < 0) {
-    error(std::format("Failed to receive UDP data, error code: {}", receivedBytes));
+    log_error(std::format("Failed to receive UDP data, log_error code: {}", receivedBytes));
     if (receivedBytes == SOCKET_ERROR_TIMEOUT) {
-      info("Timeout while receiving UDP data");
+      log_info("Timeout while receiving UDP data");
     } else if (receivedBytes == SOCKET_ERROR_WOULD_BLOCK) {
-      info("Would block while receiving UDP data");
+      log_info("Would block while receiving UDP data");
     } else {
       std::cerr << "Failed to receive UDP data, error: " << receivedBytes << std::endl;
       SocketLogLastError();
@@ -125,7 +125,7 @@ std::vector<char> LocalUdpSocket::receive() {
     return {};
   }
   
-  info(std::format("Successfully received {} bytes of UDP data", receivedBytes));
+  log_info(std::format("Successfully received {} bytes of UDP data", receivedBytes));
   
   // Resize buffer to actual received bytes
   buffer.resize(receivedBytes);
@@ -142,7 +142,7 @@ void LocalUdpSocket::close() {
   if (!bClosed) {
     SocketClose(socketFd);
     bClosed = true;
-    info("UDP socket closed");
+    log_info("UDP socket closed");
   }
 }
 

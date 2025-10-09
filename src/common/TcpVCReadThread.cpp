@@ -1,12 +1,13 @@
 #include <cstddef>
+#include <format>
 
+#include "Log.h"
 #include "TcpVCReadThread.h"
 #include "VcProtocol.h"
-#include "Log.h"
 
 void TcpVCReadThread::run()
 {
-    info("TcpVCReadThread Start running");
+    log_info("TcpVCReadThread Start running");
 
     char buffer[1500];
     while (this->isRunning() && this->connection->isConnected())
@@ -23,6 +24,7 @@ void TcpVCReadThread::run()
         // Ack:  | 1 byte type | 8 bytes messageId |
         while (this->hasEnoughData(bufferVector.data(), bufferVector.size()))
         {
+            log_info(std::format("Buffer size before processing: {}", bufferVector.size()));
             int processedBytes = this->processBuffer(bufferVector);
             if (processedBytes > 0)
             {
@@ -30,15 +32,16 @@ void TcpVCReadThread::run()
             }
             else
             {
-                error("Error processing buffer, stopping read thread");
+                log_error("Error processing buffer, stopping read thread");
                 break; // No more complete messages to process
             }
+            log_info(std::format("Buffer size after processing: {}", bufferVector.size()));
         }
     }
 
     this->setRunning(false);
 
-    info("TcpVCReadThread end running");
+    log_info("TcpVCReadThread end running");
 }
 
 int TcpVCReadThread::processBuffer(std::vector<char> &buffer)
@@ -48,13 +51,13 @@ int TcpVCReadThread::processBuffer(std::vector<char> &buffer)
     switch (packetType)
     {
     case VcPacketType::DATA: {
-        processDataBuffer(buffer);
+        return processDataBuffer(buffer);
+        break;
     }
-    default:
-        {
-            error("Unknown packet type received");
-            throw std::logic_error("Unknown packet type");
-        }
+    default: {
+        log_error("Unknown packet type received");
+        throw std::logic_error("Unknown packet type");
+    }
     }
 }
 
@@ -94,7 +97,6 @@ bool TcpVCReadThread::hasEnoughDataForData(const char *buffer, size_t size)
     return size >= VC_MIN_DATA_PACKET_SIZE + dataLength;
 }
 
-
 int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
 {
     VCDataPacket *dataPacket = reinterpret_cast<VCDataPacket *>(buffer.data());
@@ -117,4 +119,3 @@ void TcpVCReadThread::setDataCallback(
 {
     dataCallback = callback;
 }
-

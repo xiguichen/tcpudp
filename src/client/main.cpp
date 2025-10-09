@@ -41,14 +41,14 @@ int main(int argc, char* argv[]) {
     WSADATA wsaData;
     int wsaStartupResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (wsaStartupResult != 0) {
-        error("WSAStartup failed with error: " + std::to_string(wsaStartupResult));
+        log_error("WSAStartup failed with log_error: " + std::to_string(wsaStartupResult));
         return 1;
     }
 #endif
 
     while(true)
     {
-        info("Starting Client");
+        log_info("Starting Client");
         Client client("config.json");
         client.configure();
         std::this_thread::sleep_for(std::chrono::seconds(1));

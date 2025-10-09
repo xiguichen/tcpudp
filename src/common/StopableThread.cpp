@@ -1,13 +1,17 @@
 #include "StopableThread.h"
+#include "Log.h"
 
 void StopableThread::stop()
 {
+    log_info("Stopping thread...");
     this->setRunning(false);
 
     if (_thread.joinable())
     {
+        log_info("Waiting for thread to join...");
         _thread.join();
     }
+    log_info("Thread stopped.");
 }
 void StopableThread::start()
 {

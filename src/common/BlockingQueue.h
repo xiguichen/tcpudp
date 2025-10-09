@@ -14,6 +14,7 @@ public:
 
   void enqueue(const std::shared_ptr<std::vector<char>> &data);
   std::shared_ptr<std::vector<char>> dequeue();
+  void cancelWait();
 
 private:
 
@@ -21,6 +22,7 @@ private:
   std::queue<std::shared_ptr<std::vector<char>>> queue;
   std::mutex queueMutex; // Mutex for queue protection
   std::condition_variable queueCondVar; // Condition variable for producer-consumer
+  bool cancelled = false;
 
 };
 

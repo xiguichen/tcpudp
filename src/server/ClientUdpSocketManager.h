@@ -26,7 +26,7 @@ public:
         // Check if client already has a UDP socket
         auto it = clientUdpSockets.find(clientId);
         if (it != clientUdpSockets.end()) {
-            info(std::format("Using existing UDP socket for client ID: {}, Socket: {}", clientId, it->second));
+            log_info(std::format("Using existing UDP socket for client ID: {}, Socket: {}", clientId, it->second));
             return it->second;
         }
         
@@ -44,7 +44,7 @@ public:
         
         // Store the UDP socket for this client
         clientUdpSockets[clientId] = udpSocket;
-        info(std::format("Using new UDP socket for client ID: {}, Socket: {}", clientId, udpSocket));
+        log_info(std::format("Using new UDP socket for client ID: {}, Socket: {}", clientId, udpSocket));
         return udpSocket;
     }
     

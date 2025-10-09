@@ -32,7 +32,7 @@ void TcpVirtualChannel::send(const char *data, size_t size)
     {
         auto messageId = this->lastSendMessageId.fetch_add(1);
         auto messageIdNetwork = messageId;
-        info(std::format("Sending message with ID: {}", messageId));
+        log_info(std::format("Sending message with ID: {}", messageId));
         auto dataVec = std::make_shared<std::vector<char>>();
 
         // Data: | 1 byte type | 8 bytes messageId | 2 bytes data length | N bytes data |
@@ -56,7 +56,20 @@ bool TcpVirtualChannel::isOpen() const
 }
 void TcpVirtualChannel::close()
 {
-    info("Closing TcpVirtualChannel");
+    // Cancle any waiting operations
+    this->sendQueue->cancelWait();
+
+    // Close all the connections and stop threads
+    log_info("Closing TcpVirtualChannel connections");
+    for (auto &conn : connections)
+    {
+        if (conn && conn->isConnected())
+        {
+            conn->disconnect();
+        }
+    }
+
+    log_info("Closing TcpVirtualChannel");
     for (auto &thread : readThreads)
     {
         if (thread)
@@ -64,8 +77,9 @@ void TcpVirtualChannel::close()
             thread->stop();
         }
     }
-    info("All read threads stopped");
+    log_info("All read threads stopped");
 
+    log_info("Stopping write threads");
     for (auto &thread : writeThreads)
     {
         if (thread)
@@ -73,12 +87,12 @@ void TcpVirtualChannel::close()
             thread->stop();
         }
     }
-    info("All write threads stopped");
+    log_info("All write threads stopped");
     opened = false;
 }
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {
-    debug(std::format("Processing received message with ID: {}", messageId));
+    log_debug(std::format("Processing received message with ID: {}", messageId));
     std::lock_guard<std::mutex> lock(receivedDataMutex);
 
     // Check if this is a duplicate message

@@ -69,20 +69,20 @@ public:
                                        std::vector<T> &outputBuffer) {
     outputBuffer.clear();
 
-    info("Begin ExtractUdpData");
+    log_info("Begin ExtractUdpData");
 
     if (data.size() < HEADER_SIZE) {
-      info("not enough data for decode header");
+      log_info("not enough data for decode header");
       return data; // Not enough data for a header
     }
 
     const UvtHeader *header = reinterpret_cast<const UvtHeader *>(data.data());
     uint16_t messageLength = ntohs(header->size);
-    info(std::format("Message Id: {}, Message Length: {}",
+    log_info(std::format("Message Id: {}, Message Length: {}",
                                         header->id, messageLength));
 
     if (HEADER_SIZE + messageLength > data.size()) {
-      info(std::format(
+      log_info(std::format(
           "not enough data for decode data. Expected: {}, Actual: {}",
           HEADER_SIZE + messageLength, data.size()));
       return data; // Not enough data for a full message
@@ -100,7 +100,7 @@ public:
       return data;
     }
 
-    info("End ExtractUdpData");
+    log_info("End ExtractUdpData");
     return std::vector<T>(data.begin() + HEADER_SIZE + messageLength,
                           data.end());
   }

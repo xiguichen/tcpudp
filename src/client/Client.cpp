@@ -27,7 +27,7 @@ void Client::loadConfig(const std::string& configFile) {
     std::ifstream file(configFile);
     if(!file)
     {
-        error("configuration file could not be found, program will exit");
+        log_error("configuration file could not be found, program will exit");
         std::exit(EXIT_FAILURE);
     }
     json config;

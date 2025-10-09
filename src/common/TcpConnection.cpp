@@ -8,7 +8,7 @@ void TcpConnection::disconnect()
         socketFd = -1;
     }
     connected = false;
-    info("TCP connection closed");
+    log_info("TCP connection closed");
 }
 bool TcpConnection::isConnected() const
 {
@@ -23,7 +23,7 @@ size_t TcpConnection::receive(char *buffer, size_t bufferSize)
         if (bytesReceived == -1)
         {
             // Handle receive error
-            error("Failed to receive data from TCP connection");
+            log_error("Failed to receive data from TCP connection");
             connected = false;
             return 0;
         }
@@ -32,7 +32,7 @@ size_t TcpConnection::receive(char *buffer, size_t bufferSize)
     else
     {
         // Handle not connected state
-        error("Attempted to receive data on a disconnected TCP connection");
+        log_error("Attempted to receive data on a disconnected TCP connection");
         return 0;
     }
 }
@@ -45,14 +45,14 @@ void TcpConnection::send(const char *data, size_t size)
         if (bytesSent == -1)
         {
             // Handle send error
-            error("Failed to send data over TCP connection");
+            log_error("Failed to send data over TCP connection");
             connected = false;
         }
     }
     else
     {
         // Handle not connected state
-        error("Attempted to send data on a disconnected TCP connection");
+        log_error("Attempted to send data on a disconnected TCP connection");
     }
 }
 

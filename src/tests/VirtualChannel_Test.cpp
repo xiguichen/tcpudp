@@ -115,7 +115,7 @@ class TcpVirtualChannelTest : public ::testing::Test
 };
 
 // Test send method
-TEST_F(TcpVirtualChannelTest, SendTest)
+TEST_F(TcpVirtualChannelTest, SendRecvTest)
 {
     const char *data = "test data";
     size_t size = strlen(data) + 1;
