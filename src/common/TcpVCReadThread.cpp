@@ -11,6 +11,9 @@ void TcpVCReadThread::run()
     char buffer[1500];
     while (this->isRunning() && this->connection->isConnected())
     {
+        // clear buffer
+        memset(buffer, 0, sizeof(buffer));
+
         size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
         if (dataSize > 0)
         {
