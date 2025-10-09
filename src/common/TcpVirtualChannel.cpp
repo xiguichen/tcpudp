@@ -92,7 +92,7 @@ void TcpVirtualChannel::close()
 }
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {
-    log_debug(std::format("Processing received message with ID: {}", messageId));
+    log_info(std::format("Processing received message with ID: {}", messageId));
     std::lock_guard<std::mutex> lock(receivedDataMutex);
 
     // Check if this is a duplicate message
@@ -111,6 +111,7 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
         // Call the receive callback with the data
         if (receiveCallback)
         {
+            log_info(std::format("Invoking receive callback for message ID: {}", nextMessageId.load()));
             receiveCallback(it->second->data(), it->second->size());
         }
 

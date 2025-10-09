@@ -25,6 +25,8 @@ class TcpVirtualChannel : public VirtualChannel
     // Method to close the channel
     virtual void close();
 
+    void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data);
+
   private:
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
@@ -32,8 +34,6 @@ class TcpVirtualChannel : public VirtualChannel
     BlockingQueueSp sendQueue;
     std::map<uint64_t, std::shared_ptr<std::vector<char>>> receivedDataMap;
     std::mutex receivedDataMutex;
-
-    void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data);
 
     bool opened = false;
     std::atomic<long> lastSendMessageId = 0;

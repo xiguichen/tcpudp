@@ -151,3 +151,145 @@ TEST_F(TcpVirtualChannelTest, SendRecvTest)
     clientThread.join();
     serverThread.join();
 }
+
+// Send and Receive multiple times
+TEST_F(TcpVirtualChannelTest, SendRecvTest2)
+{
+    std::atomic<bool> callbackCalled = false;
+    std::mutex callbackMutex;
+    std::condition_variable callbackCondition;
+
+    const char *data = "test data";
+    size_t size = strlen(data) + 1;
+
+    const char *data2 = "test data 2";
+    size_t size2 = strlen(data2) + 1;
+
+    static int callCount = 0;
+
+    // recv data callback
+    auto recvCallback = [&callbackCalled, &callbackMutex, &callbackCondition, this, data, size, data2,
+                         size2](const char *recvData, size_t recvSize) {
+        if (callCount == 0)
+        {
+            EXPECT_EQ(recvSize, size);
+            EXPECT_STREQ(recvData, data);
+        }
+        else if (callCount == 1)
+        {
+            EXPECT_EQ(recvSize, size2);
+            EXPECT_STREQ(recvData, data2);
+        }
+        else
+        {
+            FAIL() << "Callback called more than twice";
+        }
+        callCount++;
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            callbackCalled = true;
+        }
+        callbackCondition.notify_one();
+    };
+    serverChannel->setReceiveCallback(recvCallback);
+    serverChannel->open();
+    clientChannel->open();
+
+    // server thread to wait for callback
+    std::thread serverThread([&callbackCalled, &callbackMutex, &callbackCondition]() {
+        {
+            std::unique_lock<std::mutex> lock(callbackMutex);
+            callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
+            callbackCalled = false;
+        }
+        {
+            std::unique_lock<std::mutex> lock(callbackMutex);
+            callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
+        }
+    });
+
+    // client sends data
+    std::thread clientThread([this, data, size, data2, size2]() {
+        clientChannel->send(data, size);
+        clientChannel->send(data2, size2);
+    });
+
+    clientThread.join();
+    serverThread.join();
+    ASSERT_EQ(callCount, 2);
+}
+
+// Check if we can handle out-of-order messages
+TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
+{
+
+    std::atomic<bool> callbackCalled = false;
+    std::mutex callbackMutex;
+    std::condition_variable callbackCondition;
+
+    const char *data1 = "message 1";
+    size_t size1 = strlen(data1) + 1;
+
+    const char *data2 = "message 2";
+    size_t size2 = strlen(data2) + 1;
+
+    const char *data3 = "message 3";
+    size_t size3 = strlen(data3) + 1;
+
+    static int callCount = 0;
+
+    // recv data callback
+    auto recvCallback = [&callbackCalled, &callbackMutex, &callbackCondition, this, data1, size1, data2, size2, data3,
+                         size3](const char *recvData, size_t recvSize) {
+        if (callCount == 0)
+        {
+            EXPECT_EQ(recvSize, size1);
+            EXPECT_STREQ(recvData, data1);
+        }
+        else if (callCount == 1)
+        {
+            EXPECT_EQ(recvSize, size2);
+            EXPECT_STREQ(recvData, data2);
+        }
+        else if (callCount == 2)
+        {
+            EXPECT_EQ(recvSize, size3);
+            EXPECT_STREQ(recvData, data3);
+        }
+        else
+        {
+            FAIL() << "Callback called more than three times";
+        }
+        callCount++;
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            callbackCalled = true;
+        }
+        callbackCondition.notify_one();
+    };
+    serverChannel->setReceiveCallback(recvCallback);
+    serverChannel->open();
+    clientChannel->open();
+
+    // server thread to wait for callback
+    std::thread serverThread([&callbackCalled, &callbackMutex, &callbackCondition]() {
+        for (int i = 0; i < 3; i++)
+        {
+            std::unique_lock<std::mutex> lock(callbackMutex);
+            callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
+            callbackCalled = false;
+        }
+    });
+
+    // Simulate out-of-order message reception
+    std::thread clientThread([this, data1, size1, data2, size2, data3, size3]() {
+            // instead of sending via channel, directly call processReceivedData to simulate out-of-order
+        log_info("Simulating out-of-order message reception");
+        serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3));
+        serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1));
+        serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2));
+    });
+
+    clientThread.join();
+    serverThread.join();
+}
