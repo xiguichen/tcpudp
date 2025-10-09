@@ -532,7 +532,7 @@ void SocketLogLastError() {
     log_error(std::format("Socket log_error: {}", lastError));
 #else
     int lastError = errno;
-    Log::getInstance().error(std::format("Socket error: {} - {}", lastError, strerror(lastError)));
+    log_error(std::format("Socket error: {} - {}", lastError, strerror(lastError)));
 #endif
 }
 

@@ -292,4 +292,5 @@ TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
 
     clientThread.join();
     serverThread.join();
+    ASSERT_EQ(callCount, 3);
 }
