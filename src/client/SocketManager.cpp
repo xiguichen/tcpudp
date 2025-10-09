@@ -55,7 +55,7 @@ void SocketManager::manageSockets() {
 
 void SocketManager::localHostReadTask(bool& running) {
     try {
-        Log::getInstance().info("Starting LocalHostReadThread");
+        info("Starting LocalHostReadThread");
         while (running) {
             // Non-blocking receive with short timeout
             std::vector<char> data = localUdpSocket.receive();
@@ -69,7 +69,7 @@ void SocketManager::localHostReadTask(bool& running) {
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": LocalHostReadThread error: " << e.what() << std::endl;
-        Log::getInstance().error(std::format("LocalHostReadThread error: {}", e.what()));
+        error(std::format("LocalHostReadThread error: {}", e.what()));
         running = false;
     }
 }
@@ -84,29 +84,29 @@ void SocketManager::localHostWriteTask(bool& running) {
             // Dequeue data with timeout
             auto data = udpToTcpQueue.dequeue();
             try {
-                Log::getInstance().info(std::format("send tcp via connection {}", i));
+                info(std::format("send tcp via connection {}", i));
                 // Only send if the socket is authenticated
                 if (peerTcpSockets[i]->isAuthenticated()) {
                     // Send data with non-blocking I/O
                     auto outputData = MemoryPool::getInstance().getBuffer(data->size() + 20);
                     outputData->resize(0);
-                    Log::getInstance().info(std::format("send msg {}", msgId));
+                    info(std::format("send msg {}", msgId));
                     UvtUtils::AppendUdpData(*data, msgId++, *outputData);
                     peerTcpSockets[i]->send(*outputData);
                 } else {
-                    Log::getInstance().warning(std::format("Socket {} not authenticated, skipping send", i));
+                    warning(std::format("Socket {} not authenticated, skipping send", i));
                 }
                 i = (i + 1) % peerTcpSockets.size();
             } 
             catch (const std::exception& e) {
-                Log::getInstance().error(std::format("Failed to send data to peer: {}", e.what()));
+                error(std::format("Failed to send data to peer: {}", e.what()));
                 // Continue with next peer if one fails
                 i = (i + 1) % peerTcpSockets.size();
             }
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": LocalHostWriteThread error: " << e.what() << std::endl;
-        Log::getInstance().error(std::format("LocalHostWriteThread error: {}", e.what()));
+        error(std::format("LocalHostWriteThread error: {}", e.what()));
         running = false;
     }
 }
@@ -132,7 +132,7 @@ void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket
                 emptyDataCount++;
                 
                 if (emptyDataCount > MAX_EMPTY_DATA_COUNT) {
-                    Log::getInstance().error("SocketManager: Too many empty data receives, connection may be dead");
+                    error("SocketManager: Too many empty data receives, connection may be dead");
                     running = false;
                     this->localUdpSocket.close();
                 } else {
@@ -143,7 +143,7 @@ void SocketManager::peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": PeerHostReadThread error: " << e.what() << std::endl;
-        Log::getInstance().error(std::format("PeerHostReadThread error: {}", e.what()));
+        error(std::format("PeerHostReadThread error: {}", e.what()));
         running = false;
     }
 }
@@ -157,7 +157,7 @@ void SocketManager::peerHostWriteTask(bool& running, PeerTcpSocket& peerTcpSocke
         }
     } catch (const std::exception& e) {
         std::cerr << __func__ << ": PeerHostWriteThread error: " << e.what() << std::endl;
-        Log::getInstance().error(std::format("PeerHostWriteThread error: {}", e.what()));
+        error(std::format("PeerHostWriteThread error: {}", e.what()));
         running = false;
     }
 }

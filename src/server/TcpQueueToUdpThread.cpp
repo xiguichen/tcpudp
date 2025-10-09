@@ -9,9 +9,9 @@
 using namespace Logger;
 
 void TcpQueueToUdpThread::run() {
-    Log::getInstance().info("Starting TcpQueueToUdpThread");
+    info("Starting TcpQueueToUdpThread");
 
-    Log::getInstance().info(std::format("UDP socket: {}, queue: {:p}", udpSocket_, static_cast<void*>(&queue_)));
+    info(std::format("UDP socket: {}, queue: {:p}", udpSocket_, static_cast<void*>(&queue_)));
 
     while (SocketManager::isServerRunning()) {
         processData();
@@ -22,7 +22,7 @@ void TcpQueueToUdpThread::processData() {
     // Check running state before processing
     if (!SocketManager::isServerRunning()) return;
 
-    Log::getInstance().info(std::format("Processing data from TCP queue to UDP, queue: {:p}", static_cast<void*>(&queue_)));
+    info(std::format("Processing data from TCP queue to UDP, queue: {:p}", static_cast<void*>(&queue_)));
     auto data = queue_.dequeue();
     sendDataViaUdp(data);
 }
@@ -34,10 +34,10 @@ void TcpQueueToUdpThread::sendDataViaUdp(std::shared_ptr<std::vector<char>> data
     udpAddr.sin_port = htons(Configuration::getInstance()->getPortNumber());
     inet_pton(AF_INET, Configuration::getInstance()->getSocketAddress().c_str(), &udpAddr.sin_addr);
 
-    Log::getInstance().info("Server -> Server (UDP Data)");
+    info("Server -> Server (UDP Data)");
 
     ssize_t sentBytes = SendUdpData(udpSocket_, data->data(), data->size(), 0, (struct sockaddr*)&udpAddr, sizeof(udpAddr));
     if (sentBytes < 0) {
-        Log::getInstance().error(std::format("Failed to send data via UDP, socket: {}", udpSocket_));
+        error(std::format("Failed to send data via UDP, socket: {}", udpSocket_));
     }
 }

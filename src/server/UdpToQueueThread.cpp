@@ -17,7 +17,7 @@ void UdpToQueueThread::run() {
     // Set socket to non-blocking mode
     SetSocketNonBlocking(socket_);
 
-    Log::getInstance().info("Starting UdpToQueueThread");
+    info("Starting UdpToQueueThread");
     
     
     // Get a buffer from the memory pool with optimal size for UDP packets
@@ -49,14 +49,14 @@ void UdpToQueueThread::run() {
     
     // Recycle the buffer when the thread exits
     MemoryPool::getInstance().recycleBuffer(buffer);
-    Log::getInstance().info("UDP to Queue thread exiting");
+    info("UDP to Queue thread exiting");
 }
 
 size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     sockaddr_in clientAddr;
     socklen_t clientAddrLen = sizeof(clientAddr);
 
-    Log::getInstance().info("Server -> Server (UDP Data)");
+    info("Server -> Server (UDP Data)");
     
     // Use non-blocking receive with timeout
     ssize_t bytesRead = RecvUdpDataNonBlocking(socket_, buffer, bufferSize, 0, 
@@ -65,9 +65,9 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
     if (bytesRead > 0) {
         // Data received successfully
     } else if (bytesRead == SOCKET_ERROR_TIMEOUT) {
-        Log::getInstance().info("UDP socket read timeout");
+        info("UDP socket read timeout");
     } else if (bytesRead == SOCKET_ERROR_WOULD_BLOCK) {
-        Log::getInstance().info("UDP socket would block");
+        info("UDP socket would block");
     } else {
         std::cerr << "Error reading from UDP socket: " << bytesRead << std::endl;
         SocketLogLastError();
@@ -78,7 +78,7 @@ size_t UdpToQueueThread::readFromUdpSocket(char* buffer, size_t bufferSize) {
 
 void UdpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer) {
 
-    Log::getInstance().info(std::format("UDP -> Queue: Data Enqueue, Length: {}", dataBuffer->size()));
+    info(std::format("UDP -> Queue: Data Enqueue, Length: {}", dataBuffer->size()));
     
     // Enqueue the data buffer directly (no need to copy)
     queue.enqueue(dataBuffer);

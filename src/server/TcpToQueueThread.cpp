@@ -22,9 +22,9 @@ void TcpToQueueThread::run() {
   auto buffer = MemoryPool::getInstance().getBuffer(bufferSize);
 
   // Log that the handshake response was already sent earlier
-  Log::getInstance().info("Handshake response already sent during client authorization check");
+  info("Handshake response already sent during client authorization check");
 
-  Log::getInstance().info("End capability negotiate");
+  info("End capability negotiate");
 
   // Get buffers for data processing from the memory pool
   auto remainingData = MemoryPool::getInstance().getBuffer(0);
@@ -38,22 +38,22 @@ void TcpToQueueThread::run() {
   while (SocketManager::isServerRunning()) {
     // Check if socket is readable with a short timeout
     if (IsSocketReadable(socket_, 3000)) { // 100ms timeout
-      Log::getInstance().info("Client -> Server (Receive TCP Data)");
+      info("Client -> Server (Receive TCP Data)");
       
       // Receive data non-blocking with timeout
       auto result = RecvTcpDataNonBlocking(socket_, buffer->data(), buffer->capacity(), 0, 3000); // 1 second timeout
       
       if (result == SOCKET_ERROR_TIMEOUT) {
         // Timeout, just continue the loop
-          Log::getInstance().warning("Timeout while receiving TCP data, continuing to next iteration");
+          warning("Timeout while receiving TCP data, continuing to next iteration");
         continue;
       } else if (result == SOCKET_ERROR_WOULD_BLOCK) {
-          Log::getInstance().warning("Would block while receiving TCP data, continuing to next iteration");
+          warning("Would block while receiving TCP data, continuing to next iteration");
         // Would block, just continue the loop
         continue;
       } else if (result == SOCKET_ERROR_CLOSED || result <= 0) {
         // Connection closed or error
-        Log::getInstance().error(
+        error(
             std::format("Failed to recv tcp data with return code: {}", result));
         break;
       }
@@ -100,7 +100,7 @@ void TcpToQueueThread::run() {
 void TcpToQueueThread::enqueueData(std::shared_ptr<std::vector<char>>& dataBuffer) {
 
   // The buffer is already properly sized by the caller
-  Log::getInstance().info(
+  info(
       std::format("TCP -> Queue: Decoded Data enqueued. Length: {}", dataBuffer->size()));
   
   // Enqueue the data buffer directly (no need to copy)

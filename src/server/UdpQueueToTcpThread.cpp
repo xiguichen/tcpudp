@@ -28,19 +28,19 @@ void UdpQueueToTcpThread::run() {
 void UdpQueueToTcpThread::processDataConcurrently() {
   while (SocketManager::isServerRunning()) {
     // Dequeue data from the UDP data queue
-    Log::getInstance().info("Processing data from UDP queue...");
+    info("Processing data from UDP queue...");
     auto data = udpDataQueue.dequeue();
-    Log::getInstance().info("Get data from UDP queue...");
+    info("Get data from UDP queue...");
 
     // use gMsgId as the msg id and increase it
     uint8_t msgId = gMsgId.fetch_add(1, std::memory_order_relaxed);
-    Log::getInstance().info(std::format("MsgId: {}", msgId));
+    info(std::format("MsgId: {}", msgId));
     auto newData = MemoryPool::getInstance().getBuffer(data->size() + 20);
     newData->resize(0);
     UvtUtils::AppendUdpData(*data, msgId, *newData);
 
     // Send data via TCP
-    Log::getInstance().info(
+    info(
         std::format("Server -> Client (TCP Data), Length: {}", data->size()));
     sendDataViaTcp(tcpSocket_, *newData);
   }
@@ -51,6 +51,6 @@ void UdpQueueToTcpThread::sendDataViaTcp(int tcpSocket,
   if (tcpSocket != -1) {
     SendTcpData(tcpSocket, data.data(), data.size(), 0);
   } else {
-    Log::getInstance().error("Queue -> TCP: Invalid socket");
+    error("Queue -> TCP: Invalid socket");
   }
 }
