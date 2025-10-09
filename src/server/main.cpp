@@ -23,12 +23,12 @@ std::atomic<bool> g_forceExit(false);
 
 // Signal handler for graceful shutdown
 void signalHandler(int signum) {
-    Log::getInstance().info(std::format("Received signal: {}", signum));
+    info(std::format("Received signal: {}", signum));
     
     // If we received multiple signals or the force exit flag is set, exit immediately
     if (g_shutdownInProgress.load() || g_forceExit.load()) {
         // If this is the second signal or we're already forcing an exit
-        Log::getInstance().warning("Forcing immediate exit");
+        warning("Forcing immediate exit");
         _exit(128 + signum); // Force immediate termination with no cleanup
     }
     
@@ -36,11 +36,11 @@ void signalHandler(int signum) {
     g_shutdownInProgress.store(true);
     
     // Stop performance monitoring first
-    Log::getInstance().info("Stopping performance monitoring...");
+    info("Stopping performance monitoring...");
     PerformanceMonitor::getInstance().stopMonitoring();
     
     if (g_socketManager != nullptr) {
-        Log::getInstance().info("Starting graceful shutdown...");
+        info("Starting graceful shutdown...");
         g_socketManager->shutdown();
         
         // Setting the socket manager to nullptr after shutdown
@@ -54,12 +54,12 @@ void signalHandler(int signum) {
         
         // If we're still running, set force exit flag
         g_forceExit.store(true);
-        Log::getInstance().warning("Setting force exit flag");
+        warning("Setting force exit flag");
         
         // Wait one more second and then force exit if still running
         std::this_thread::sleep_for(std::chrono::seconds(1));
         if (g_shutdownInProgress.load()) {
-            Log::getInstance().error("Forced exit after timeout");
+            error("Forced exit after timeout");
             _exit(1); // Force immediate termination with no cleanup
         }
     }).detach();
@@ -100,7 +100,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Log level set to: " << Log::getInstance().getCurrentLogLevelString() << std::endl;
     
     // Register signal handlers for graceful shutdown
-    Log::getInstance().info("Registering signal handlers");
+    info("Registering signal handlers");
     signal(SIGINT, signalHandler);  // Handle Ctrl+C
     signal(SIGTERM, signalHandler); // Handle termination request
 #ifndef _WIN32
@@ -109,7 +109,7 @@ int main(int argc, char* argv[]) {
     
     // Start performance monitoring
     PerformanceMonitor::getInstance().startMonitoring(30); // Report every 30 seconds
-    Log::getInstance().info("Performance monitoring started");
+    info("Performance monitoring started");
     
     // Initialize SocketManager
     SocketManager socketManager;
@@ -121,8 +121,8 @@ int main(int argc, char* argv[]) {
     socketManager.bindToPort(6001);
     socketManager.listenForConnections();
     
-    Log::getInstance().info("Server started successfully with lock-free queues");
-    Log::getInstance().info("Press Ctrl+C to shut down the server gracefully");
+    info("Server started successfully with lock-free queues");
+    info("Press Ctrl+C to shut down the server gracefully");
     
     // Main server loop with clean exit condition
     while (socketManager.isRunning() && !g_forceExit.load()) {
@@ -133,13 +133,13 @@ int main(int argc, char* argv[]) {
         
         // Check for force exit flag
         if (g_forceExit.load()) {
-            Log::getInstance().warning("Force exit flag detected in main loop");
+            warning("Force exit flag detected in main loop");
             break;
         }
     }
     
     // Additional cleanup before exiting
-    Log::getInstance().info("Main loop exited, performing final cleanup...");
+    info("Main loop exited, performing final cleanup...");
     
     // Stop performance monitoring if still running
     PerformanceMonitor::getInstance().stopMonitoring();
@@ -150,7 +150,7 @@ int main(int argc, char* argv[]) {
     // Reset shutdown flag
     g_shutdownInProgress.store(false);
     
-    Log::getInstance().info("Server terminated successfully");
+    info("Server terminated successfully");
     return 0;
 
 }

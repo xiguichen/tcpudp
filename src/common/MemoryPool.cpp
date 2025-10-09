@@ -169,14 +169,14 @@ void logMemoryPoolStats() {
     auto& pool = MemoryPool::getInstance();
     auto stats = pool.getStats();
     
-    Logger::Log::getInstance().info(std::format(
+    info(std::format(
         "Memory Pool Stats - Total Allocated: {}, Buffers Created: {}, Recycled: {}",
         stats.totalAllocatedMemory,
         stats.totalBuffersCreated,
         stats.buffersRecycled
     ));
     
-    Logger::Log::getInstance().info(std::format(
+    info(std::format(
         "Buffer Availability - Small: {}, Medium: {}, Large: {}",
         stats.smallBuffersAvailable,
         stats.mediumBuffersAvailable,
