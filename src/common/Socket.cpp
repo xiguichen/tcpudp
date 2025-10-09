@@ -364,7 +364,11 @@ int SocketListen(SocketFd socketFd, int backlog) {
 }
 
 int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen) {
-    return connect(socketFd, destAddr, destAddrLen);
+    auto result = connect(socketFd, destAddr, destAddrLen);
+    if (result < 0) {
+        SocketLogLastError();
+    }
+    return result;
 }
 
 int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen, int timeoutMs) {
@@ -531,3 +535,18 @@ void SocketLogLastError() {
     Log::getInstance().error(std::format("Socket error: {} - {}", lastError, strerror(lastError)));
 #endif
 }
+
+int SocketBind(SocketFd socketFd, const struct sockaddr *addr, socklen_t addrLen)
+{
+    auto r = bind(socketFd, addr, addrLen);
+    if (r != 0) {
+        SocketLogLastError();
+    }
+    return r;
+}
+
+SocketFd SocketAccept(SocketFd socketFd, struct sockaddr *addr, socklen_t *addrLen)
+{
+    return accept(socketFd, addr, addrLen);
+}
+

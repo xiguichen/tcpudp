@@ -14,15 +14,12 @@ class TcpVCWriteThread : public StopableThread
     }
     virtual ~TcpVCWriteThread() = default;
 
-    void AckCallback(uint64_t messageId);
-
   protected:
     virtual void run();
 
   private:
     BlockingQueueSp writeQueue;
     TcpConnectionSp connection;
-    BlockingQueueSp ackQueue;
     uint64_t lastMessageId = 0;
 };
 

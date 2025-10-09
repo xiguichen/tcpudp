@@ -16,9 +16,12 @@ void TcpVirtualChannel::open()
     for (int i = 0; i < this->connections.size(); ++i)
     {
         auto readThread = TcpVCReadThreadFactory::createThread(this->connections[i]);
+        readThread->start();
         readThread->setDataCallback(dataCallback);
         readThreads.emplace_back(readThread);
-        writeThreads.emplace_back(TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i]));
+        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i]);
+        writeThread->start();
+        writeThreads.emplace_back(writeThread);
     }
     opened = true;
 }
@@ -37,7 +40,7 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         VCDataPacket *packet = static_cast<VCDataPacket*>(std::malloc(totalPacketSize));
         packet->header.type = VcPacketType::DATA;
         packet->header.messageId = messageIdNetwork;
-        packet->dataLength = htons(static_cast<uint16_t>(size));
+        packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
 
         dataVec->resize(totalPacketSize);

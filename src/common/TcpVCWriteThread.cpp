@@ -4,38 +4,21 @@
 
 void TcpVCWriteThread::run()
 {
-    ackQueue = std::make_shared<BlockingQueue>();
+    info("TcpVCWriteThread started");
     while(this->isRunning())
     {
+        info("Waiting for data to send...");
         auto data = writeQueue->dequeue();
         if (!data)
         {
             error("Failed to dequeue data for sending");
             continue;
         }
-
         VCHeader* header = reinterpret_cast<VCHeader*>(data->data());
         lastMessageId = header->messageId;
         info("Sent message with ID: " + std::to_string(lastMessageId));
         connection->send(data->data(), data->size());
-        if(header->type == VcPacketType::DATA)
-        {
-            info("Waiting for ACK for message ID: " + std::to_string(lastMessageId));
-            // Wait for the ack
-            auto ack = ackQueue->dequeue();
-            if (!ack)
-            {
-                error("Failed to receive ACK for message ID: " + std::to_string(lastMessageId));
-                break;
-            }
-        }
+        info("type: " + std::to_string(static_cast<uint8_t>(header->type)));
     }
-}
-void TcpVCWriteThread::AckCallback(uint64_t messageId)
-{
-    if (messageId == lastMessageId && ackQueue)
-    {
-        info("Received ACK for message ID: " + std::to_string(messageId));
-        ackQueue->enqueue(std::make_shared<std::vector<char>>());
-    }
+    info("TcpVCWriteThread stopped");
 }

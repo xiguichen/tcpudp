@@ -1,11 +1,11 @@
-#include <map>
-#include <vector>
-#include <memory>
-#include "VirtualChannel.h"
-#include "TcpVCReadThread.h"
-#include "TcpVCWriteThread.h"
 #include "BlockingQueue.h"
 #include "Socket.h"
+#include "TcpVCReadThread.h"
+#include "TcpVCWriteThread.h"
+#include "VirtualChannel.h"
+#include <map>
+#include <memory>
+#include <vector>
 
 class TcpVirtualChannel : public VirtualChannel
 {
@@ -26,7 +26,6 @@ class TcpVirtualChannel : public VirtualChannel
     virtual void close();
 
   private:
-
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
     std::vector<TcpConnectionSp> connections;

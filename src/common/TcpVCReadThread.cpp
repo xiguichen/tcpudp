@@ -95,7 +95,7 @@ bool TcpVCReadThread::hasEnoughDataForData(const char *buffer, size_t size)
 int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
 {
     VCDataPacket *dataPacket = reinterpret_cast<VCDataPacket *>(buffer.data());
-    uint16_t dataLength = ntohs(dataPacket->dataLength);
+    uint16_t dataLength = dataPacket->dataLength;
     if (dataLength > VC_MAX_DATA_PAYLOAD_SIZE)
     {
         throw std::logic_error("Data length exceeds maximum allowed size");

@@ -51,12 +51,16 @@ int SocketListen(SocketFd socketFd, int backlog);
 int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen);
 int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen, int timeoutMs);
 int SocketClose(SocketFd socketFd);
+int SocketBind(SocketFd socketFd, const struct sockaddr *addr, socklen_t addrLen);
+
+SocketFd SocketAccept(SocketFd socketFd, struct sockaddr *addr, socklen_t *addrLen);
 
 // Socket polling
 int SocketSelect(SocketFd socketFd, int timeoutSec);
 int SocketPoll(SocketFd socketFd, int events, int timeoutMs);
 bool IsSocketReadable(SocketFd socketFd, int timeoutMs);
 bool IsSocketWritable(SocketFd socketFd, int timeoutMs);
+
 
 // Error handling
 void SocketLogLastError();
