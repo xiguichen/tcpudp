@@ -550,3 +550,24 @@ SocketFd SocketAccept(SocketFd socketFd, struct sockaddr *addr, socklen_t *addrL
     return accept(socketFd, addr, addrLen);
 }
 
+void InitializeSockets()
+{
+#ifdef _WIN32
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0)
+    {
+        // Handle error
+        log_error(std::string("WSAStartup failed: %d\n", result));
+        exit(EXIT_FAILURE);
+    }
+#endif
+}
+
+void CleanupSockets()
+{
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+

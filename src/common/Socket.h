@@ -74,3 +74,7 @@ enum SocketError {
     SOCKET_ERROR_INTERRUPTED = -4,
     SOCKET_ERROR_OTHER = -5
 };
+
+void InitializeSockets();
+
+void CleanupSockets();
