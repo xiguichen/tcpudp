@@ -12,7 +12,7 @@ void TcpVCWriteThread::run()
         if (!data)
         {
             log_error("Failed to dequeue data for sending");
-            continue;
+            break;
         }
         VCHeader* header = reinterpret_cast<VCHeader*>(data->data());
         lastMessageId = header->messageId;
@@ -21,4 +21,8 @@ void TcpVCWriteThread::run()
         log_info("type: " + std::to_string(static_cast<uint8_t>(header->type)));
     }
     log_info("TcpVCWriteThread stopped");
+}
+TcpVCWriteThread::~TcpVCWriteThread()
+{
+    log_info("~TcpVCWriteThread");
 }

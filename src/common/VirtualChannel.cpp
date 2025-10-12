@@ -4,4 +4,3 @@ void VirtualChannel::setReceiveCallback(std::function<void(const char *data, siz
 {
     receiveCallback = callback;
 }
-

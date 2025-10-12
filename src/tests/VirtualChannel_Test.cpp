@@ -1,3 +1,4 @@
+#include "Log.h"
 #include "Socket.h"
 #include "TcpVirtualChannel.h"
 #include <condition_variable>
@@ -38,7 +39,7 @@ class TcpVirtualChannelTest : public ::testing::Test
     void SetupServerSocket()
     {
         std::cout << "Setting up server socket..." << std::endl;
-        serverSocket = CreateSocket(AF_INET, SOCK_STREAM, 0);
+        serverSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
         sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_addr.s_addr = INADDR_ANY;
@@ -79,7 +80,7 @@ class TcpVirtualChannelTest : public ::testing::Test
             serverCondition.wait(lock, [this] { return serverReady; });
         }
 
-        clientSocket = CreateSocket(AF_INET, SOCK_STREAM, 0);
+        clientSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
         sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_addr.s_addr = inet_addr(serverAddrStr);

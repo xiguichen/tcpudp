@@ -20,6 +20,14 @@ void TcpVCReadThread::run()
         {
             bufferVector.insert(bufferVector.end(), buffer, buffer + dataSize);
         }
+        else
+        {
+            log_info("No data received, stopping read thread");
+            if(this->disconnectCallback) {
+                this->disconnectCallback(this->connection);
+            }
+            break; // Connection closed or error
+        }
 
         // Ack:  | 1 byte type | 8 bytes messageId |
         while (this->hasEnoughData(bufferVector.data(), bufferVector.size()))
@@ -118,4 +126,13 @@ void TcpVCReadThread::setDataCallback(
     std::function<void(const uint64_t messageId, std::shared_ptr<std::vector<char>> data)> callback)
 {
     dataCallback = callback;
+}
+void TcpVCReadThread::setDisconnectCallback(std::function<void(TcpConnectionSp connection)> callback)
+{
+    this->disconnectCallback = callback;
+}
+
+TcpVCReadThread::~TcpVCReadThread()
+{
+    log_debug("~TcpVCReadThread");
 }

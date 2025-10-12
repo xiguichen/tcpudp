@@ -12,6 +12,10 @@ class TcpVirtualChannel : public VirtualChannel
 
   public:
     TcpVirtualChannel(std::vector<SocketFd> fds);
+    virtual ~TcpVirtualChannel()
+    {
+        this->close();
+    };
 
     // Method to open the channel
     virtual void open();
@@ -27,6 +31,9 @@ class TcpVirtualChannel : public VirtualChannel
 
     void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data);
 
+    // Set the disconnect callback
+    void setDisconnectCallback(std::function<void(TcpConnectionSp connection)> callback);
+
   private:
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
@@ -34,6 +41,7 @@ class TcpVirtualChannel : public VirtualChannel
     BlockingQueueSp sendQueue;
     std::map<uint64_t, std::shared_ptr<std::vector<char>>> receivedDataMap;
     std::mutex receivedDataMutex;
+    std::function<void(TcpConnectionSp connection)> disconnectCallback;
 
     bool opened = false;
     std::atomic<long> lastSendMessageId = 0;

@@ -1,35 +1,46 @@
 #pragma once
+#include <Log.h>
 #include <Socket.h>
 
 class Server
 {
-public:
+  public:
     Server() = default;
     ~Server() = default;
 
     void start()
     {
-        InitializeSockets();
+        running = true;
+        log_info("Starting server...");
+        SocketInit();
 
         // Server logic to start listening for connections would go here
-        Listen();
-
-        // Accept connections
-        AcceptConnections();
+        if (Listen())
+        {
+            // Accept connections
+            AcceptConnections();
+        }
     }
 
     void stop()
-    { 
+    {
+        log_info("Stopping server...");
+        running = false;
+        if (serverSocket != -1)
+        {
+            SocketClose(serverSocket);
+            serverSocket = -1;
+        }
 
-        CleanupSockets();
+        SocketClearnup();
     }
 
     bool isRunning() const;
 
-private:
+  private:
     bool running = false;
 
-    void Listen();
+    bool Listen();
     void AcceptConnections();
 
     SocketFd serverSocket;

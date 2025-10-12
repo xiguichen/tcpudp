@@ -16,3 +16,9 @@ else
 	../run.sh
 endif
 
+
+s:
+	cd ../Build/bin && ./server
+
+c:
+	cd ../Build/bin && ./udp_client

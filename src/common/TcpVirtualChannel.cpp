@@ -13,11 +13,25 @@ void TcpVirtualChannel::open()
         this->processReceivedData(messageId, data);
     };
 
+    auto disconnectCB = [this](TcpConnectionSp connection) {
+        log_info("TcpVirtualChannel detected a disconnection");
+        // this->connections.erase(std::remove(this->connections.begin(), this->connections.end(), connection), this->connections.end());
+        // if(this->connections.empty())
+        // {
+        //     log_info("All connections closed, closing virtual channel");
+        //     this->close();
+        // }
+        if (this->disconnectCallback) {
+            this->disconnectCallback(connection);
+        }
+    };
+
     for (int i = 0; i < this->connections.size(); ++i)
     {
         auto readThread = TcpVCReadThreadFactory::createThread(this->connections[i]);
         readThread->start();
         readThread->setDataCallback(dataCallback);
+        readThread->setDisconnectCallback(disconnectCB);
         readThreads.emplace_back(readThread);
         auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i]);
         writeThread->start();
@@ -56,6 +70,11 @@ bool TcpVirtualChannel::isOpen() const
 }
 void TcpVirtualChannel::close()
 {
+    if (!opened)
+    {
+        return;
+    }
+
     // Cancle any waiting operations
     this->sendQueue->cancelWait();
 
@@ -65,7 +84,12 @@ void TcpVirtualChannel::close()
     {
         if (conn && conn->isConnected())
         {
+            log_info("Disconnecting a TcpConnection");
             conn->disconnect();
+        }
+        else 
+        {
+            log_info("TcpConnection already disconnected");
         }
     }
 
@@ -74,9 +98,12 @@ void TcpVirtualChannel::close()
     {
         if (thread)
         {
+            log_info("Stopping a read thread");
             thread->stop();
+            log_info("Read thread stopped");
         }
     }
+
     log_info("All read threads stopped");
 
     log_info("Stopping write threads");
@@ -130,5 +157,10 @@ TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
         connections.emplace_back(std::make_shared<TcpConnection>(fd));
     }
     sendQueue = std::make_shared<BlockingQueue>();
+}
+
+void TcpVirtualChannel::setDisconnectCallback(std::function<void(TcpConnectionSp connection)> callback)
+{
+    this->disconnectCallback = callback;
 }
 

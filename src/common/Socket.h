@@ -19,7 +19,7 @@ typedef int SocketFd;  // Use int type for Linux/macOS
 #endif
 
 // Socket creation and configuration
-SocketFd CreateSocket(int domain, int type, int protocol);
+SocketFd SocketCreate(int domain, int type, int protocol);
 int SetSocketNonBlocking(SocketFd socketFd);
 int SetSocketBlocking(SocketFd socketFd);
 bool IsSocketNonBlocking(SocketFd socketFd);
@@ -75,6 +75,6 @@ enum SocketError {
     SOCKET_ERROR_OTHER = -5
 };
 
-void InitializeSockets();
+void SocketInit();
 
-void CleanupSockets();
+void SocketClearnup();

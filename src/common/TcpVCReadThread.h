@@ -13,12 +13,14 @@ class TcpVCReadThread : public StopableThread
 
     TcpVCReadThread(TcpConnectionSp connection) : connection(connection) {}
 
+    virtual ~TcpVCReadThread();
+
     // Set the data callback
     void setDataCallback(
         std::function<void(const uint64_t messageId, std::shared_ptr<std::vector<char>> data)> callback);
 
-    // Set the ack callback
-    void setAckCallback(std::function<void(const uint64_t messageId)> callback);
+    // Set the disconnect callback
+    void setDisconnectCallback(std::function<void(TcpConnectionSp connection)> callback);
 
   protected:
     virtual void run();
@@ -38,6 +40,7 @@ class TcpVCReadThread : public StopableThread
 
     std::function<void(const uint64_t messageId, std::shared_ptr<std::vector<char>> data)> dataCallback;
     std::function<void(const uint64_t messageId)> ackCallback;
+    std::function<void(TcpConnectionSp connection)> disconnectCallback;
 };
 
 typedef std::shared_ptr<TcpVCReadThread> TcpVCReadThreadSp;

@@ -27,4 +27,7 @@ const uint32_t VC_MIN_DATA_PACKET_SIZE = sizeof(VCDataPacket);
  // Max size of the data payload
 const uint16_t VC_MAX_DATA_PAYLOAD_SIZE = 1400;
 
+// TCP Connections per virtual channel
+const uint8_t VC_TCP_CONNECTIONS = 4;
+
 #pragma pack(pop)

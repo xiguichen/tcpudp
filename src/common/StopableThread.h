@@ -6,11 +6,7 @@ class StopableThread
 {
   public:
     StopableThread() = default;
-    virtual ~StopableThread()
-    {
-        // Ensure the thread is stopped before destruction
-        stop();
-    }
+    virtual ~StopableThread();
 
     // Start the thread
     void start();
@@ -30,5 +26,6 @@ class StopableThread
   private:
     std::thread _thread; // Thread for execution
     bool running = true; // Flag to control the thread execution
+    std::mutex stopMutex; // Mutex for thread safety
 };
 

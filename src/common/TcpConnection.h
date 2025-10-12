@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <memory>
 #include "Socket.h"
-#include "Log.h"
 
 class TcpConnection
 {
@@ -23,6 +22,9 @@ class TcpConnection
 
         // Method to close the TCP connection
         void disconnect();
+
+        // Get the socket file descriptor
+        SocketFd getSocketFd() const;
 
       private:
         bool connected = false; // Connection state

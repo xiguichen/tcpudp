@@ -1,4 +1,5 @@
 #include "TcpConnection.h"
+#include "Log.h"
 
 void TcpConnection::disconnect()
 {
@@ -54,5 +55,10 @@ void TcpConnection::send(const char *data, size_t size)
         // Handle not connected state
         log_error("Attempted to send data on a disconnected TCP connection");
     }
+}
+
+SocketFd TcpConnection::getSocketFd() const
+{
+    return socketFd;
 }
 

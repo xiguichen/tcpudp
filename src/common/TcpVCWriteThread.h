@@ -12,7 +12,7 @@ class TcpVCWriteThread : public StopableThread
         : writeQueue(writeQueue), connection(connection)
     {
     }
-    virtual ~TcpVCWriteThread() = default;
+    virtual ~TcpVCWriteThread();
 
   protected:
     virtual void run();

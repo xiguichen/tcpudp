@@ -14,7 +14,7 @@
 using namespace Logger;
 
 // Socket creation and configuration functions
-SocketFd CreateSocket(int domain, int type, int protocol) {
+SocketFd SocketCreate(int domain, int type, int protocol) {
     SocketFd socketFd;
     
 #ifdef _WIN32
@@ -550,7 +550,7 @@ SocketFd SocketAccept(SocketFd socketFd, struct sockaddr *addr, socklen_t *addrL
     return accept(socketFd, addr, addrLen);
 }
 
-void InitializeSockets()
+void SocketInit()
 {
 #ifdef _WIN32
     WSADATA wsaData;
@@ -564,7 +564,7 @@ void InitializeSockets()
 #endif
 }
 
-void CleanupSockets()
+void SocketClearnup()
 {
 #ifdef _WIN32
     WSACleanup();
