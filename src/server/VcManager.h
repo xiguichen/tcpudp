@@ -1,7 +1,7 @@
 #pragma once
 #include "VirtualChannel.h"
 #include <map>
-
+#include <string>
 
 class VcManager
 {
