@@ -1,6 +1,6 @@
 #include <cstddef>
 #include <format>
-
+#include <cstring>
 #include "Log.h"
 #include "TcpVCReadThread.h"
 #include "VcProtocol.h"
