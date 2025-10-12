@@ -3,6 +3,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <format>
 
 namespace Logger
 {

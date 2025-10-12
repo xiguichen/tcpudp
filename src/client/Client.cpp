@@ -4,6 +4,7 @@
 #include "VcProtocol.h"
 #include "VirtualChannelFactory.h"
 #include <thread>
+#include <format>
 
 bool Client::PrepareVC()
 {

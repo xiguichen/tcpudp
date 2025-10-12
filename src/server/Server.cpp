@@ -11,6 +11,7 @@
 #include <Log.h>
 #include <format>
 #include <thread>
+#include <cstring>
 
 bool Server::Listen()
 {

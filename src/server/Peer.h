@@ -29,11 +29,6 @@ class Peer
     void AddSocket(SocketFd socket);
 
     // <summary>
-    // Remove a TCP socket from the peer
-    // </summary>
-    void RemoveSocket(SocketFd socket);
-
-    // <summary>
     // Remove all TCP sockets from the peer
     // </summary>
     void RemoveAllSockets();

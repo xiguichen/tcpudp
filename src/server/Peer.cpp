@@ -13,14 +13,6 @@ void Peer::AddSocket(SocketFd socket)
     sockets.push_back(socket);
 }
 
-void Peer::RemoveSocket(SocketFd socket)
-{
-    log_info(std::format("Removing socket {} from peer {}", socket, ipAddress));
-    log_info(std::format("Socket count before removal: {}", sockets.size()));
-    sockets.erase(std::remove(sockets.begin(), sockets.end(), socket), sockets.end());
-    log_info(std::format("Socket count after removal: {}", sockets.size()));
-}
-
 size_t Peer::GetSocketCount()
 {
     std::lock_guard<std::mutex> lock(socketMutex);
