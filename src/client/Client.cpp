@@ -78,12 +78,12 @@ bool Client::PrepareUdpSocket()
 
     // Prepare address structure for sending data
     struct sockaddr_in udpAddr{};
-    auto ip = ClientConfiguration::getInstance()->getSocketAddress();
-    auto port = ClientConfiguration::getInstance()->getPortNumber();
+    memset(&udpAddr, 0, sizeof(udpAddr));
+    auto port = ClientConfiguration::getInstance()->getLocalHostUdpPort();
 
-    log_info(std::format("UDP target address: {}:{}", ip, port));
+    log_info(std::format("UDP target address: {}", port));
     udpAddr.sin_family = AF_INET;
-    udpAddr.sin_addr.s_addr = inet_addr(ip.c_str());
+    udpAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
     udpAddr.sin_port = htons(port);
 
     // bind the socket to the address
@@ -120,6 +120,8 @@ bool Client::PrepareUdpSocket()
         {
             log_info(std::format("Received {} bytes from UDP socket", receivedBytes));
             udpAddr = srcAddr; // Update the address to the source address
+            // send data to virtual channel
+            vc->send(buffer, receivedBytes);
         }
     }
 

@@ -58,3 +58,21 @@ void ClientConfiguration::LoadJsonConfig()
         throw std::runtime_error(std::string("Error reading config.json: ") + e.what());
     }
 }
+
+const std::uint16_t ClientConfiguration::getLocalHostUdpPort() const
+{
+
+    if (configJson.is_null())
+    {
+        const_cast<ClientConfiguration *>(this)->LoadJsonConfig();
+    }
+
+    if (configJson[localHostUdpPort].is_number_unsigned())
+    {
+        return configJson[localHostUdpPort].get<uint16_t>();
+    }
+
+    log_error("Invalid or missing 'port' in config.json");
+    return 0;
+}
+

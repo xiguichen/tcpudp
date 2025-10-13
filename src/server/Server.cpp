@@ -23,9 +23,8 @@ bool Server::Listen()
         return false;
     }
 
-    auto address = ServerConfiguration::getInstance()->getSocketAddress();
     auto port = ServerConfiguration::getInstance()->getPortNumber();
-    log_info(std::format("Server listening on {}:{}", address, port));
+    log_info(std::format("Server listening on {}", port));
 
     // Bind the socket and start listening
     sockaddr_in serverAddr{};

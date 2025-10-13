@@ -1,7 +1,6 @@
 #pragma once
-#include <string>
 #include <nlohmann/json.hpp> // Include the nlohmann/json library
-
+#include <string>
 
 class ClientConfiguration
 {
@@ -19,13 +18,15 @@ class ClientConfiguration
 
     uint16_t getPortNumber() const;
 
-  private:
+    const std::uint16_t getLocalHostUdpPort() const;
 
+  private:
     ClientConfiguration() = default;
 
     void LoadJsonConfig();
 
     nlohmann::json configJson = nullptr;
-    const char* peerAddress = "peerAddress";
-    const char* peerTcpPort = "peerTcpPort";
+    const char *peerAddress = "peerAddress";
+    const char *peerTcpPort = "peerTcpPort";
+    const char *localHostUdpPort = "localHostUdpPort";
 };
