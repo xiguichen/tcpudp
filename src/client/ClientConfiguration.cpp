@@ -1,14 +1,14 @@
-#include "Configuration.h"
+#include "ClientConfiguration.h"
 #include "Log.h"
 #include <fstream>
 #include <nlohmann/json.hpp> // Include the nlohmann/json library
 #include <string>
 
-const std::string Configuration::getSocketAddress() const
+const std::string ClientConfiguration::getSocketAddress() const
 {
     if (configJson.is_null())
     {
-        const_cast<Configuration *>(this)->LoadJsonConfig();
+        const_cast<ClientConfiguration *>(this)->LoadJsonConfig();
     }
 
     if (configJson[peerAddress].is_string())
@@ -21,11 +21,11 @@ const std::string Configuration::getSocketAddress() const
 }
 
 
-uint16_t Configuration::getPortNumber() const
+uint16_t ClientConfiguration::getPortNumber() const
 {
     if (configJson.is_null())
     {
-        const_cast<Configuration *>(this)->LoadJsonConfig();
+        const_cast<ClientConfiguration *>(this)->LoadJsonConfig();
     }
 
     if (configJson[peerTcpPort].is_number_unsigned())
@@ -37,7 +37,7 @@ uint16_t Configuration::getPortNumber() const
     return 0;
 }
 
-void Configuration::LoadJsonConfig()
+void ClientConfiguration::LoadJsonConfig()
 {
     try
     {

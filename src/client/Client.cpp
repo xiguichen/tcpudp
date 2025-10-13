@@ -1,6 +1,6 @@
 #include "Client.h"
 #include "Log.h"
-#include "Configuration.h"
+#include "ClientConfiguration.h"
 #include "VcProtocol.h"
 #include "VirtualChannelFactory.h"
 #include <thread>
@@ -22,8 +22,8 @@ bool Client::PrepareVC()
 
         // Connect to server
         struct sockaddr_in serverAddr{};
-        auto ip = Configuration::getInstance()->getSocketAddress();
-        auto port = Configuration::getInstance()->getPortNumber();
+        auto ip = ClientConfiguration::getInstance()->getSocketAddress();
+        auto port = ClientConfiguration::getInstance()->getPortNumber();
 
         log_info(std::format("Connecting to server at {}:{}", ip, port));
         serverAddr.sin_family = AF_INET;
@@ -78,8 +78,8 @@ bool Client::PrepareUdpSocket()
 
     // Prepare address structure for sending data
     struct sockaddr_in udpAddr{};
-    auto ip = Configuration::getInstance()->getSocketAddress();
-    auto port = Configuration::getInstance()->getPortNumber();
+    auto ip = ClientConfiguration::getInstance()->getSocketAddress();
+    auto port = ClientConfiguration::getInstance()->getPortNumber();
 
     log_info(std::format("UDP target address: {}:{}", ip, port));
     udpAddr.sin_family = AF_INET;

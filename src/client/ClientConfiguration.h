@@ -3,17 +3,17 @@
 #include <nlohmann/json.hpp> // Include the nlohmann/json library
 
 
-class Configuration
+class ClientConfiguration
 {
   public:
-    static Configuration *getInstance()
+    static ClientConfiguration *getInstance()
     {
-        static Configuration instance;
+        static ClientConfiguration instance;
         return &instance;
     }
 
-    Configuration(const Configuration &) = delete;
-    Configuration &operator=(const Configuration &) = delete;
+    ClientConfiguration(const ClientConfiguration &) = delete;
+    ClientConfiguration &operator=(const ClientConfiguration &) = delete;
 
     const std::string getSocketAddress() const;
 
@@ -21,7 +21,7 @@ class Configuration
 
   private:
 
-    Configuration() = default;
+    ClientConfiguration() = default;
 
     void LoadJsonConfig();
 
