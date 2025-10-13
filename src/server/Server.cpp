@@ -1,5 +1,5 @@
 #include "Server.h"
-#include "Configuration.h"
+#include "ServerConfiguration.h"
 #include "Peer.h"
 #include "Socket.h"
 #include "TcpConnection.h"
@@ -23,8 +23,8 @@ bool Server::Listen()
         return false;
     }
 
-    auto address = Configuration::getInstance()->getSocketAddress();
-    auto port = Configuration::getInstance()->getPortNumber();
+    auto address = ServerConfiguration::getInstance()->getSocketAddress();
+    auto port = ServerConfiguration::getInstance()->getPortNumber();
     log_info(std::format("Server listening on {}:{}", address, port));
 
     // Bind the socket and start listening
@@ -116,7 +116,7 @@ void Server::AcceptConnections()
             udpAddr.sin_family = AF_INET;
             // sin_addr should be local host
             udpAddr.sin_addr.s_addr = INADDR_ANY;
-            udpAddr.sin_port = htons(Configuration::getInstance()->getPortNumber());
+            udpAddr.sin_port = htons(ServerConfiguration::getInstance()->getPortNumber());
 
             peer->SetUdpSocket(udpSocket);
             peer->SetUdpAddress(udpAddr);

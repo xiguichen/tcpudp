@@ -5,17 +5,17 @@
 #include <set>
 #include <cstdint>
 
-class Configuration {
+class ServerConfiguration {
 private:
-    static Configuration* instance;
+    static ServerConfiguration* instance;
     // Private constructor
-    Configuration() = default; 
+    ServerConfiguration() = default; 
 
     // Example client IDs
     std::set<uint32_t> allowedClientIds = {1, 2, 3};
 
 public:
-    static Configuration* getInstance();
+    static ServerConfiguration* getInstance();
     std::string getSocketAddress() const;
     int getPortNumber() const;
 
