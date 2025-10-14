@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Socket.h"
+#include <atomic>
 #include "VirtualChannel.h"
 
 class Client
@@ -34,6 +35,7 @@ class Client
     std::vector<SocketFd> tcpSockets;
     SocketFd udpSocket = -1;
     struct sockaddr_in udpAddr{};
+    std::atomic<struct sockaddr_in> remoteUdpAddr{};
 
     VirtualChannelSp vc = nullptr;
 };

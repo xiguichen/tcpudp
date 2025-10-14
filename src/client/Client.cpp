@@ -54,8 +54,12 @@ bool Client::PrepareVC()
     vc->setReceiveCallback([this](const char *data, size_t size) {
         log_info(std::format("Virtual channel received {} bytes of data", size));
 
+        auto remoteAddr = this->remoteUdpAddr.load();
+
+        log_info(std::format("Sending data to UDP address: {}:{}", inet_ntoa(remoteAddr.sin_addr), ntohs(remoteAddr.sin_port)));
+
         // send data to UDP socket
-        SendUdpData(udpSocket, data, size, 0, (struct sockaddr *)&udpAddr, sizeof(udpAddr));
+        SendUdpData(udpSocket, data, size, 0, (struct sockaddr *)&remoteAddr, sizeof(remoteUdpAddr));
     });
 
     vc->open();
@@ -69,7 +73,7 @@ bool Client::PrepareUdpSocket()
     log_info("Creating UDP socket...");
 
     // Create UDP socket here
-    SocketFd udpSocket = SocketCreate(AF_INET, SOCK_DGRAM, 0);
+    udpSocket = SocketCreate(AF_INET, SOCK_DGRAM, 0);
     if (udpSocket == -1)
     {
         log_error("Failed to create UDP socket");
@@ -119,7 +123,7 @@ bool Client::PrepareUdpSocket()
         else
         {
             log_info(std::format("Received {} bytes from UDP socket", receivedBytes));
-            udpAddr = srcAddr; // Update the address to the source address
+           this->remoteUdpAddr.store(srcAddr);
             // send data to virtual channel
             vc->send(buffer, receivedBytes);
         }
