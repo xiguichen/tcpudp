@@ -105,7 +105,7 @@ bool Client::PrepareUdpSocket()
 
     while (true)
     {
-        char buffer[1500];
+        char buffer[2500];
         struct sockaddr_in srcAddr{};
         socklen_t srcAddrLen = sizeof(srcAddr);
         ssize_t receivedBytes =
