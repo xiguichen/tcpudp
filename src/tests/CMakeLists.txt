@@ -18,11 +18,21 @@ FetchContent_MakeAvailable(googletest)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+# Enable proper exception handling
+if(MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc")
+endif()
+
 # add a macro to disable secure warnings
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
+# Prevent Windows min/max macros from conflicting with C++ std::min/std::max
+if(WIN32)
+  add_definitions(-DNOMINMAX)
+endif()
+
 # Include directories
-include_directories("${CMAKE_SOURCE_DIR}/sdk/nlohman_json/include")
+include_directories("${CMAKE_SOURCE_DIR}/third_party")
 
 # add google test include directories
 include_directories(${googletest_SOURCE_DIR}/googletest/include)
@@ -45,6 +55,8 @@ file(GLOB_RECURSE SOURCES "*.cpp" "*.h")
 # find all source files in the server directory
 file(GLOB_RECURSE SERVER_SOURCES "${CMAKE_SOURCE_DIR}/server/*.cpp" "${CMAKE_SOURCE_DIR}/server/*.h")
 
+# We'll only include the test files, not the actual client implementation
+# to avoid dependency issues
 
 # Define the executable
 add_executable(CommonTest

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -68,20 +69,20 @@ public:
                                        std::vector<T> &outputBuffer) {
     outputBuffer.clear();
 
-    Log::getInstance().info("Begin ExtractUdpData");
+    log_info("Begin ExtractUdpData");
 
     if (data.size() < HEADER_SIZE) {
-      Log::getInstance().info("not enough data for decode header");
+      log_info("not enough data for decode header");
       return data; // Not enough data for a header
     }
 
     const UvtHeader *header = reinterpret_cast<const UvtHeader *>(data.data());
     uint16_t messageLength = ntohs(header->size);
-    Log::getInstance().info(std::format("Message Id: {}, Message Length: {}",
+    log_info(std::format("Message Id: {}, Message Length: {}",
                                         header->id, messageLength));
 
     if (HEADER_SIZE + messageLength > data.size()) {
-      Log::getInstance().info(std::format(
+      log_info(std::format(
           "not enough data for decode data. Expected: {}, Actual: {}",
           HEADER_SIZE + messageLength, data.size()));
       return data; // Not enough data for a full message
@@ -99,7 +100,7 @@ public:
       return data;
     }
 
-    Log::getInstance().info("End ExtractUdpData");
+    log_info("End ExtractUdpData");
     return std::vector<T>(data.begin() + HEADER_SIZE + messageLength,
                           data.end());
   }
@@ -127,6 +128,7 @@ public:
   static void AppendMsgBindResponse(const MsgBindResponse &bindResponse,
                                     std::vector<T> &outputBuffer) {
     size_t currentSize = outputBuffer.size();
+    outputBuffer.resize(currentSize + sizeof(MsgBindResponse));
     std::copy(reinterpret_cast<const T *>(&bindResponse),
               reinterpret_cast<const T *>(&bindResponse) +
                   sizeof(MsgBindResponse),
@@ -152,6 +154,17 @@ typedef struct Connection {
 
 class ConnectionManager {
 public:
+  // Get the singleton instance
+  static ConnectionManager& getInstance() {
+    static ConnectionManager instance;
+    return instance;
+  }
+
+  // Delete copy constructor and assignment operator
+  ConnectionManager(const ConnectionManager&) = delete;
+  ConnectionManager& operator=(const ConnectionManager&) = delete;
+
+
   // Create a connection
   Connection *createConnection(uint32_t clientId) {
     // Create a new connection and add it to the list
@@ -159,9 +172,66 @@ public:
     connection->clientId = clientId;
     connection->connectionId = generateConnectionId();
     connections.push_back(connection);
+    
+    // Track connections by clientId
+    clientConnections[clientId].push_back(connection);
+    
     return connection;
   }
 
+  // Remove a connection by its connectionId
+  bool removeConnection(uint32_t connectionId) {
+    for (auto it = connections.begin(); it != connections.end(); ++it) {
+      if ((*it)->connectionId == connectionId) {
+        uint32_t clientId = (*it)->clientId;
+        
+        // Remove from client connections map
+        auto& clientConns = clientConnections[clientId];
+        for (auto cit = clientConns.begin(); cit != clientConns.end(); ++cit) {
+          if ((*cit)->connectionId == connectionId) {
+            clientConns.erase(cit);
+            break;
+          }
+        }
+        
+        // If no more connections for this client, remove the client entry
+        if (clientConns.empty()) {
+          clientConnections.erase(clientId);
+        }
+        
+        delete *it; // Free the memory
+        connections.erase(it); // Remove from the vector
+        connectionIds.erase(connectionId); // Remove from the set
+        return true; // Successfully removed
+      }
+    }
+    return false; // Connection not found
+  }
+  
+  // Get all connections for a specific client
+  const std::vector<pConnection>& getClientConnections(uint32_t clientId) {
+    return clientConnections[clientId];
+  }
+  
+  // Get connection count for a specific client
+  size_t getClientConnectionCount(uint32_t clientId) {
+    return clientConnections[clientId].size();
+  }
+  
+  // Remove all connections (for testing purposes)
+  void removeAllConnections() {
+    for (auto connection : connections) {
+      delete connection;
+    }
+    connections.clear();
+    connectionIds.clear();
+    clientConnections.clear();
+  }
+
+private:
+  // Private constructor
+  ConnectionManager() = default;
+  
   // Destructor
   ~ConnectionManager() {
     // Clean up all connections
@@ -185,4 +255,7 @@ private:
 
   // Set of connection ids
   std::set<uint32_t> connectionIds;
+  
+  // Map of client IDs to their connections
+  std::map<uint32_t, std::vector<pConnection>> clientConnections;
 };

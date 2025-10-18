@@ -92,48 +92,104 @@ note right of SocketManager
 end note
 @enduml
 
-### Class Diagram for client side
+
+
+### class diagram
 
 @startuml
 
 class Client {
-    - localHostUdpPort: int
-    - peerTcpPort: int
-    - peerAddress: string
-    + configure()
-}
-
-class SocketManager {
-    + manageSockets()
-    + cleanupResources()
+    - int localHostUdpPort
+    - int peerTcpPort
+    - uint32_t clientId
+    - std::string peerAddress
+    - std::shared_ptr<SocketManager> socketManager
+    + Client(const std::string& configFile)
+    + void configure()
+    - void loadConfig(const std::string& configFile)
 }
 
 class LocalUdpSocket {
-    + bind(port: int)
-    + send(data: string)
-    + receive(): string
+    - SocketFd socketFd
+    - struct sockaddr_in localAddress
+    - bool bClosed
+    + LocalUdpSocket(int port)
+    + void bind(int port)
+    + void send(const std::vector<char>& data)
+    + std::vector<char> receive()
+    + void close()
+    + ~LocalUdpSocket()
 }
 
 class PeerTcpSocket {
-    + connect(address: string, port: int)
-    + send(data: string)
-    + receive(): string
+    - int socketFd
+    - struct sockaddr_in peerAddress
+    - uint8_t recvId
+    + PeerTcpSocket(const std::string& address, int port)
+    + void connect(const std::string& address, int port)
+    + void send(const std::vector<char>& data)
+    + void sendHandshake()
+    + std::vector<char> receive()
+    + ~PeerTcpSocket()
 }
 
-class UdpToTcpQueue {
-    + enqueue(data: string)
-    + dequeue(): string
+class SocketManager {
+    - LocalUdpSocket localUdpSocket
+    - std::vector<PeerTcpSocket> peerTcpSockets
+    - UdpToTcpQueue udpToTcpQueue
+    - TcpToUdpQueue tcpToUdpQueue
+    + SocketManager(int udpPort, const std::vector<std::pair<std::string, int>>& peerConnections)
+    + void manageSockets()
+    + void cleanupResources()
+    - void localHostReadTask(bool& running)
+    - void localHostWriteTask(bool& running)
+    - void peerHostReadTask(bool& running, PeerTcpSocket& peerTcpSocket)
+    - void peerHostWriteTask(bool& running, PeerTcpSocket& peerTcpSocket)
+    + ~SocketManager()
+}
+class SocketManager {
+    - LocalUdpSocket localUdpSocket
+    - PeerTcpSocket peerTcpSocket
+    - UdpToTcpQueue udpToTcpQueue
+    - TcpToUdpQueue tcpToUdpQueue
+    + SocketManager(int udpPort, int tcpPort, const std::string& address)
+    + void manageSockets()
+    + void cleanupResources()
+    - void localHostReadTask(bool& running)
+    - void localHostWriteTask(bool& running)
+    - void peerHostReadTask(bool& running)
+    - void peerHostWriteTask(bool& running)
+    + ~SocketManager()
 }
 
 class TcpToUdpQueue {
-    + enqueue(data: string)
-    + dequeue(): string
+    - std::queue<std::vector<char>> queue
+    - std::mutex mtx
+    - std::condition_variable cv
+    - bool shouldCancel
+    + void enqueue(const std::vector<char>& data)
+    + std::vector<char> dequeue()
+    + void cancel()
 }
 
-Client "1" -- "1" SocketManager
-SocketManager "1" -- "1" LocalUdpSocket
-SocketManager "1" -- "1" PeerTcpSocket
-LocalUdpSocket "1" -- "1" UdpToTcpQueue
-PeerTcpSocket "1" -- "1" TcpToUdpQueue
+class UdpToTcpQueue {
+    - std::queue<std::vector<char>> queue
+    - std::mutex mtx
+    - std::condition_variable cv
+    - bool shouldCancel
+    - std::chrono::time_point<std::chrono::high_resolution_clock> lastEmitTime
+    - std::vector<char> bufferedNewData
+    - uint8_t sendId
+    + void enqueue(const std::vector<char>& data)
+    + std::vector<char> dequeue()
+    + void cancel()
+    - void enqueueAndNotify(const std::vector<char>& data, std::vector<char>& bufferedNewData)
+}
+
+Client --> SocketManager
+SocketManager "1" --> "1" LocalUdpSocket
+SocketManager "1" --> "n" PeerTcpSocket
+SocketManager --> UdpToTcpQueue
+SocketManager --> TcpToUdpQueue
 
 @enduml

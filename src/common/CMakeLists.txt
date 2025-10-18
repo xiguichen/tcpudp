@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.28)
 
 # Project name and version
 project(common VERSION 1.0)
@@ -12,6 +12,8 @@ file(GLOB_RECURSE ALL_CPP_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "*.cpp")
 
 # Create a library
 add_library(common STATIC ${ALL_CPP_FILES})
+
+target_link_libraries(common)
 
 # Enable /EHsc for Windows platform
 if (WIN32)

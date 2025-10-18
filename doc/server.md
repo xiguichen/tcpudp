@@ -71,7 +71,7 @@ end
 
 ### Writer
 
-#### TcpQueueToUdpThreadPool for sending data from TCP to UDP
+#### TcpQueueToUdpThread for sending data from TCP to UDP
 
 @startuml
 participant UdpSocket
@@ -79,7 +79,7 @@ queue TcpDataQueue
 collections TcpToUdpSocketMap
 collections UdpSocketAddressMap
 
-group TcpQueueToUdpThreadPool
+group TcpQueueToUdpThread
     loop Process data
         TcpDataQueue -> TcpQueueToUdpThread: Dequeue data
         TcpQueueToUdpThread -> TcpQueueToUdpThread: Extract socket and data
@@ -92,19 +92,19 @@ end
 @enduml
 
 
-#### UdpQueueToTcpThreadPool for sending data from UDP to TCP
+#### UdpQueueToTcpThread for sending data from UDP to TCP
 
 @startuml
 participant TcpSocket
 queue UdpDataQueue
 collections UdpToTcpSocketMap
 
-group UdpQueueToTcpThreadPool
+group UdpQueueToTcpThread
     loop Process data concurrently
-        UdpDataQueue -> UdpQueueToTcpThreadPool: Dequeue data
-        UdpQueueToTcpThreadPool -> UdpQueueToTcpThreadPool: Extract socket and data
-        UdpQueueToTcpThreadPool -> UdpToTcpSocketMap: Retrieve mapped TCP socket
-        UdpQueueToTcpThreadPool -> TcpSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
+        UdpDataQueue -> UdpQueueToTcpThread: Dequeue data
+        UdpQueueToTcpThread -> UdpQueueToTcpThread: Extract socket and data
+        UdpQueueToTcpThread -> UdpToTcpSocketMap: Retrieve mapped TCP socket
+        UdpQueueToTcpThread -> TcpSocket: Use mapped TCP socket to send data via TCP in the format of {length, data}
     end
 end
 
@@ -113,90 +113,163 @@ end
 
 ### Class Diagram
 
-@startuml
+@startuml Server Classes
 
-class Configuration
-{
-    +getSocketAddress()
-    +getPortNumber()
-}
-
+' Socket Manager
 class SocketManager {
-    +createSocket()
-    +bindToPort(port: int)
-    +listenForConnections()
-    +acceptConnection()
-    +createUdpSocket()
-    +mapSockets()
-    +startTcpToQueueThread()
-    +startUdpToQueueThread()
+  - serverSocket: int
+  - threads: vector<thread>
+  + SocketManager()
+  + ~SocketManager()
+  + createSocket(): void
+  + bindToPort(port: int): void
+  + listenForConnections(): void
+  + acceptConnection(): void
+  + startTcpToQueueThread(clientSocket: int): void
+  + startUdpToQueueThread(clientSocket: int): void
+  + startTcpQueueToUdpThread(): void
+  + startUdpQueueToTcpThread(): void
 }
 
-class SocketMap {
-    +mapTcpSocketToUdpSocket(tcpSocket, udpSocket)
-    +getMappedUdpSocket(tcpSocket)
-    +getMappedTcpSocket(udpSocket)
-}
-
-class TcpToQueueThread {
-    +run()
-    -readFromSocket()
-    -enqueueData()
-}
-
-class UdpToQueueThread {
-    +run()
-    -readFromUdpSocket()
-    -enqueueData()
-}
-
-class TcpQueueToUdpThreadPool {
-    +run()
-    -processData()
-    -sendDataViaUdp()
-}
-
-class UdpQueueToTcpThreadPool {
-    +run()
-    -processDataConcurrently()
-    -sendDataViaTcp()
-}
-
-class TcpDataQueue {
-    +enqueue(data)
-    +dequeue()
-}
-
-class UdpDataQueue {
-    +enqueue(data)
-    +dequeue()
-}
-
-class UdpSocketAddressMap {
-    +setSocketAddress()
-    +getSocketAddress()
-}
-
+' Socket Maps
 class TcpToUdpSocketMap {
-    +retrieveMappedUdpSocket()
+  - socketMap: map<int, int>
+  - TcpToUdpSocketMap()
+  - ~TcpToUdpSocketMap()
+  + {static} getInstance(): TcpToUdpSocketMap&
+  + mapSockets(tcpSocket: int, udpSocket: int): void
+  + retrieveMappedUdpSocket(tcpSocket: int): int
 }
 
 class UdpToTcpSocketMap {
-    +retrieveMappedTcpSocket()
+  - socketMap: map<int, vector<int>>
+  - lastMappedTcpSocketIndex: map<int, int>
+  - UdpToTcpSocketMap()
+  - ~UdpToTcpSocketMap()
+  + {static} getInstance(): UdpToTcpSocketMap&
+  + mapSockets(udpSocket: int, tcpSocket: int): void
+  + retrieveMappedTcpSocket(udpSocket: int): int
+  + Reset(): void
 }
 
-SocketManager -> SocketMap
-SocketManager -> TcpToQueueThread
-SocketManager -> UdpToQueueThread
-TcpToQueueThread -> TcpDataQueue
-UdpToQueueThread -> UdpDataQueue
-TcpQueueToUdpThreadPool -> TcpDataQueue
-TcpQueueToUdpThreadPool -> UdpSocketAddressMap
-TcpQueueToUdpThreadPool -> TcpToUdpSocketMap
-UdpQueueToTcpThreadPool -> UdpDataQueue
-UdpQueueToTcpThreadPool -> UdpToTcpSocketMap
+' Data Queues
+class TcpDataQueue {
+  - queue: queue<pair<int, shared_ptr<vector<char>>>>
+  - queueMutex: mutex
+  - cv: condition_variable
+  - TcpDataQueue()
+  - ~TcpDataQueue()
+  + {static} getInstance(): TcpDataQueue&
+  + enqueue(socket: int, data: shared_ptr<vector<char>>): void
+  + dequeue(): pair<int, shared_ptr<vector<char>>>
+}
+
+class UdpDataQueue {
+  - queue: queue<pair<int, shared_ptr<vector<char>>>>
+  - queueMutex: mutex
+  - cv: condition_variable
+  - sendId: uint8_t
+  - lastEmitTime: chrono::time_point
+  - bufferedNewDataMap: map<int, vector<char>>
+  - UdpDataQueue()
+  - ~UdpDataQueue()
+  - enqueueAndNotify(socket: int, data: shared_ptr<vector<char>>, bufferedNewData: vector<char>&): void
+  + {static} getInstance(): UdpDataQueue&
+  + enqueue(socket: int, data: shared_ptr<vector<char>>): void
+  + dequeue(): pair<int, shared_ptr<vector<char>>>
+}
+
+' Thread Classes
+class TcpToQueueThread {
+  - socket_: int
+  - readFromSocket(buffer: char*, bufferSize: size_t): size_t
+  - enqueueData(data: const char*, length: size_t): void
+  + TcpToQueueThread(socket: int)
+  + run(): void
+}
+
+class UdpToQueueThread {
+  - socket_: int
+  - readFromUdpSocket(buffer: char*, bufferSize: size_t): size_t
+  - enqueueData(data: char*, length: size_t): void
+  + UdpToQueueThread(socket: int)
+  + run(): void
+}
+
+class TcpQueueToUdpThread {
+  - processData(): void
+  - sendDataViaUdp(socket: int, data: shared_ptr<vector<char>>): void
+  + run(): void
+}
+
+class UdpQueueToTcpThread {
+  - processDataConcurrently(): void
+  - sendDataViaTcp(tcpSocket: int, data: const vector<char>&): void
+  + run(): void
+}
+
+' Configuration
+class Configuration {
+  - {static} instance: Configuration*
+  - allowedClientIds: set<uint32_t>
+  - Configuration()
+  + {static} getInstance(): Configuration*
+  + getSocketAddress(): string
+  + getPortNumber(): int
+  + getAllowedClientIds(): const set<uint32_t>&
+}
+
+' UDP Socket Address Map
+class UdpSocketAddressMap {
+  - addressMap: map<int, sockaddr_in>
+  + setSocketAddress(socket: int, address: sockaddr_in): void
+  + getSocketAddress(socket: int): sockaddr_in
+}
+
+' Key Relationships with Cardinality
+
+' SocketManager creates and manages threads
+SocketManager "1" o--> "*" TcpToQueueThread : creates >
+SocketManager "1" o--> "*" UdpToQueueThread : creates >
+SocketManager "1" o--> "*" TcpQueueToUdpThread : creates >
+SocketManager "1" o--> "*" UdpQueueToTcpThread : creates >
+
+' SocketManager uses socket maps
+SocketManager "1" --> "1" TcpToUdpSocketMap : uses >
+SocketManager "1" --> "1" UdpToTcpSocketMap : uses >
+
+' Thread classes use data queues
+TcpToQueueThread "*" --> "1" TcpDataQueue : enqueues data >
+UdpToQueueThread "*" --> "1" UdpDataQueue : enqueues data >
+TcpQueueToUdpThread "*" --> "1" TcpDataQueue : dequeues data >
+UdpQueueToTcpThread "*" --> "1" UdpDataQueue : dequeues data >
+
+' Thread pools use socket maps
+TcpQueueToUdpThread "*" --> "1" TcpToUdpSocketMap : looks up UDP socket >
+UdpQueueToTcpThread "*" --> "1" UdpToTcpSocketMap : looks up TCP socket >
+
+' Socket maps store mappings
+TcpToUdpSocketMap "1" o--> "*" "TCP-UDP Mapping" : contains >
+UdpToTcpSocketMap "1" o--> "*" "UDP-TCP Mapping" : contains >
+
+' UdpToQueueThread uses UdpSocketAddressMap
+UdpToQueueThread "*" --> "1" UdpSocketAddressMap : uses >
+
+' SocketManager uses Configuration
+SocketManager "1" --> "1" Configuration : uses >
+
+' Singleton pattern notation
+TcpToUdpSocketMap -[hidden]-> UdpToTcpSocketMap
+TcpDataQueue -[hidden]-> UdpDataQueue
+note "Singleton Pattern" as SingletonNote
+TcpToUdpSocketMap .. SingletonNote
+UdpToTcpSocketMap .. SingletonNote
+TcpDataQueue .. SingletonNote
+UdpDataQueue .. SingletonNote
+Configuration .. SingletonNote
 
 @enduml
+
 
 ### Error Handling
 - Define specific error handling strategies for socket errors, data corruption, and missing mappings.

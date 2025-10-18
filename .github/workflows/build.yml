@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - main
+      - '**'
     paths:
       - src/**
       - .github/workflows/build.yml
@@ -13,6 +13,12 @@ on:
     paths:
       - src/**
       - .github/workflows/build.yml
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+        required: false
+        default: 'main'
 
 jobs:
   build:

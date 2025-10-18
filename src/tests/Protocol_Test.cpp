@@ -27,8 +27,9 @@ TEST(UvtUtilsTest, AppendMsgBind) {
   EXPECT_EQ(outputBuffer.size(), sizeof(MsgBind));
 
   // Check the content of the output buffer
-  MsgBind *bindPtr = reinterpret_cast<MsgBind *>(outputBuffer.data());
-  EXPECT_EQ(bindPtr->clientId, bind.clientId);
+  MsgBind receivedBind;
+  std::memcpy(&receivedBind, outputBuffer.data(), sizeof(MsgBind));
+  EXPECT_EQ(receivedBind.clientId, bind.clientId);
 }
 
 // Test for UvtUtils::ExtractMsgBind
@@ -42,6 +43,55 @@ TEST(UvtUtilsTest, ExtractMsgBind) {
 
   EXPECT_TRUE(result);
   EXPECT_EQ(extractedBind.clientId, originalBind.clientId);
+}
+
+// Test for UvtUtils::AppendMsgBindResponse
+TEST(UvtUtilsTest, AppendMsgBindResponse) {
+  MsgBindResponse bindResponse = {67890}; // Example connectionId
+  std::vector<uint8_t> outputBuffer; // Start with an empty buffer
+
+  UvtUtils::AppendMsgBindResponse(bindResponse, outputBuffer);
+
+  // Check the size of the output buffer
+  EXPECT_EQ(outputBuffer.size(), sizeof(MsgBindResponse));
+
+  // Check the content of the output buffer
+  MsgBindResponse receivedResponse;
+  std::memcpy(&receivedResponse, outputBuffer.data(), sizeof(MsgBindResponse));
+  EXPECT_EQ(receivedResponse.connectionId, bindResponse.connectionId);
+}
+
+// Test for UvtUtils::ExtractMsgBindResponse
+TEST(UvtUtilsTest, ExtractMsgBindResponse) {
+  MsgBindResponse originalResponse = {67890}; // Example connectionId
+  std::vector<uint8_t> data(sizeof(MsgBindResponse));
+  std::memcpy(data.data(), &originalResponse, sizeof(MsgBindResponse));
+
+  MsgBindResponse extractedResponse;
+  bool result = UvtUtils::ExtractMsgBindResponse(data, extractedResponse);
+
+  EXPECT_TRUE(result);
+  EXPECT_EQ(extractedResponse.connectionId, originalResponse.connectionId);
+}
+
+// Test for UvtUtils::ExtractMsgBind with insufficient data
+TEST(UvtUtilsTest, ExtractMsgBindInsufficientData) {
+  std::vector<uint8_t> data(sizeof(MsgBind) - 1); // Not enough data
+  
+  MsgBind extractedBind;
+  bool result = UvtUtils::ExtractMsgBind(data, extractedBind);
+
+  EXPECT_FALSE(result);
+}
+
+// Test for UvtUtils::ExtractMsgBindResponse with insufficient data
+TEST(UvtUtilsTest, ExtractMsgBindResponseInsufficientData) {
+  std::vector<uint8_t> data(sizeof(MsgBindResponse) - 1); // Not enough data
+  
+  MsgBindResponse extractedResponse;
+  bool result = UvtUtils::ExtractMsgBindResponse(data, extractedResponse);
+
+  EXPECT_FALSE(result);
 }
 
 TEST(UvtUtilsTest, AppendUdpData) {

@@ -1,22 +1,41 @@
-#ifndef CLIENT_H
-#define CLIENT_H
+#pragma once
 
-#include <string>
-#include <memory>
-#include "SocketManager.h"
+#include "Socket.h"
+#include <atomic>
+#include "VirtualChannel.h"
 
-class Client {
-public:
-    Client(const std::string& configFile);
-    void configure();
+class Client
+{
+  public:
+    Client() = default;
+    ~Client() = default;
 
-private:
-    int localHostUdpPort;
-    int peerTcpPort;
-    std::string peerAddress;
-    std::shared_ptr<SocketManager> socketManager;
-    void loadConfig(const std::string& configFile);
+    // <Summary>
+    // Start the client operations
+    // </Summary>
+    void Start();
+
+    // <Summary>
+    // Stop the client operations
+    // </Summary>
+    void Stop();
+
+    // <Summary>
+    // Check if the client is running
+    // </Summary>
+    bool PrepareVC();
+
+    // <Summary>
+    // Prepare UDP socket for communication
+    // </Summary>
+    bool PrepareUdpSocket();
+
+  private:
+    bool running = false;
+    std::vector<SocketFd> tcpSockets;
+    SocketFd udpSocket = -1;
+    struct sockaddr_in udpAddr{};
+    struct sockaddr_in remoteUdpAddr{};
+
+    VirtualChannelSp vc = nullptr;
 };
-
-#endif // CLIENT_H
-
