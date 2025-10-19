@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://counseling-republicans-rational-balloon.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://mix-baskets-favourites-groundwater.trycloudflare.com
