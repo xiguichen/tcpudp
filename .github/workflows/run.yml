@@ -52,7 +52,7 @@ jobs:
 
     - name: Install Server
       run: |
-       wget https://github.com/xiguichen/tcpudp/releases/download/0.3.7/tcpudp-ubuntu-latest.tar.gz
+       wget https://github.com/xiguichen/tcpudp/releases/download/v0.3.7/tcpudp-ubuntu-latest.tar.gz
        ls
        tar xvf tcpudp-ubuntu-latest.tar.gz
        chmod +x tcpudp-ubuntu-latest/server
