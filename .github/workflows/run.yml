@@ -52,15 +52,15 @@ jobs:
 
     - name: Install Server
       run: |
-       wget https://github.com/xiguichen/tcpudp/releases/download/nightly/tcpudp-ubuntu-latest.tar.gz
+       wget https://github.com/xiguichen/tcpudp/releases/download/0.3.7/tcpudp-ubuntu-latest.tar.gz
        ls
        tar xvf tcpudp-ubuntu-latest.tar.gz
        chmod +x tcpudp-ubuntu-latest/server
     - name: Run Cloudflared
       run: |
-        sudo cloudflared tunnel --url tcp://localhost:6001 --logfile cloudflare.log &
+        sudo cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
         until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
-        echo -n "cloudflared access tcp --url tcp://localhost:6001 --hostname " > ${{ github.workspace }}/cloudflare.sh
+        echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/cloudflare.sh
         cat cloudflare.log | grep https.*trycloudflare.com -o >> ${{ github.workspace }}/cloudflare.sh
         cp ${{ github.workspace }}/cloudflare.sh ${{ github.workspace }}/cloudflare.bat
         chmod +x ${{ github.workspace }}/cloudflare.sh
