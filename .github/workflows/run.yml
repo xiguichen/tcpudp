@@ -50,6 +50,11 @@ jobs:
           sysctl net.ipv4.ip_forward
           sudo iptables -t nat -L
 
+    - name: Configure DNS
+      run: |
+        sudo echo "DNSStubListener=yes" >> /etc/systemd/resolved.conf
+        sudo echo "DNSStubListenerExtra=0.0.0.0" >> /etc/systemd/resolved.conf
+
     - name: Install Server
       run: |
        wget https://github.com/xiguichen/tcpudp/releases/download/v0.3.7/tcpudp-ubuntu-latest.tar.gz
