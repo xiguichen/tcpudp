@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://finder-smaller-protective-many.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://counseling-republicans-rational-balloon.trycloudflare.com
