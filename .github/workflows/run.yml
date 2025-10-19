@@ -54,6 +54,7 @@ jobs:
       run: |
         echo "DNSStubListener=yes" | sudo tee -a /etc/systemd/resolved.conf
         echo "DNSStubListenerExtra=0.0.0.0" | sudo tee -a /etc/systemd/resolved.conf
+        sudo systemctl restart systemd-resolved
 
     - name: Install Server
       run: |
