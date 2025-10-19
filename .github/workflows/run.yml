@@ -52,8 +52,8 @@ jobs:
 
     - name: Configure DNS
       run: |
-        sudo echo "DNSStubListener=yes" >> /etc/systemd/resolved.conf
-        sudo echo "DNSStubListenerExtra=0.0.0.0" >> /etc/systemd/resolved.conf
+        echo "DNSStubListener=yes" | sudo tee -a /etc/systemd/resolved.conf
+        echo "DNSStubListenerExtra=0.0.0.0" | sudo tee -a /etc/systemd/resolved.conf
 
     - name: Install Server
       run: |
