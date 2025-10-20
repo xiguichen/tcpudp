@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://minneapolis-archive-twins-skills.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://meanwhile-jefferson-edit-chem.trycloudflare.com
