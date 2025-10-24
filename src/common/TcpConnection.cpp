@@ -25,7 +25,9 @@ size_t TcpConnection::receive(char *buffer, size_t bufferSize)
         {
             // Handle receive error
             log_error("Failed to receive data from TCP connection");
-            connected = false;
+
+            // Close this connection
+            disconnect();
             return 0;
         }
         return static_cast<size_t>(bytesReceived);

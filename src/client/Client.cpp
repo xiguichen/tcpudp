@@ -103,7 +103,7 @@ bool Client::PrepareUdpSocket()
 
     // Start receiving data in a loop
 
-    while (true)
+    while (running)
     {
         char buffer[2500];
         struct sockaddr_in srcAddr{};
@@ -136,6 +136,10 @@ void Client::Stop()
 {
     log_info("Client stopping...");
     running = false;
+    if(vc != nullptr)
+    {
+        vc->close();
+    }
 }
 
 void Client::Start()
