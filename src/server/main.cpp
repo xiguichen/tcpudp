@@ -5,6 +5,7 @@
 #include <iostream>
 #include <signal.h>
 #include <string>
+#include <thread>
 
 #ifndef _WIN32
 #include <sys/types.h>
@@ -20,6 +21,8 @@ void signalHandler(int signum)
 {
     log_info(std::format("Received signal: {}", signum));
     PeerManager::CloseAllSockets();
+    log_info("Sleep for 4 seconds to allow cleanup");
+    std::this_thread::sleep_for(std::chrono::milliseconds(4000));
     server.stop();
 
     exit(0);

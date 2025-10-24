@@ -75,6 +75,7 @@ void PeerManager::CloseAllSockets()
         Peer &peer = pair.second;
         for (SocketFd socket : peer.GetSockets())
         {
+            log_info(std::format("Closing socket {} for peer {}", socket, peer.GetIpAddress()));
             SocketClose(socket);
         }
         SocketClose(peer.GetUdpSocket());
