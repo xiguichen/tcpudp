@@ -63,7 +63,6 @@ void TcpVirtualChannel::send(const char *data, size_t size)
 
         // Enqueue the data for multiple connections to make sure we can deliver it without problems
         sendQueue->enqueue(dataVec);
-        sendQueue->enqueue(dataVec);
     }
 }
 bool TcpVirtualChannel::isOpen() const
