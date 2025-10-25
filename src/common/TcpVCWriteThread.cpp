@@ -19,9 +19,6 @@ void TcpVCWriteThread::run()
         log_info("Sent message with ID: " + std::to_string(lastMessageId));
         connection->send(data->data(), data->size());
         log_info("type: " + std::to_string(static_cast<uint8_t>(header->type)));
-
-        // Wait for a short duration to make sure that the other thread have more chances to run
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     log_info("TcpVCWriteThread stopped");
 }
