@@ -63,7 +63,7 @@ bool IsSocketWritable(SocketFd socketFd, int timeoutMs);
 
 
 // Error handling
-void SocketLogLastError();
+int SocketLogLastError();
 
 // Socket error codes
 enum SocketError {

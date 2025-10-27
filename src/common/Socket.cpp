@@ -526,14 +526,17 @@ ssize_t RecvTcpDataWithSizeNonBlocking(SocketFd socketFd, void *buffer, size_t b
 }
 
 // Error handling
-void SocketLogLastError() {
+int SocketLogLastError() {
+    int lastError;
 #ifdef _WIN32
-    int lastError = WSAGetLastError();
+    lastError = WSAGetLastError();
     log_error(std::format("Socket log_error: {}", lastError));
 #else
-    int lastError = errno;
+    lastError = errno;
     log_error(std::format("Socket error: {} - {}", lastError, strerror(lastError)));
 #endif
+
+    return lastError;
 }
 
 int SocketBind(SocketFd socketFd, const struct sockaddr *addr, socklen_t addrLen)
