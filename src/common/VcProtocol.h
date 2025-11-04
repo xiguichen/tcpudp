@@ -28,6 +28,6 @@ const uint32_t VC_MIN_DATA_PACKET_SIZE = sizeof(VCDataPacket);
 const uint16_t VC_MAX_DATA_PAYLOAD_SIZE = 2000;
 
 // TCP Connections per virtual channel
-const uint8_t VC_TCP_CONNECTIONS = 20;
+const uint8_t VC_TCP_CONNECTIONS = 5;
 
 #pragma pack(pop)
