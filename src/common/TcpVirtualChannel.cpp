@@ -15,12 +15,6 @@ void TcpVirtualChannel::open()
 
     auto disconnectCB = [this](TcpConnectionSp connection) {
         log_info("TcpVirtualChannel detected a disconnection");
-        // this->connections.erase(std::remove(this->connections.begin(), this->connections.end(), connection), this->connections.end());
-        // if(this->connections.empty())
-        // {
-        //     log_info("All connections closed, closing virtual channel");
-        //     this->close();
-        // }
         if (this->disconnectCallback) {
             this->disconnectCallback(connection);
         }
@@ -62,8 +56,6 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         std::free(packet);
 
         // Enqueue the data for multiple connections to make sure we can deliver it without problems
-        sendQueue->enqueue(dataVec);
-        sendQueue->enqueue(dataVec);
         sendQueue->enqueue(dataVec);
     }
 }
