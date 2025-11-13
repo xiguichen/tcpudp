@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://mechanics-same-exciting-hoped.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://wake-turn-airplane-penalties.trycloudflare.com
