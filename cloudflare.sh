@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://fields-for-ref-ink.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://hybrid-gnu-auctions-seeing.trycloudflare.com
