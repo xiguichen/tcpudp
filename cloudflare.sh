@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://port-resume-cooking-seattle.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://man-type-angeles-map.trycloudflare.com
