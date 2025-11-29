@@ -87,7 +87,7 @@ bool Client::PrepareUdpSocket()
 
     log_info(std::format("UDP target address: {}", port));
     udpAddr.sin_family = AF_INET;
-    udpAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    udpAddr.sin_addr.s_addr = inet_addr("0.0.0.0");
     udpAddr.sin_port = htons(port);
 
     // bind the socket to the address
