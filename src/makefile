@@ -13,7 +13,7 @@ run: compile
 ifeq ($(OS),Windows_NT)
 	../run.cmd
 else
-	../run.sh
+	cd .. && ./run.sh
 endif
 
 

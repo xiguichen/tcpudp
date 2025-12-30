@@ -186,11 +186,13 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize,
 #else
     ssize_t length = recvfrom(socketFd, buffer, bufferSize, flags, srcAddr, srcAddrLen);
 #endif
-    log_info(std::format("RecvUdpData: receive {} bytes of data", length));
+    log_debug(std::format("RecvUdpData: receive {} bytes of data", length));
     return length;
 }
 
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flags) {
+
+    log_info(std::format("Before Recv Tcp Data"));
 #if defined(_WIN32)
     ssize_t length = recv(socketFd, (char *)buffer, bufferSize, flags);
 #else

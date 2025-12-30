@@ -4,6 +4,7 @@
 #include "Log.h"
 #include "TcpVCReadThread.h"
 #include "VcProtocol.h"
+#include "PerformanceCounter.h"
 
 void TcpVCReadThread::run()
 {
@@ -16,6 +17,7 @@ void TcpVCReadThread::run()
         memset(buffer, 0, sizeof(buffer));
 
         size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
+        g_perfCounter.Enter();
         if (dataSize > 0)
         {
             bufferVector.insert(bufferVector.end(), buffer, buffer + dataSize);
@@ -34,9 +36,17 @@ void TcpVCReadThread::run()
         {
             log_info(std::format("Buffer size before processing: {}", bufferVector.size()));
             int processedBytes = this->processBuffer(bufferVector);
-            if (processedBytes > 0)
+            if (processedBytes > 0 && processedBytes == bufferVector.size())
             {
-                bufferVector.erase(bufferVector.begin(), bufferVector.begin() + processedBytes);
+                log_info(std::format("Processed all {} bytes from buffer", processedBytes));
+                bufferVector.resize(0);
+            }
+            else if (processedBytes > 0)
+            {
+                log_info(std::format("Processed {} bytes from buffer", processedBytes));
+                std::vector<char> newVector(std::make_move_iterator(bufferVector.begin() + processedBytes), std::make_move_iterator(bufferVector.end()));
+                bufferVector = std::move(newVector);
+                log_info(std::format("Buffer size after erasing processed data: {}", bufferVector.size()));
             }
             else
             {
@@ -45,6 +55,9 @@ void TcpVCReadThread::run()
             }
             log_info(std::format("Buffer size after processing: {}", bufferVector.size()));
         }
+
+        g_perfCounter.Exit();
+        g_perfCounter.Report();
     }
 
     this->setRunning(false);
@@ -69,8 +82,9 @@ int TcpVCReadThread::processBuffer(std::vector<char> &buffer)
     }
 }
 
-bool TcpVCReadThread::hasEnoughData(const char *buffer, size_t size)
+inline bool TcpVCReadThread::hasEnoughData(const char *buffer, size_t size)
 {
+    log_info("Checking if enough data is available in buffer");
     if (size < VC_MIN_DATA_PACKET_SIZE) // Minimum size for type + messageId + data length
     {
         return false;
@@ -79,6 +93,7 @@ bool TcpVCReadThread::hasEnoughData(const char *buffer, size_t size)
     uint8_t packetType = static_cast<uint8_t>(buffer[0]);
     if (packetType == static_cast<uint8_t>(VcPacketType::DATA))
     {
+        log_info("Packet type is DATA, checking data length");
         return hasEnoughDataForData(buffer, size);
     }
     else
@@ -102,11 +117,13 @@ bool TcpVCReadThread::hasEnoughDataForData(const char *buffer, size_t size)
         throw std::logic_error("Data length exceeds maximum payload size");
     }
 
+    log_info("Checking if buffer has enough data for DATA packet");
     return size >= VC_MIN_DATA_PACKET_SIZE + dataLength;
 }
 
 int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
 {
+    log_info("Processing DATA packet");
     VCDataPacket *dataPacket = reinterpret_cast<VCDataPacket *>(buffer.data());
     uint16_t dataLength = dataPacket->dataLength;
     if (dataLength > VC_MAX_DATA_PAYLOAD_SIZE)
@@ -118,8 +135,10 @@ int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
     std::copy(dataPacket->data, dataPacket->data + dataLength, data->data());
     if (dataCallback)
     {
+        log_info(std::format("Invoking data callback for messageId: {}", dataPacket->header.messageId));
         dataCallback(dataPacket->header.messageId, data);
     }
+    log_info(std::format("DATA packet processed, messageId: {}, dataLength: {}", dataPacket->header.messageId, dataLength));
     return sizeof(VCDataPacket) + dataLength;
 }
 void TcpVCReadThread::setDataCallback(

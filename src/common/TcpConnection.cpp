@@ -1,5 +1,6 @@
 #include "TcpConnection.h"
 #include "Log.h"
+#include "PerformanceCounter.h"
 
 void TcpConnection::disconnect()
 {
@@ -21,6 +22,7 @@ size_t TcpConnection::receive(char *buffer, size_t bufferSize)
     if (connected && socketFd != -1)
     {
         auto bytesReceived = RecvTcpData(socketFd, buffer, bufferSize, 0);
+        g_perfCounter.Enter();
         if (bytesReceived == -1)
         {
             // Handle receive error

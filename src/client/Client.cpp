@@ -122,7 +122,7 @@ bool Client::PrepareUdpSocket()
         }
         else
         {
-            log_info(std::format("Received {} bytes from UDP socket", receivedBytes));
+            log_debug(std::format("Received {} bytes from UDP socket", receivedBytes));
            this->remoteUdpAddr = srcAddr;
             // send data to virtual channel
             vc->send(buffer, receivedBytes);

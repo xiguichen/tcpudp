@@ -29,7 +29,7 @@ class TcpVCReadThread : public StopableThread
     TcpConnectionSp connection;
     std::vector<char> bufferVector;
 
-    bool hasEnoughData(const char *buffer, size_t size);
+    inline bool hasEnoughData(const char *buffer, size_t size);
 
     bool hasEnoughDataForData(const char *buffer, size_t size);
 

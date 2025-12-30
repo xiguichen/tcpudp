@@ -133,7 +133,6 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
         // Call the receive callback with the data
         if (receiveCallback)
         {
-            log_info(std::format("Invoking receive callback for message ID: {}", nextMessageId.load()));
             receiveCallback(it->second->data(), it->second->size());
         }
 

@@ -12,11 +12,11 @@ void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data)
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         queue.push(data);
-        log_info(std::format("Queue size after enqueue: {}, Queue address: {:p}", queue.size(),
+        log_debug(std::format("Queue size after enqueue: {}, Queue address: {:p}", queue.size(),
                              static_cast<const void *>(this)));
     }
 
-    log_info(std::format("Enqueued data, Queue address: {:p}", static_cast<const void *>(this)));
+    log_debug(std::format("Enqueued data, Queue address: {:p}", static_cast<const void *>(this)));
     queueCondVar.notify_one();
 }
 
