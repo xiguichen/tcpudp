@@ -65,6 +65,11 @@ void Server::AcceptConnections()
             continue;
         }
 
+
+        SocketSetTcpNoDelay(clientSocket, true);
+        SocketSetReceiveBufferSize(clientSocket, 1024 * 1024);
+        SocketSetSendBufferSize(clientSocket, 1024 * 1024);
+
         // Log client connection
         char clientIP[INET_ADDRSTRLEN+1];
         memset(clientIP, 0, sizeof(clientIP));

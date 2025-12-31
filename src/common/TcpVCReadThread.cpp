@@ -17,7 +17,6 @@ void TcpVCReadThread::run()
         memset(buffer, 0, sizeof(buffer));
 
         size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
-        g_perfCounter.Enter();
         if (dataSize > 0)
         {
             bufferVector.insert(bufferVector.end(), buffer, buffer + dataSize);
@@ -55,9 +54,6 @@ void TcpVCReadThread::run()
             }
             log_info(std::format("Buffer size after processing: {}", bufferVector.size()));
         }
-
-        g_perfCounter.Exit();
-        g_perfCounter.Report();
     }
 
     this->setRunning(false);
@@ -131,8 +127,9 @@ int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
         throw std::logic_error("Data length exceeds maximum allowed size");
     }
 
-    std::shared_ptr<std::vector<char>> data = std::make_shared<std::vector<char>>(dataLength);
-    std::copy(dataPacket->data, dataPacket->data + dataLength, data->data());
+    std::shared_ptr<std::vector<char>> data = std::make_shared<std::vector<char>>();
+    data->reserve(dataLength);
+    data->insert(data->end(), dataPacket->data, dataPacket->data + dataLength);
     if (dataCallback)
     {
         log_info(std::format("Invoking data callback for messageId: {}", dataPacket->header.messageId));

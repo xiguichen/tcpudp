@@ -37,6 +37,10 @@ bool Client::PrepareVC()
             return false;
         }
 
+        SocketSetTcpNoDelay(tcpSocket, true);
+        SocketSetReceiveBufferSize(tcpSocket, 1024 * 1024);
+        SocketSetSendBufferSize(tcpSocket, 1024 * 1024);
+
         log_info("Connected to server successfully.");
         tcpSockets.push_back(tcpSocket);
     }
@@ -103,9 +107,9 @@ bool Client::PrepareUdpSocket()
 
     // Start receiving data in a loop
 
+    char buffer[2500];
     while (running)
     {
-        char buffer[2500];
         struct sockaddr_in srcAddr{};
         socklen_t srcAddrLen = sizeof(srcAddr);
         ssize_t receivedBytes =

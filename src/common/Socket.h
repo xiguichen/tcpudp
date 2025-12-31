@@ -15,6 +15,7 @@ typedef SOCKADDR sockaddr;
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <netinet/tcp.h>
 typedef int SocketFd;  // Use int type for Linux/macOS
 #endif
 
@@ -78,3 +79,9 @@ enum SocketError {
 void SocketInit();
 
 void SocketClearnup();
+
+int SocketSetTcpNoDelay(SocketFd socketFd, bool noDelay);
+
+int SocketSetSendBufferSize(SocketFd socketFd, int size);
+
+int SocketSetReceiveBufferSize(SocketFd socketFd, int size);

@@ -576,3 +576,23 @@ void SocketClearnup()
 #endif
 }
 
+int SocketSetTcpNoDelay(SocketFd socketFd, bool noDelay)
+{
+#ifdef _WIN32
+    char flag = noDelay ? 1 : 0;
+    return setsockopt(socketFd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+#else
+    int flag = noDelay ? 1 : 0;
+    return setsockopt(socketFd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+#endif
+}
+
+int SocketSetSendBufferSize(SocketFd socketFd, int size)
+{
+    return setsockopt(socketFd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+}
+
+int SocketSetReceiveBufferSize(SocketFd socketFd, int size)
+{
+    return setsockopt(socketFd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+}
