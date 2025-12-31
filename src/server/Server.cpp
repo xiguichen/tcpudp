@@ -66,7 +66,7 @@ void Server::AcceptConnections()
         }
 
 
-        SocketSetTcpNoDelay(clientSocket, true);
+        // SocketSetTcpNoDelay(clientSocket, true);
         SocketSetReceiveBufferSize(clientSocket, 1024 * 1024);
         SocketSetSendBufferSize(clientSocket, 1024 * 1024);
 

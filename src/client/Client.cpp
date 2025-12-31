@@ -37,7 +37,7 @@ bool Client::PrepareVC()
             return false;
         }
 
-        SocketSetTcpNoDelay(tcpSocket, true);
+        // SocketSetTcpNoDelay(tcpSocket, true);
         SocketSetReceiveBufferSize(tcpSocket, 1024 * 1024);
         SocketSetSendBufferSize(tcpSocket, 1024 * 1024);
 
