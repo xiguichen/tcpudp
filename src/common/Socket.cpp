@@ -589,10 +589,18 @@ int SocketSetTcpNoDelay(SocketFd socketFd, bool noDelay)
 
 int SocketSetSendBufferSize(SocketFd socketFd, int size)
 {
+#ifdef _WIN32
+    return setsockopt(socketFd, SOL_SOCKET, SO_SNDBUF, (const char*)&size, sizeof(size));
+#else
     return setsockopt(socketFd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+#endif
 }
 
 int SocketSetReceiveBufferSize(SocketFd socketFd, int size)
 {
+#ifdef _WIN32
+    return setsockopt(socketFd, SOL_SOCKET, SO_RCVBUF, (const char*)&size, sizeof(size));
+#else
     return setsockopt(socketFd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+#endif
 }
