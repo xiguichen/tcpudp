@@ -1,7 +1,7 @@
 #include "PerformanceCounter.h"
-#include "Log.h"
 #include <chrono>
 #include <limits>
+#include <iostream>
 
 PerformanceCounter::PerformanceCounter()
     : minTime(std::numeric_limits<double>::max()), maxTime(std::numeric_limits<double>::lowest()), totalTime(0.0),
@@ -36,7 +36,7 @@ void PerformanceCounter::Exit()
 
     if (elapsedTime > 0.02)
     {
-        log_error(std::format("Issue: PerformanceCounter warning: Elapsed time {:.6f}s exceeds threshold", elapsedTime));
+        std::cout << std::format("Issue: PerformanceCounter warning: Elapsed time {:.6f}s exceeds threshold", elapsedTime) << std::endl;
     }
 
     totalTime += elapsedTime;
@@ -65,7 +65,7 @@ int PerformanceCounter::GetCallCount() const
 
 void PerformanceCounter::Report() const
 {
-    log_info(
+    std::cout <<
         std::format("PerformanceCounter Report: Calls: {}, Min Time: {:.6f}s, Max Time: {:.6f}s, Avg Time: {:.6f}s",
-                    GetCallCount(), GetMinTime(), GetMaxTime(), GetAverageTime()));
+                    GetCallCount(), GetMinTime(), GetMaxTime(), GetAverageTime()) << std::endl;
 }

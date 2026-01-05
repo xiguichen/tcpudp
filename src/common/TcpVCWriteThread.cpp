@@ -1,6 +1,7 @@
 #include "TcpVCWriteThread.h"
 #include "Log.h"
 #include "VcProtocol.h"
+#include "PerformanceCounter.h"
 
 void TcpVCWriteThread::run()
 {
@@ -24,9 +25,9 @@ void TcpVCWriteThread::run()
         }
         VCHeader *header = reinterpret_cast<VCHeader *>(data->data());
         lastMessageId = header->messageId;
-        log_info("Sent message with ID: " + std::to_string(lastMessageId));
+        log_debug("Sent message with ID: " + std::to_string(lastMessageId));
         connection->send(data->data(), data->size());
-        log_info("type: " + std::to_string(static_cast<uint8_t>(header->type)));
+        log_debug("type: " + std::to_string(static_cast<uint8_t>(header->type)));
     }
 
     log_info("TcpVCWriteThread stopped");

@@ -37,9 +37,9 @@ bool Client::PrepareVC()
             return false;
         }
 
-        // SocketSetTcpNoDelay(tcpSocket, true);
-        SocketSetReceiveBufferSize(tcpSocket, 1024 * 1024);
-        SocketSetSendBufferSize(tcpSocket, 1024 * 1024);
+        SocketSetTcpNoDelay(tcpSocket, true);
+        // SocketSetReceiveBufferSize(tcpSocket, 1024 * 1024);
+        // SocketSetSendBufferSize(tcpSocket, 1024 * 1024);
 
         log_info("Connected to server successfully.");
         tcpSockets.push_back(tcpSocket);
