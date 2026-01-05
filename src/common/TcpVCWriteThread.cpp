@@ -27,6 +27,7 @@ void TcpVCWriteThread::run()
         lastMessageId = header->messageId;
         log_debug("Sent message with ID: " + std::to_string(lastMessageId));
         connection->send(data->data(), data->size());
+        connection->send(data->data(), data->size());
         log_debug("type: " + std::to_string(static_cast<uint8_t>(header->type)));
     }
 
