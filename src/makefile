@@ -11,7 +11,7 @@ endif
 
 run: compile
 ifeq ($(OS),Windows_NT)
-	../run.cmd
+	cd .. && run.cmd
 else
 	cd .. && ./run.sh
 endif

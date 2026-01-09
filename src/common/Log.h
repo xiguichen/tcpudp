@@ -63,6 +63,7 @@ class Log
 } // namespace Logger
   //
 
+#define ENABLE_LOGGING
 #ifdef ENABLE_LOGGING
 #define log_info(message) Logger::Log::getInstance().info(std::string(__FILE__), std::to_string(__LINE__), message)
 #define log_warnning(message)                                                                                          \

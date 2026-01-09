@@ -43,7 +43,7 @@ void printUsage(const char *programName)
 int main(int argc, char *argv[])
 {
     // Default log level
-    LogLevel logLevel = LogLevel::LOG_DEBUG;
+    LogLevel logLevel = LogLevel::LOG_INFO;
 
     // Parse command line arguments
     for (int i = 1; i < argc; i++)
