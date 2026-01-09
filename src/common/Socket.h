@@ -85,3 +85,5 @@ int SocketSetTcpNoDelay(SocketFd socketFd, bool noDelay);
 int SocketSetSendBufferSize(SocketFd socketFd, int size);
 
 int SocketSetReceiveBufferSize(SocketFd socketFd, int size);
+
+void SocketReuseAddress(SocketFd socketFd);

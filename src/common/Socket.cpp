@@ -604,3 +604,13 @@ int SocketSetReceiveBufferSize(SocketFd socketFd, int size)
     return setsockopt(socketFd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
 #endif
 }
+
+void SocketReuseAddress(SocketFd socketFd)
+{
+    int opt = 1;
+#ifdef _WIN32
+    setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+#else
+    setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
+}

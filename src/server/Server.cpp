@@ -31,6 +31,7 @@ bool Server::Listen()
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(port);
+    SocketReuseAddress(serverSocket);
     if (SocketBind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
     {
         log_error("Failed to bind socket");
