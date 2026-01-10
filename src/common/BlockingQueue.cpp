@@ -23,24 +23,24 @@ void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data)
 std::shared_ptr<std::vector<char>> BlockingQueue::dequeue()
 {
 
-    log_info(std::format("Wait for queue data , Queue address: {:p}", static_cast<const void *>(this)));
+    log_debug(std::format("Wait for queue data , Queue address: {:p}", static_cast<const void *>(this)));
 
     std::unique_lock<std::mutex> lock(queueMutex);
     // Block until queue is not empty
     queueCondVar.wait(lock, [this] { return !queue.empty() || cancelled; });
     if (cancelled)
     {
-        log_info("Dequeue cancelled");
+        log_debug("Dequeue cancelled");
         return nullptr;
     }
     auto result = queue.front();
     queue.pop();
 
     lock.unlock();
-    log_info(
+    log_debug(
         std::format("Dequeued data of size: {}, Queue address: {:p}", result->size(), static_cast<const void *>(this)));
 
-    log_info(std::format("Queue size after dequeue: {}, Queue address: {:p}", queue.size(),
+    log_debug(std::format("Queue size after dequeue: {}, Queue address: {:p}", queue.size(),
                          static_cast<const void *>(this)));
     return result;
 }

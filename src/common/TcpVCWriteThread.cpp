@@ -16,7 +16,7 @@ void TcpVCWriteThread::run()
 
     while (this->isRunning())
     {
-        log_info("Waiting for data to send...");
+        log_debug("Waiting for data to send...");
         auto data = writeQueue->dequeue();
         if (!data)
         {

@@ -14,7 +14,7 @@ void TcpVirtualChannel::open()
     };
 
     auto disconnectCB = [this](TcpConnectionSp connection) {
-        log_info("TcpVirtualChannel detected a disconnection");
+        log_debug("TcpVirtualChannel detected a disconnection");
         if (this->disconnectCallback) {
             this->disconnectCallback(connection);
         }
@@ -40,7 +40,7 @@ void TcpVirtualChannel::send(const char *data, size_t size)
     {
         auto messageId = this->lastSendMessageId.fetch_add(1);
         auto messageIdNetwork = messageId;
-        log_info(std::format("Sending message with ID: {}", messageId));
+        log_debug(std::format("Sending message with ID: {}", messageId));
         auto dataVec = std::make_shared<std::vector<char>>();
 
         // Data: | 1 byte type | 8 bytes messageId | 2 bytes data length | N bytes data |
@@ -74,34 +74,34 @@ void TcpVirtualChannel::close()
     this->sendQueue->cancelWait();
 
     // Close all the connections and stop threads
-    log_info("Closing TcpVirtualChannel connections");
+    log_debug("Closing TcpVirtualChannel connections");
     for (auto &conn : connections)
     {
         if (conn && conn->isConnected())
         {
-            log_info("Disconnecting a TcpConnection");
+            log_debug("Disconnecting a TcpConnection");
             conn->disconnect();
         }
         else 
         {
-            log_info("TcpConnection already disconnected");
+            log_debug("TcpConnection already disconnected");
         }
     }
 
-    log_info("Closing TcpVirtualChannel");
+    log_debug("Closing TcpVirtualChannel");
     for (auto &thread : readThreads)
     {
         if (thread)
         {
-            log_info("Stopping a read thread");
+            log_debug("Stopping a read thread");
             thread->stop();
-            log_info("Read thread stopped");
+            log_debug("Read thread stopped");
         }
     }
 
-    log_info("All read threads stopped");
+    log_debug("All read threads stopped");
 
-    log_info("Stopping write threads");
+    log_debug("Stopping write threads");
     for (auto &thread : writeThreads)
     {
         if (thread)
@@ -109,12 +109,12 @@ void TcpVirtualChannel::close()
             thread->stop();
         }
     }
-    log_info("All write threads stopped");
+    log_debug("All write threads stopped");
     opened = false;
 }
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {
-    log_info(std::format("Processing received message with ID: {}", messageId));
+    log_debug(std::format("Processing received message with ID: {}", messageId));
     std::lock_guard<std::mutex> lock(receivedDataMutex);
 
     // Check if this is a duplicate message
