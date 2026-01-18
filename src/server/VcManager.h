@@ -1,7 +1,7 @@
 #pragma once
 #include "VirtualChannel.h"
+#include <cstdint>
 #include <map>
-#include <string>
 
 class VcManager
 {
@@ -16,13 +16,13 @@ public:
     VcManager(const VcManager &) = delete;
     VcManager &operator=(const VcManager &) = delete;
 
-    void Add(const std::string &name, VirtualChannelSp vc);
+    void Add(uint32_t clientId, VirtualChannelSp vc);
 
-    void Remove(const std::string &name);
+    void Remove(uint32_t clientId);
 
   private:
     VcManager() = default;
     ~VcManager() = default;
 
-    std::map<std::string, VirtualChannelSp> vcs;
+    std::map<uint32_t, VirtualChannelSp> vcs;
 };

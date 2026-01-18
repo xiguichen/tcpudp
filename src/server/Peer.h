@@ -14,14 +14,14 @@ class Peer
     // default constructor
     Peer() = default;
 
-    Peer(const std::string &ipAddress);
+    Peer(uint32_t clientId);
 
     Peer &operator=(const Peer &other);
 
     // <summary>
-    // Get the IP address of the peers
+    // Get the client ID of the peer
     // </summary>
-    const std::string &GetIpAddress() const;
+    uint32_t GetClientId() const;
 
     // <summary>
     // Add a TCP socket to the peer
@@ -59,7 +59,7 @@ class Peer
     SocketFd GetUdpSocket() const;
 
   private:
-    std::string ipAddress;
+    uint32_t clientId;
     std::vector<SocketFd> sockets;
     SocketFd udpSocket = -1;
     struct sockaddr_in udpAddress;
@@ -70,19 +70,19 @@ class PeerManager
 {
   public:
     // <summary>
-    // Get the peer by IP address
+    // Get the peer by client ID
     // </summary>
-    static Peer *GetPeerByIp(const std::string &ipAddress);
+    static Peer *GetPeerById(uint32_t clientId);
 
     // <summary>
-    // Add a new peer by IP address
+    // Add a new peer by client ID
     // </summary>
-    static void AddPeer(const std::string &ipAddress);
+    static void AddPeer(uint32_t clientId);
 
     // <summary>
-    // Remove a peer by IP address
+    // Remove a peer by client ID
     // </summary>
-    static void RemovePeer(const std::string &ipAddress);
+    static void RemovePeer(uint32_t clientId);
 
     // <summary>
     // Close all sockets and clear all peers
@@ -90,5 +90,5 @@ class PeerManager
     static void CloseAllSockets();
 
   private:
-    static std::unordered_map<std::string, Peer> peers;
+    static std::unordered_map<uint32_t, Peer> peers;
 };

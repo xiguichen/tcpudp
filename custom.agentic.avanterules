@@ -1,0 +1,7 @@
+### Call tools
+
+1. Make sure correct path format are used for different OS
+2. Don't generate too much response about the requirement that you are asked to do, only generate key response that you are actually will do, make sure key things are summarized when you finish the task
+3. To build the project, run: python build.py
+4. Each time after update c/c++/cmake file, build the project to make sure that the change does not introduce compile issue ( The build should be done before you complete all the changes)
+5. Never run python run.py as it runs forever

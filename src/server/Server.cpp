@@ -8,6 +8,7 @@
 #include "VcProtocol.h"
 #include "VirtualChannel.h"
 #include "VirtualChannelFactory.h"
+#include "Protocol.h"
 #include <Log.h>
 #include <format>
 #include <thread>
@@ -78,22 +79,43 @@ void Server::AcceptConnections()
         log_info(std::string(clientIP));
         log_info(std::format("Accepted connection from {}:{}", clientIP, ntohs(clientAddr.sin_port)));
 
-        // Add peer to peer manager
-        PeerManager::AddPeer(clientIP);
+        // Receive client ID from the client immediately after connection
+        MsgBind bindMsg;
+        std::vector<char> bindBuffer(sizeof(MsgBind));
+
+        ssize_t received = RecvTcpData(clientSocket, bindBuffer.data(), bindBuffer.size(), 0);
+        if (received <= 0) {
+            log_error("Failed to receive client ID from client");
+            SocketClose(clientSocket);
+            continue;
+        }
+
+        if (!UvtUtils::ExtractMsgBind(bindBuffer, bindMsg)) {
+            log_error("Failed to extract client ID from received data");
+            SocketClose(clientSocket);
+            continue;
+        }
+
+        uint32_t clientId = bindMsg.clientId;
+        log_info(std::format("Received client ID {} from client {}", clientId, clientIP));
+
+        // Add peer to peer manager using client ID instead of IP
+        PeerManager::AddPeer(clientId);
 
         // Get the peer and add the socket
-        Peer *peer = PeerManager::GetPeerByIp(clientIP);
+        Peer *peer = PeerManager::GetPeerById(clientId);
         if (peer)
         {
             peer->AddSocket(clientSocket);
         }
         else
         {
-            log_error(std::format("Failed to find peer for IP {}", clientIP));
+            log_error(std::format("Failed to find peer for client ID {}", clientId));
             SocketClose(clientSocket);
+            continue;
         }
 
-        log_info(std::format("Added socket to peer {}. Total sockets: {}", clientIP, peer->GetSocketCount()));
+        log_info(std::format("Added socket to peer with client ID {}. Total sockets: {}", clientId, peer->GetSocketCount()));
 
         // check if we have enough sockets for this peer to create the virtual channel
         if (peer->GetSocketCount() == VC_TCP_CONNECTIONS)
@@ -103,9 +125,9 @@ void Server::AcceptConnections()
             std::vector<SocketFd> fds = peer->GetSockets();
             VirtualChannelSp vc = VirtualChannelFactory::create(fds);
 
-            // Add the virtual channel to the manager
-            VcManager::getInstance().Add(clientIP, vc);
-            log_info(std::format("Created virtual channel for peer {}", clientIP));
+            // Add the virtual channel to the manager using client ID
+            VcManager::getInstance().Add(clientId, vc);
+            log_info(std::format("Created virtual channel for peer with client ID {}", clientId));
 
             // Create a UDP socket for this peer
             SocketFd udpSocket = SocketCreate(AF_INET, SOCK_DGRAM, 0);
@@ -139,7 +161,7 @@ void Server::AcceptConnections()
                 }
             });
 
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientIP, &peer, vc](TcpConnectionSp connection) {
+            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, &peer, vc](TcpConnectionSp connection) {
                 peer->RemoveAllSockets();
                 vc->close();
             });

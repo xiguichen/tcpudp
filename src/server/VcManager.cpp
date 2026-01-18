@@ -1,12 +1,12 @@
 #include "VcManager.h"
 
-void VcManager::Add(const std::string &name, VirtualChannelSp vc)
+void VcManager::Add(uint32_t clientId, VirtualChannelSp vc)
 {
-    vcs[name] = vc;
+    vcs[clientId] = vc;
 }
 
-void VcManager::Remove(const std::string &name)
+void VcManager::Remove(uint32_t clientId)
 {
-    vcs.erase(name);
+    vcs.erase(clientId);
 }
 

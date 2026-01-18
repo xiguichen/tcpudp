@@ -20,6 +20,8 @@ class ClientConfiguration
 
     const std::uint16_t getLocalHostUdpPort() const;
 
+    uint32_t getClientId() const;
+
   private:
     ClientConfiguration() = default;
 
@@ -29,4 +31,5 @@ class ClientConfiguration
     const char *peerAddress = "peerAddress";
     const char *peerTcpPort = "peerTcpPort";
     const char *localHostUdpPort = "localHostUdpPort";
+    const char *clientIdKey = "clientId";
 };

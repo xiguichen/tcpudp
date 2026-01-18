@@ -3,6 +3,7 @@
 #include "ClientConfiguration.h"
 #include "VcProtocol.h"
 #include "VirtualChannelFactory.h"
+#include "Protocol.h"
 #include <thread>
 #include <format>
 
@@ -40,6 +41,22 @@ bool Client::PrepareVC()
         SocketSetTcpNoDelay(tcpSocket, true);
         // SocketSetReceiveBufferSize(tcpSocket, 1024 * 1024);
         // SocketSetSendBufferSize(tcpSocket, 1024 * 1024);
+
+        // Send client ID to server immediately after connecting
+        MsgBind bindMsg;
+        bindMsg.clientId = ClientConfiguration::getInstance()->getClientId();
+
+        std::vector<char> bindBuffer;
+        UvtUtils::AppendMsgBind(bindMsg, bindBuffer);
+
+        if (SendTcpData(tcpSocket, bindBuffer.data(), bindBuffer.size(), 0) <= 0)
+        {
+            log_error("Failed to send client ID to server");
+            SocketClose(tcpSocket);
+            return false;
+        }
+
+        log_info(std::format("Sent client ID {} to server", bindMsg.clientId));
 
         log_info("Connected to server successfully.");
         tcpSockets.push_back(tcpSocket);

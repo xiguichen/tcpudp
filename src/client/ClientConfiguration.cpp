@@ -76,3 +76,19 @@ const std::uint16_t ClientConfiguration::getLocalHostUdpPort() const
     return 0;
 }
 
+uint32_t ClientConfiguration::getClientId() const
+{
+    if (configJson.is_null())
+    {
+        const_cast<ClientConfiguration *>(this)->LoadJsonConfig();
+    }
+
+    if (configJson[clientIdKey].is_number_unsigned())
+    {
+        return configJson[clientIdKey].get<uint32_t>();
+    }
+
+    log_error("Invalid or missing 'clientId' in config.json");
+    return 0;
+}
+

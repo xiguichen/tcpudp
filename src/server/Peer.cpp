@@ -2,10 +2,23 @@
 #include "Log.h"
 #include <format>
 
-std::unordered_map<std::string, Peer> PeerManager::peers;
-const std::string &Peer::GetIpAddress() const
+std::unordered_map<uint32_t, Peer> PeerManager::peers;
+
+uint32_t Peer::GetClientId() const
 {
-    return ipAddress;
+    return clientId;
+}
+
+Peer &Peer::operator=(const Peer &other)
+{
+    if (this != &other)
+    {
+        this->clientId = other.clientId;
+        this->sockets = other.sockets;
+        this->udpSocket = other.udpSocket;
+        this->udpAddress = other.udpAddress;
+    }
+    return *this;
 }
 
 void Peer::AddSocket(SocketFd socket)
@@ -43,31 +56,34 @@ SocketFd Peer::GetUdpSocket() const
 void Peer::RemoveAllSockets()
 {
     std::lock_guard<std::mutex> lock(socketMutex);
-    log_info(std::format("Removing all sockets from peer {}", ipAddress));
+    log_info(std::format("Removing all sockets from peer with client ID {}", clientId));
     sockets.clear();
 }
 
-Peer *PeerManager::GetPeerByIp(const std::string &ipAddress)
+Peer *PeerManager::GetPeerById(uint32_t clientId)
 {
-    auto it = peers.find(ipAddress);
+    auto it = peers.find(clientId);
     if (it != peers.end())
     {
         return &it->second;
     }
     return nullptr;
 }
-void PeerManager::AddPeer(const std::string &ipAddress)
+
+void PeerManager::AddPeer(uint32_t clientId)
 {
-    if (peers.find(ipAddress) == peers.end())
+    if (peers.find(clientId) == peers.end())
     {
-        Peer p = Peer(ipAddress);
-        peers[ipAddress] = p;
+        Peer p = Peer(clientId);
+        peers[clientId] = p;
     }
 }
-void PeerManager::RemovePeer(const std::string &ipAddress)
+
+void PeerManager::RemovePeer(uint32_t clientId)
 {
-    peers.erase(ipAddress);
+    peers.erase(clientId);
 }
+
 void PeerManager::CloseAllSockets()
 {
     for (auto &pair : peers)
@@ -75,27 +91,15 @@ void PeerManager::CloseAllSockets()
         Peer &peer = pair.second;
         for (SocketFd socket : peer.GetSockets())
         {
-            log_info(std::format("Closing socket {} for peer {}", socket, peer.GetIpAddress()));
+            log_info(std::format("Closing socket {} for peer with client ID {}", socket, peer.GetClientId()));
             SocketClose(socket);
         }
         SocketClose(peer.GetUdpSocket());
     }
     peers.clear();
 }
-Peer::Peer(const std::string &ipAddress) : ipAddress(ipAddress)
-{
-}
 
-Peer &Peer::operator=(const Peer &other)
+Peer::Peer(uint32_t clientId) : clientId(clientId)
 {
-    if (this != &other)
-    {
-        std::lock_guard<std::mutex> lock(socketMutex);
-        ipAddress = other.ipAddress;
-        sockets = other.sockets;
-        udpSocket = other.udpSocket;
-        udpAddress = other.udpAddress;
-    }
-    return *this;
 }
 
