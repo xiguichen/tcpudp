@@ -14,10 +14,20 @@ void TcpVirtualChannel::open()
     };
 
     auto disconnectCB = [this](TcpConnectionSp connection) {
-        log_debug("TcpVirtualChannel detected a disconnection");
-        if (this->disconnectCallback) {
-            this->disconnectCallback(connection);
-        }
+            // Mutex to ensure only one disconnect routine runs at a time
+            std::lock_guard<std::mutex> lock(disconnectMutex);
+        
+            log_debug("Terminating all connections due to disconnect event.");
+        
+            for (auto &connection : connections) {
+                if (connection && connection->isConnected()) {
+                    connection->disconnect();
+                    log_debug("Connection terminated.");
+                }
+            }
+        
+            // Mark the virtual channel as closed
+            opened = false;
     };
 
     for (int i = 0; i < this->connections.size(); ++i)

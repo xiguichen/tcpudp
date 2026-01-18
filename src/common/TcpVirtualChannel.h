@@ -41,7 +41,11 @@ class TcpVirtualChannel : public VirtualChannel
     BlockingQueueSp sendQueue;
     std::map<uint64_t, std::shared_ptr<std::vector<char>>> receivedDataMap;
     std::mutex receivedDataMutex;
+    // Disconnect callback to manage disconnections across the virtual channel
     std::function<void(TcpConnectionSp connection)> disconnectCallback;
+
+    // Mutex to ensure thread safety for disconnection handling
+    std::mutex disconnectMutex;
 
     bool opened = false;
     std::atomic<long> lastSendMessageId = 0;
