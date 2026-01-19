@@ -1,6 +1,7 @@
 #include "Server.h"
-#include "ServerConfiguration.h"
 #include "Peer.h"
+#include "Protocol.h"
+#include "ServerConfiguration.h"
 #include "Socket.h"
 #include "TcpConnection.h"
 #include "TcpVirtualChannel.h"
@@ -8,11 +9,10 @@
 #include "VcProtocol.h"
 #include "VirtualChannel.h"
 #include "VirtualChannelFactory.h"
-#include "Protocol.h"
 #include <Log.h>
+#include <cstring>
 #include <format>
 #include <thread>
-#include <cstring>
 
 bool Server::Listen()
 {
@@ -67,13 +67,12 @@ void Server::AcceptConnections()
             continue;
         }
 
-
         SocketSetTcpNoDelay(clientSocket, true);
         // SocketSetReceiveBufferSize(clientSocket, 1024 * 1024);
         // SocketSetSendBufferSize(clientSocket, 1024 * 1024);
 
         // Log client connection
-        char clientIP[INET_ADDRSTRLEN+1];
+        char clientIP[INET_ADDRSTRLEN + 1];
         memset(clientIP, 0, sizeof(clientIP));
         inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIP, INET_ADDRSTRLEN);
         log_info(std::string(clientIP));
@@ -84,13 +83,15 @@ void Server::AcceptConnections()
         std::vector<char> bindBuffer(sizeof(MsgBind));
 
         ssize_t received = RecvTcpData(clientSocket, bindBuffer.data(), bindBuffer.size(), 0);
-        if (received <= 0) {
+        if (received <= 0)
+        {
             log_error("Failed to receive client ID from client");
             SocketClose(clientSocket);
             continue;
         }
 
-        if (!UvtUtils::ExtractMsgBind(bindBuffer, bindMsg)) {
+        if (!UvtUtils::ExtractMsgBind(bindBuffer, bindMsg))
+        {
             log_error("Failed to extract client ID from received data");
             SocketClose(clientSocket);
             continue;
@@ -115,7 +116,8 @@ void Server::AcceptConnections()
             continue;
         }
 
-        log_info(std::format("Added socket to peer with client ID {}. Total sockets: {}", clientId, peer->GetSocketCount()));
+        log_info(
+            std::format("Added socket to peer with client ID {}. Total sockets: {}", clientId, peer->GetSocketCount()));
 
         // check if we have enough sockets for this peer to create the virtual channel
         if (peer->GetSocketCount() == VC_TCP_CONNECTIONS)
@@ -157,13 +159,14 @@ void Server::AcceptConnections()
                 }
                 else
                 {
-                    log_info(std::format("Sent {} bytes to UDP socket", sentBytes));
+                    log_debug(std::format("Sent {} bytes to UDP socket", sentBytes));
                 }
             });
 
             ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, &peer, vc](TcpConnectionSp connection) {
                 peer->RemoveAllSockets();
                 vc->close();
+                VcManager::getInstance().Remove(clientId); // Remove all peers of the same client ID
             });
 
             // start a new thread to receive data from the UDP socket
@@ -184,7 +187,7 @@ void Server::AcceptConnections()
                     }
                     else
                     {
-                        log_info(std::format("Received {} bytes from UDP socket", receivedBytes));
+                        log_debug(std::format("Received {} bytes from UDP socket", receivedBytes));
                         vc->send(buffer, receivedBytes);
                     }
                 }

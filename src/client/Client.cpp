@@ -73,11 +73,11 @@ bool Client::PrepareVC()
 
     // Set up receive callback
     vc->setReceiveCallback([this](const char *data, size_t size) {
-        log_info(std::format("Virtual channel received {} bytes of data", size));
+        log_debug(std::format("Virtual channel received {} bytes of data", size));
 
         auto remoteAddr = this->remoteUdpAddr;
 
-        log_info(std::format("Sending data to UDP address: {}:{}", inet_ntoa(remoteAddr.sin_addr), ntohs(remoteAddr.sin_port)));
+        log_debug(std::format("Sending data to UDP address: {}:{}", inet_ntoa(remoteAddr.sin_addr), ntohs(remoteAddr.sin_port)));
 
         // send data to UDP socket
         SendUdpData(udpSocket, data, size, 0, (struct sockaddr *)&remoteAddr, sizeof(remoteUdpAddr));
