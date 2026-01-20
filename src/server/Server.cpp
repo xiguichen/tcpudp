@@ -163,7 +163,7 @@ void Server::AcceptConnections()
                 }
             });
 
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, &peer, vc](TcpConnectionSp connection) {
+            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, &peer, vc]() {
                 peer->RemoveAllSockets();
                 vc->close();
                 VcManager::getInstance().Remove(clientId); // Remove all peers of the same client ID

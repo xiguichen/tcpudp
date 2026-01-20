@@ -1,0 +1,27 @@
+## Key Information about the Project
+
+1. **Project Architecture**:
+   - The project is structured into three key modules:
+     - `client`: Handles client-side operations, virtual channel preparation (TCP), and UDP communication loops.
+     - `server`: Implements server-side logic including Peer management and handling connections.
+     - `common`: Provides shared utilities like logging, protocol definitions, and virtual channel abstractions.
+
+2. **Build System**:
+   - It uses CMake for managing dependencies and building the project modules (`client`, `server`, `common`).
+   - Libraries and modules are organized with `COMMON`, supporting modular development.
+
+3. **Communication Protocol**:
+   - Data communication leverages TCP for virtual channels and UDP for secondary functions.
+
+4. **Initialization and Configurations**:
+   - Clients initialize using centralized configurations from `ClientConfiguration`; similar setups are mirrored in `ServerConfiguration`.
+   - Socket creation and handling follow standard practices with win32 and POSIX flexibility.
+
+5. **Logging and Debugging**:
+   - A dynamic log management level (DEBUG, INFO) assists troubleshooting.
+
+6. **Test Binder Overview**:
+   - Unit tests reside under `/src/tests`. Sample mocks include `Protocol_test scenarios.`
+
+By revising the file minimally cutting repeating through micro Analyze blocks!
+

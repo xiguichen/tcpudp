@@ -25,9 +25,14 @@ class VirtualChannel
     // Set the receive callback
     void setReceiveCallback(std::function<void(const char *data, size_t size)> callback);
 
+    // Set the disconnect callback (VC-wide disconnect notification)
+    void setDisconnectCallback(std::function<void()> callback) { disconnectCallback = std::move(callback); }
+
   protected:
     // OnReceiveCallback
     std::function<void(const char *data, size_t size)> receiveCallback = nullptr;
+    // OnDisconnectCallback
+    std::function<void()> disconnectCallback = nullptr;
 };
 
 typedef std::shared_ptr<VirtualChannel> VirtualChannelSp;

@@ -13,21 +13,43 @@ void TcpVirtualChannel::open()
         this->processReceivedData(messageId, data);
     };
 
-    auto disconnectCB = [this](TcpConnectionSp connection) {
-            // Mutex to ensure only one disconnect routine runs at a time
-            std::lock_guard<std::mutex> lock(disconnectMutex);
-        
-            log_debug("Terminating all connections due to disconnect event.");
-        
-            for (auto &connection : connections) {
-                if (connection && connection->isConnected()) {
-                    connection->disconnect();
-                    log_debug("Connection terminated.");
-                }
+    auto disconnectCB = [this](TcpConnectionSp /*unused*/) {
+        // Ensure only one disconnect routine runs at a time
+        std::lock_guard<std::mutex> lock(disconnectMutex);
+
+        log_debug("Disconnect detected, closing the entire virtual channel.");
+
+        // Mark the virtual channel as closed to prevent further sends
+        opened = false;
+
+        // Cancel any waiting operations on the send queue
+        if (sendQueue) {
+            sendQueue->cancelWait();
+        }
+
+        // Close all the connections and stop threads
+        for (auto &conn : connections) {
+            if (conn && conn->isConnected()) {
+                conn->disconnect();
             }
-        
-            // Mark the virtual channel as closed
-            opened = false;
+        }
+
+        // Stop threads safely
+        for (auto &thread : readThreads) {
+            if (thread) {
+                thread->stop();
+            }
+        }
+        for (auto &thread : writeThreads) {
+            if (thread) {
+                thread->stop();
+            }
+        }
+
+        // Notify upper layer if a VC-level disconnect callback is set
+        if (this->disconnectCallback) {
+            this->disconnectCallback();
+        }
     };
 
     for (int i = 0; i < this->connections.size(); ++i)
@@ -163,8 +185,4 @@ TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
     sendQueue = std::make_shared<BlockingQueue>();
 }
 
-void TcpVirtualChannel::setDisconnectCallback(std::function<void(TcpConnectionSp connection)> callback)
-{
-    this->disconnectCallback = callback;
-}
 

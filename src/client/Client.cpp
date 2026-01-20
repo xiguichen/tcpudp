@@ -83,6 +83,12 @@ bool Client::PrepareVC()
         SendUdpData(udpSocket, data, size, 0, (struct sockaddr *)&remoteAddr, sizeof(remoteUdpAddr));
     });
 
+    // Setup disconnect callback
+    vc->setDisconnectCallback([this]() {
+        log_warnning("Virtual channel disconnected. Performing cleanup.");
+        this->Stop();
+    });
+
     vc->open();
 
     return true;
