@@ -18,9 +18,9 @@ void TcpVCWriteThread::run()
     {
         log_debug("Waiting for data to send...");
         auto data = writeQueue->dequeue();
-        if (!data)
+        if (!data && !this->isRunning())
         {
-            log_error("Failed to dequeue data for sending");
+            log_info("Thread exiting on stop signal...");
             break;
         }
         VCHeader *header = reinterpret_cast<VCHeader *>(data->data());

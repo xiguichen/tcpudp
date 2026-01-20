@@ -10,11 +10,9 @@ void TcpConnection::disconnect()
         socketFd = -1;
     }
     connected = false;
+    log_debug("Resetting BlockingQueue post-disconnect.");
+    if (disconnectCallback) { disconnectCallback(); } // Notify virtual channels
     log_info("TCP connection closed");
-}
-bool TcpConnection::isConnected() const
-{
-    return connected;
 }
 
 size_t TcpConnection::receive(char *buffer, size_t bufferSize)

@@ -28,8 +28,15 @@ class TcpConnection
     // Method to receive data from the TCP connection
     size_t receive(char *buffer, size_t bufferSize);
 
+    // Set callback for disconnect events
+    void setDisconnectCallback(std::function<void()> callback);
+
+  private:
+public:
+    std::function<void()> disconnectCallback;
+
     // Method to check if the connection is established
-    bool isConnected() const;
+    bool isConnected() const { return connected; };
 
     // Method to close the TCP connection
     void disconnect();
