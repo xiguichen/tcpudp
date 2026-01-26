@@ -1,4 +1,5 @@
 #include "StopableThread.h"
+#include <thread>
 #include "Log.h"
 #include <format>
 
@@ -9,16 +10,26 @@ void StopableThread::stop()
     log_info("Stopping thread...");
     this->setRunning(false);
 
+    // Avoid joining the current thread to prevent deadlocks.
     if (_thread.joinable())
     {
-        log_info("Waiting for thread to join...");
-        try
+        // If called from a different thread, join to ensure clean termination
+        if (_thread.get_id() != std::this_thread::get_id())
         {
-            _thread.join();
+            log_info("Waiting for thread to join...");
+            try
+            {
+                _thread.join();
+            }
+            catch (const std::exception &e)
+            {
+                log_error(std::format("Exception while joining thread: {}", e.what()));
+            }
         }
-        catch (const std::exception &e)
+        else
         {
-            log_error(std::format("Exception while joining thread: {}", e.what()));
+            // Called from the thread itself; do not join
+            log_debug("Stop called from thread itself; skipping join to avoid deadlock");
         }
     }
     log_info("Thread stopped.");
