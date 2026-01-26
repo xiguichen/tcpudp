@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Socket.h"
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -36,7 +37,7 @@ public:
     std::function<void()> disconnectCallback;
 
     // Method to check if the connection is established
-    bool isConnected() const { return connected; };
+    bool isConnected() const { return connected.load(); };
 
     // Method to close the TCP connection
     void disconnect();
@@ -48,7 +49,7 @@ public:
     void setOnSendTimeoutCallback(const std::function<void(char *buffer, size_t size)> &callback);
 
   private:
-    bool connected = false;                                                 // Connection state
+    std::atomic<bool> connected{false};                                     // Connection state (atomic for thread safety)
     SocketFd socketFd = -1;                                                 // Socket file descriptor
     std::function<void(char *buffer, size_t size)> onSendTimeout = nullptr; // Callback for handle send timeout
 };

@@ -40,17 +40,17 @@ void StopableThread::start()
 }
 bool StopableThread::isRunning()
 {
-    return running;
+    return running.load();
 }
-void StopableThread::setRunning(bool running)
+void StopableThread::setRunning(bool value)
 {
-    this->running = running;
+    this->running.store(value);
 }
 
 StopableThread::~StopableThread()
 {
     // Ensure the thread is stopped before destruction
-    if (this->running)
+    if (this->running.load())
     {
         stop();
     }

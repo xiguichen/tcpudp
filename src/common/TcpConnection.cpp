@@ -1,15 +1,26 @@
 #include "TcpConnection.h"
 #include "Log.h"
 #include "PerformanceCounter.h"
+#include <mutex>
+
+// Mutex to protect disconnect operations
+static std::mutex disconnectMutex;
 
 void TcpConnection::disconnect()
 {
+    std::lock_guard<std::mutex> lock(disconnectMutex);
+    
+    // Check if already disconnected
+    if (!connected.load()) {
+        return;
+    }
+    
     if (socketFd != -1)
     {
         SocketClose(socketFd);
         socketFd = -1;
     }
-    connected = false;
+    connected.store(false);
     log_debug("Resetting BlockingQueue post-disconnect.");
     if (disconnectCallback) { disconnectCallback(); } // Notify virtual channels
     log_info("TCP connection closed");
@@ -17,7 +28,7 @@ void TcpConnection::disconnect()
 
 size_t TcpConnection::receive(char *buffer, size_t bufferSize)
 {
-    if (connected && socketFd != -1)
+    if (connected.load() && socketFd != -1)
     {
         auto bytesReceived = RecvTcpData(socketFd, buffer, bufferSize, 0);
         if (bytesReceived == -1)
@@ -43,7 +54,7 @@ size_t TcpConnection::receive(char *buffer, size_t bufferSize)
 
 void TcpConnection::send(const char *data, size_t size)
 {
-    if (connected && socketFd != -1)
+    if (connected.load() && socketFd != -1)
     {
         auto bytesSent = SendTcpData(socketFd, data, size, 0);
         if (bytesSent == -1)

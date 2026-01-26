@@ -14,40 +14,54 @@ void TcpVirtualChannel::open()
     };
 
     auto disconnectCB = [this](TcpConnectionSp /*unused*/) {
-        // Ensure only one disconnect routine runs at a time
-        std::lock_guard<std::mutex> lock(disconnectMutex);
+        // Use a flag to track if we should notify the upper layer
+        bool shouldNotify = false;
+        
+        {
+            // Ensure only one disconnect routine runs at a time
+            std::lock_guard<std::mutex> lock(disconnectMutex);
 
-        log_debug("Disconnect detected, closing the entire virtual channel.");
+            // Early exit if already closed to prevent redundant work
+            if (!opened) {
+                log_debug("Disconnect callback called but VC already closed, skipping.");
+                return;
+            }
 
-        // Mark the virtual channel as closed to prevent further sends
-        opened = false;
+            log_debug("Disconnect detected, closing the entire virtual channel.");
 
-        // Cancel any waiting operations on the send queue
-        if (sendQueue) {
-            sendQueue->cancelWait();
-        }
+            // Mark the virtual channel as closed to prevent further sends
+            opened = false;
+            shouldNotify = (this->disconnectCallback != nullptr);
 
-        // Close all the connections and stop threads
-        for (auto &conn : connections) {
-            if (conn && conn->isConnected()) {
-                conn->disconnect();
+            // Cancel any waiting operations on the send queue
+            if (sendQueue) {
+                sendQueue->cancelWait();
+            }
+
+            // Close all the connections first
+            for (auto &conn : connections) {
+                if (conn && conn->isConnected()) {
+                    conn->disconnect();
+                }
+            }
+
+            // Set running to false for all threads without joining
+            // This allows threads to exit gracefully without deadlock
+            for (auto &thread : readThreads) {
+                if (thread) {
+                    thread->setRunning(false);
+                }
+            }
+            for (auto &thread : writeThreads) {
+                if (thread) {
+                    thread->setRunning(false);
+                }
             }
         }
+        // Mutex released here - now other threads can proceed and exit
 
-        // Stop threads safely
-        for (auto &thread : readThreads) {
-            if (thread) {
-                thread->stop();
-            }
-        }
-        for (auto &thread : writeThreads) {
-            if (thread) {
-                thread->stop();
-            }
-        }
-
-        // Notify upper layer if a VC-level disconnect callback is set
-        if (this->disconnectCallback) {
+        // Notify upper layer outside the lock to avoid potential deadlocks
+        if (shouldNotify && this->disconnectCallback) {
             this->disconnectCallback();
         }
     };
