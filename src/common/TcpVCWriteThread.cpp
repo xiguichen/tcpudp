@@ -18,7 +18,14 @@ void TcpVCWriteThread::run()
     {
         log_debug("Waiting for data to send...");
         auto data = writeQueue->dequeue();
-        if (!data && !this->isRunning())
+        // Check for nullptr first - queue may have been cancelled
+        if (!data)
+        {
+            log_info("Thread exiting on null data (queue cancelled or stopped)...");
+            break;
+        }
+        // Also check if we should stop running
+        if (!this->isRunning())
         {
             log_info("Thread exiting on stop signal...");
             break;
