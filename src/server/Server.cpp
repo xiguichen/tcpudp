@@ -163,13 +163,13 @@ void Server::AcceptConnections()
                 }
             });
 
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, peer, vc]() {
+            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, peer]() {
                 // Remove VC from manager only if it exists to avoid double-removal
                 if (VcManager::getInstance().Exists(clientId)) {
                     VcManager::getInstance().Remove(clientId);
                 }
                 peer->RemoveAllSockets();
-                vc->close();
+                // Note: vc->close() is already called by TcpVirtualChannel's internal disconnect handler
             });
 
             // start a new thread to receive data from the UDP socket
