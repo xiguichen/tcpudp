@@ -26,8 +26,12 @@ void TcpVCWriteThread::run()
         VCHeader *header = reinterpret_cast<VCHeader *>(data->data());
         lastMessageId = header->messageId;
         log_debug("Sent message with ID: " + std::to_string(lastMessageId));
-        connection->send(data->data(), data->size());
-        connection->send(data->data(), data->size());
+        // Only send if the underlying connection is still active
+        if (this->connection && this->connection->isConnected()) {
+            connection->send(data->data(), data->size());
+        } else {
+            log_debug("Dropping write: connection not active");
+        }
         log_debug("type: " + std::to_string(static_cast<uint8_t>(header->type)));
     }
 

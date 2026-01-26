@@ -167,6 +167,9 @@ void Server::AcceptConnections()
                 peer->RemoveAllSockets();
                 vc->close();
                 VcManager::getInstance().Remove(clientId); // Remove all peers of the same client ID
+                // Also remove the VC from the manager to avoid keeping references to a
+                // closed/terminated channel for this client
+                VcManager::getInstance().Remove(clientId);
             });
 
             // start a new thread to receive data from the UDP socket
