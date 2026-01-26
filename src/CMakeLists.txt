@@ -17,10 +17,18 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
 
-# Debug flags for better GDB debugging
+# Debug flags for better debugging
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0 -fno-omit-frame-pointer")
-  message(STATUS "Building in Debug mode with full debug symbols")
+  if(MSVC)
+    # MSVC debug flags
+    add_compile_options(/Zi /Od /RTC1)
+    add_link_options(/DEBUG)
+    message(STATUS "Building in Debug mode with MSVC debug symbols")
+  else()
+    # GCC/Clang debug flags
+    add_compile_options(-g3 -O0 -fno-omit-frame-pointer)
+    message(STATUS "Building in Debug mode with full debug symbols")
+  endif()
 endif()
 
 add_subdirectory(common)
