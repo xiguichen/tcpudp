@@ -143,7 +143,10 @@ TEST_F(TcpVirtualChannelTest, SendRecvTest)
     // server thread to wait for callback
     std::thread serverThread([&callbackCalled, &callbackMutex, &callbackCondition]() {
         std::unique_lock<std::mutex> lock(callbackMutex);
-        callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
+        if (!callbackCondition.wait_for(lock, std::chrono::seconds(5), [&callbackCalled]() { return callbackCalled.load(); })) {
+            log_info("Timeout waiting for callback signal");
+            return; // Timeout prevents indefinite blocking
+        }
     });
 
     // client sends data
@@ -267,6 +270,7 @@ TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
             callbackCalled = true;
         }
         callbackCondition.notify_one();
+        std::cout << "Callback called for message " << callCount << std::endl;
     };
     serverChannel->setReceiveCallback(recvCallback);
     serverChannel->open();
@@ -279,7 +283,7 @@ TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
             std::unique_lock<std::mutex> lock(callbackMutex);
             callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
             callbackCalled = false;
-        }
+    }
     });
 
     // Simulate out-of-order message reception
