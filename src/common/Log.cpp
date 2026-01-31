@@ -15,7 +15,7 @@ Log &Log::getInstance()
 
 void Log::setLogFile(const std::string &filename)
 {
-    std::lock_guard<std::mutex> lock(logMutex);
+    // std::lock_guard<std::mutex> lock(logMutex); // Removed lock for performance optimization
     if (logFile.is_open())
     {
         logFile.close();
@@ -25,8 +25,7 @@ void Log::setLogFile(const std::string &filename)
 
 void Log::setLogLevel(LogLevel level)
 {
-    std::lock_guard<std::mutex> lock(logMutex);
-    currentLogLevel = level;
+    currentLogLevel = level; // Simplified: Assume this is only set at initialization.
 }
 
 void Log::log(LogLevel level, const std::string &message)
@@ -35,7 +34,6 @@ void Log::log(LogLevel level, const std::string &message)
     {
         return;
     }
-    std::lock_guard<std::mutex> lock(logMutex);
 
     // Get current timestamp with milliseconds
     auto now = std::chrono::system_clock::now();
@@ -52,13 +50,18 @@ void Log::log(LogLevel level, const std::string &message)
     // Format the log message with timestamp
     std::string formattedMessage = std::format("{} [{}] {}", timestamp, getLogLevelString(level), message);
 
+    thread_local static std::stringstream threadLocalBuffer;
+    threadLocalBuffer << formattedMessage << std::endl;
+
     if (logFile.is_open())
     {
-        logFile << formattedMessage << std::endl;
+        logFile << threadLocalBuffer.str();
+        threadLocalBuffer.str(""); // Clear the buffer
     }
     else
     {
-        std::cout << formattedMessage << std::endl;
+        std::cout << threadLocalBuffer.str();
+        threadLocalBuffer.str(""); // Clear the buffer
     }
 }
 

@@ -1,6 +1,15 @@
 import os
 import subprocess
 
+def ensure_build_directory():
+    build_dir = "Build"
+    if not os.path.exists(build_dir):
+        try:
+            os.makedirs(build_dir)
+            print(f"Created directory: {build_dir}")
+        except Exception as e:
+            print(f"Could not create {build_dir}: {e}")
+
 def compile_project():
     # Change directory
     try:
@@ -22,4 +31,5 @@ def compile_project():
         print(f"An error occurred: {e}")
 
 # Call the function
+ensure_build_directory()
 compile_project()

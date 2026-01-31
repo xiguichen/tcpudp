@@ -3,10 +3,10 @@ import subprocess
 
 def main():
     # Change directory to 'build/tests'
-    os.chdir("build\\tests")
+    os.chdir(os.path.join("build", "tests"))
 
     # Execute the CommonTest binary
-    result = subprocess.run(["CommonTest.exe"], shell=True)
+    result = subprocess.run(["./CommonTest" if os.name != 'nt' else "CommonTest.exe"], shell=True)
 
     # Check the return code
     if result.returncode == 0:

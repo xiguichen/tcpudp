@@ -3,6 +3,8 @@
 #include "TcpVirtualChannel.h"
 #include <condition_variable>
 #include <gtest/gtest.h>
+#include <cerrno>
+#include <cstring>
 
 // Test fixture for TcpVirtualChannel
 class TcpVirtualChannelTest : public ::testing::Test
@@ -14,7 +16,7 @@ class TcpVirtualChannelTest : public ::testing::Test
     SocketFd clientSocket;
     SocketFd serverAcceptedSocket;
     const char *serverAddrStr = "127.0.0.1";
-    int serverPort = 10000;
+    int serverPort = 0;
     ;
     std::mutex serverMutex;
     std::condition_variable serverCondition;
@@ -38,14 +40,39 @@ class TcpVirtualChannelTest : public ::testing::Test
 
     void SetupServerSocket()
     {
-        std::cout << "Setting up server socket..." << std::endl;
+                    std::cout << "[DEBUG] Starting: Setting up server socket..." << std::endl;
         serverSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
-        sockaddr_in serverAddr;
+        if (serverSocket < 0) {
+        std::cout << "Failed to create server socket." << std::endl;
+            return;
+        }
+        SocketReuseAddress(serverSocket);
+        sockaddr_in serverAddr{};
+    #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+        serverAddr.sin_len = sizeof(serverAddr);
+    #endif
         serverAddr.sin_family = AF_INET;
-        serverAddr.sin_addr.s_addr = INADDR_ANY;
+        serverAddr.sin_addr.s_addr = inet_addr(serverAddrStr);
         serverAddr.sin_port = htons(serverPort);
         auto result = SocketBind(serverSocket, (sockaddr *)&serverAddr, sizeof(serverAddr));
-        ASSERT_EQ(result, 0);
+        if (result != 0)
+        {
+            std::cout << "SocketBind failed: errno=" << errno << " (" << std::strerror(errno) << ")" << std::endl;
+            {
+                std::unique_lock<std::mutex> lock(serverMutex);
+                serverReady = true;
+                serverCondition.notify_all();
+            }
+            ASSERT_EQ(result, 0);
+            return;
+        }
+
+        sockaddr_in boundAddr;
+        socklen_t boundAddrLen = sizeof(boundAddr);
+        if (getsockname(serverSocket, (sockaddr *)&boundAddr, &boundAddrLen) == 0)
+        {
+            serverPort = ntohs(boundAddr.sin_port);
+        }
 
         std::cout << "Server listening on port " << serverPort << "..." << std::endl;
         SocketListen(serverSocket, 1);
@@ -58,7 +85,7 @@ class TcpVirtualChannelTest : public ::testing::Test
         }
 
         // Accept a connection
-        sockaddr_in clientAddr;
+        sockaddr_in clientAddr{};
         socklen_t clientAddrLen = sizeof(clientAddr);
 
         std::cout << "Server waiting to accept connection..." << std::endl;
@@ -81,7 +108,10 @@ class TcpVirtualChannelTest : public ::testing::Test
         }
 
         clientSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
-        sockaddr_in serverAddr;
+        sockaddr_in serverAddr{};
+    #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+        serverAddr.sin_len = sizeof(serverAddr);
+    #endif
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_addr.s_addr = inet_addr(serverAddrStr);
         serverAddr.sin_port = htons(serverPort);
@@ -97,21 +127,28 @@ class TcpVirtualChannelTest : public ::testing::Test
 
     void TearDown() override
     {
-
+        log_info("TearDown started");
         if (clientChannel->isOpen())
         {
+            log_info("Closing client channel");
             clientChannel->close();
             delete clientChannel;
+            clientChannel = nullptr;
         }
         if (serverChannel->isOpen())
         {
+            log_info("Closing server channel");
             serverChannel->close();
             delete serverChannel;
+            serverChannel = nullptr;
         }
+        log_info("Channels closed successfully");
 
 #ifdef _WIN32
         WSACleanup();
+        log_info("WSA cleanup completed");
 #endif
+        log_info("TearDown completed");
     }
 };
 
@@ -159,7 +196,7 @@ TEST_F(TcpVirtualChannelTest, SendRecvTest)
 // Send and Receive multiple times
 TEST_F(TcpVirtualChannelTest, SendRecvTest2)
 {
-    std::atomic<bool> callbackCalled = false;
+    std::atomic<int> callbackCount = 0;
     std::mutex callbackMutex;
     std::condition_variable callbackCondition;
 
@@ -172,7 +209,7 @@ TEST_F(TcpVirtualChannelTest, SendRecvTest2)
     static int callCount = 0;
 
     // recv data callback
-    auto recvCallback = [&callbackCalled, &callbackMutex, &callbackCondition, this, data, size, data2,
+    auto recvCallback = [&callbackCount, &callbackMutex, &callbackCondition, this, data, size, data2,
                          size2](const char *recvData, size_t recvSize) {
         if (callCount == 0)
         {
@@ -191,24 +228,23 @@ TEST_F(TcpVirtualChannelTest, SendRecvTest2)
         callCount++;
         {
             std::lock_guard<std::mutex> lock(callbackMutex);
-            callbackCalled = true;
+            callbackCount++;
         }
-        callbackCondition.notify_one();
+        callbackCondition.notify_all();
     };
     serverChannel->setReceiveCallback(recvCallback);
     serverChannel->open();
     clientChannel->open();
 
     // server thread to wait for callback
-    std::thread serverThread([&callbackCalled, &callbackMutex, &callbackCondition]() {
+    std::thread serverThread([&callbackCount, &callbackMutex, &callbackCondition]() {
         {
             std::unique_lock<std::mutex> lock(callbackMutex);
-            callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
-            callbackCalled = false;
+            callbackCondition.wait(lock, [&callbackCount]() { return callbackCount.load() >= 1; });
         }
         {
             std::unique_lock<std::mutex> lock(callbackMutex);
-            callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
+            callbackCondition.wait(lock, [&callbackCount]() { return callbackCount.load() >= 2; });
         }
     });
 
@@ -223,11 +259,11 @@ TEST_F(TcpVirtualChannelTest, SendRecvTest2)
     ASSERT_EQ(callCount, 2);
 }
 
-// Check if we can handle out-of-order messages
+// // Check if we can handle out-of-order messages
 TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
 {
 
-    std::atomic<bool> callbackCalled = false;
+    std::atomic<int> callbackCount = 0;
     std::mutex callbackMutex;
     std::condition_variable callbackCondition;
 
@@ -243,33 +279,49 @@ TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
     static int callCount = 0;
 
     // recv data callback
-    auto recvCallback = [&callbackCalled, &callbackMutex, &callbackCondition, this, data1, size1, data2, size2, data3,
+    auto recvCallback = [&callbackCount, &callbackMutex, &callbackCondition, this, data1, size1, data2, size2, data3,
                          size3](const char *recvData, size_t recvSize) {
         if (callCount == 0)
         {
+            {
+                auto message = std::string("Processing first message: Expected size = ") + std::to_string(size1) + ", Received size = " + std::to_string(recvSize);
+                std::cout << message << std::endl;
+            }
             EXPECT_EQ(recvSize, size1);
             EXPECT_STREQ(recvData, data1);
         }
         else if (callCount == 1)
         {
+            {
+                auto message = std::string("Processing second message: Expected size = ") + std::to_string(size2) + ", Received size = " + std::to_string(recvSize);
+                std::cout << message << std::endl;
+            }
             EXPECT_EQ(recvSize, size2);
             EXPECT_STREQ(recvData, data2);
         }
         else if (callCount == 2)
         {
+            {
+                auto message = std::string("Processing third message: Expected size = ") + std::to_string(size3) + ", Received size = " + std::to_string(recvSize);
+                std::cout << message << std::endl;
+            }
             EXPECT_EQ(recvSize, size3);
             EXPECT_STREQ(recvData, data3);
         }
         else
         {
+            {
+                auto message = std::string("Unexpected callback count: ") + std::to_string(callCount);
+                std::cout << message << std::endl;
+            }
             FAIL() << "Callback called more than three times";
         }
         callCount++;
         {
             std::lock_guard<std::mutex> lock(callbackMutex);
-            callbackCalled = true;
+            callbackCount++;
         }
-        callbackCondition.notify_one();
+        callbackCondition.notify_all();
         std::cout << "Callback called for message " << callCount << std::endl;
     };
     serverChannel->setReceiveCallback(recvCallback);
@@ -277,22 +329,28 @@ TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
     clientChannel->open();
 
     // server thread to wait for callback
-    std::thread serverThread([&callbackCalled, &callbackMutex, &callbackCondition]() {
+    std::thread serverThread([&callbackCount, &callbackMutex, &callbackCondition]()
+    {
+        std::cout << "Server thread started, waiting for callbacks..." << std::endl;
         for (int i = 0; i < 3; i++)
         {
+            std::cout << "Server thread waiting for callback " << (i + 1) << std::endl;
             std::unique_lock<std::mutex> lock(callbackMutex);
-            callbackCondition.wait(lock, [&callbackCalled]() { return callbackCalled.load(); });
-            callbackCalled = false;
-    }
+            callbackCondition.wait(lock, [&callbackCount, i]() { return callbackCount.load() >= (i + 1); });
+            std::cout << "Server thread received callback " << (i + 1) << std::endl;
+        }
+        std::cout << "Server thread finished processing all callbacks" << std::endl;
     });
 
     // Simulate out-of-order message reception
-    std::thread clientThread([this, data1, size1, data2, size2, data3, size3]() {
-            // instead of sending via channel, directly call processReceivedData to simulate out-of-order
+    std::thread clientThread([this, data1, size1, data2, size2, data3, size3]()
+    {
+        // instead of sending via channel, directly call processReceivedData to simulate out-of-order
         log_info("Simulating out-of-order message reception");
         serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3));
         serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1));
         serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2));
+        std::cout << "Client thread finished simulating out-of-order messages" << std::endl;
     });
 
     clientThread.join();

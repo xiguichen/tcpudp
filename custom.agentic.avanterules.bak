@@ -290,3 +290,7 @@ END OF COGNITIVE ENHANCEMENT PROTOCOL
 ### Response format
 
 For each response, you should begin with "Hello Chen: " followed by your response.
+
+### Response Language
+
+All code should be in English, the reply prefer to be Chinese if not specified by user.
