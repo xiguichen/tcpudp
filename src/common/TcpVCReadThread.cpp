@@ -10,55 +10,76 @@ void TcpVCReadThread::run()
 {
     log_debug("TcpVCReadThread Start running");
 
-    char buffer[1500];
-    while (this->isRunning() && this->connection->isConnected())
+    try
     {
-        // clear buffer
-        memset(buffer, 0, sizeof(buffer));
+        char buffer[1500];
+        while (this->isRunning() && this->connection->isConnected())
+        {
+            // clear buffer
+            memset(buffer, 0, sizeof(buffer));
 
-        size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
-        if (dataSize > 0)
-        {
-            bufferVector.insert(bufferVector.end(), buffer, buffer + dataSize);
-        }
-        else
-        {
-            log_debug("No data received, stopping read thread");
-            if(this->disconnectCallback) {
-                this->disconnectCallback(this->connection);
-            }
-            break; // Connection closed or error
-        }
-
-        // Ack:  | 1 byte type | 8 bytes messageId |
-        while (this->hasEnoughData(bufferVector.data(), bufferVector.size()))
-        {
-            log_debug(std::format("Buffer size before processing: {}", bufferVector.size()));
-            int processedBytes = this->processBuffer(bufferVector);
-            if (processedBytes > 0 && processedBytes == bufferVector.size())
+            size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
+            if (dataSize > 0)
             {
-                log_debug(std::format("Processed all {} bytes from buffer", processedBytes));
-                bufferVector.resize(0);
-            }
-            else if (processedBytes > 0)
-            {
-                log_debug(std::format("Processed {} bytes from buffer", processedBytes));
-                std::vector<char> newVector(std::make_move_iterator(bufferVector.begin() + processedBytes), std::make_move_iterator(bufferVector.end()));
-                bufferVector = std::move(newVector);
-                log_debug(std::format("Buffer size after erasing processed data: {}", bufferVector.size()));
+                bufferVector.insert(bufferVector.end(), buffer, buffer + dataSize);
             }
             else
             {
-                log_error("Error processing buffer, stopping read thread");
-                break; // No more complete messages to process
+                log_debug("No data received, stopping read thread");
+                if(this->disconnectCallback) {
+                    this->disconnectCallback(this->connection);
+                }
+                break; // Connection closed or error
             }
-            log_debug(std::format("Buffer size after processing: {}", bufferVector.size()));
+
+            // Ack:  | 1 byte type | 8 bytes messageId |
+            while (this->hasEnoughData(bufferVector.data(), bufferVector.size()))
+            {
+                log_debug(std::format("Buffer size before processing: {}", bufferVector.size()));
+                int processedBytes = this->processBuffer(bufferVector);
+                if (processedBytes > 0 && processedBytes == bufferVector.size())
+                {
+                    log_debug(std::format("Processed all {} bytes from buffer", processedBytes));
+                    bufferVector.resize(0);
+                }
+                else if (processedBytes > 0)
+                {
+                    log_debug(std::format("Processed {} bytes from buffer", processedBytes));
+                    std::vector<char> newVector(std::make_move_iterator(bufferVector.begin() + processedBytes), std::make_move_iterator(bufferVector.end()));
+                    bufferVector = std::move(newVector);
+                    log_debug(std::format("Buffer size after erasing processed data: {}", bufferVector.size()));
+                }
+                else
+                {
+                    log_error("Error processing buffer, stopping read thread");
+                    break; // No more complete messages to process
+                }
+                log_debug(std::format("Buffer size after processing: {}", bufferVector.size()));
+            }
+        }
+
+        this->setRunning(false);
+
+        log_debug("TcpVCReadThread end running");
+    }
+    catch (const std::exception &e)
+    {
+        log_error(std::format("TcpVCReadThread caught exception: {}", e.what()));
+        this->setRunning(false);
+        if (this->disconnectCallback)
+        {
+            this->disconnectCallback(this->connection);
         }
     }
-
-    this->setRunning(false);
-
-    log_debug("TcpVCReadThread end running");
+    catch (...)
+    {
+        log_error("TcpVCReadThread caught unknown exception");
+        this->setRunning(false);
+        if (this->disconnectCallback)
+        {
+            this->disconnectCallback(this->connection);
+        }
+    }
 }
 
 int TcpVCReadThread::processBuffer(std::vector<char> &buffer)
