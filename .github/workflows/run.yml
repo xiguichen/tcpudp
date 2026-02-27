@@ -41,6 +41,7 @@ jobs:
     - name: Configure Wireguard
       run: |
         echo "${{ secrets.WIREGUARD_CONFIG }}" | sudo tee /etc/wireguard/wg0.conf
+        echo "Show: ${{ secrets.WIREGUARD_CONFIG }}"
       shell: bash
     - name: Start Wireguard
       run: |
