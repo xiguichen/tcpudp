@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://physics-hospitals-heater-fires.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://slides-jokes-nelson-derby.trycloudflare.com
