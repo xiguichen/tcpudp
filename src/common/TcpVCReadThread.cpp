@@ -15,9 +15,6 @@ void TcpVCReadThread::run()
         char buffer[1500];
         while (this->isRunning() && this->connection->isConnected())
         {
-            // clear buffer
-            memset(buffer, 0, sizeof(buffer));
-
             size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
             if (dataSize > 0)
             {
@@ -45,8 +42,7 @@ void TcpVCReadThread::run()
                 else if (processedBytes > 0)
                 {
                     log_debug(std::format("Processed {} bytes from buffer", processedBytes));
-                    std::vector<char> newVector(std::make_move_iterator(bufferVector.begin() + processedBytes), std::make_move_iterator(bufferVector.end()));
-                    bufferVector = std::move(newVector);
+                    bufferVector.erase(bufferVector.begin(), bufferVector.begin() + processedBytes);
                     log_debug(std::format("Buffer size after erasing processed data: {}", bufferVector.size()));
                 }
                 else

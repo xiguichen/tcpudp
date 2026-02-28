@@ -120,7 +120,7 @@ void Server::AcceptConnections()
             std::format("Added socket to peer with client ID {}. Total sockets: {}", clientId, peer->GetSocketCount()));
 
         // check if we have enough sockets for this peer to create the virtual channel
-        if (peer->GetSocketCount() == VC_TCP_CONNECTIONS)
+        if (peer->GetSocketCount() >= VC_TCP_CONNECTIONS)
         {
 
             // Create the virtual channel
@@ -163,13 +163,17 @@ void Server::AcceptConnections()
                 }
             });
 
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, peer]() {
+            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId]() {
                 // Remove VC from manager only if it exists to avoid double-removal
                 if (VcManager::getInstance().Exists(clientId)) {
                     VcManager::getInstance().Remove(clientId);
                 }
-                peer->RemoveAllSockets();
-                // Note: vc->close() is already called by TcpVirtualChannel's internal disconnect handler
+                // Do NOT call RemoveAllSockets here: TcpVirtualChannel::disconnectCB already
+                // closed the socket FDs via TcpConnection::disconnect(). Calling SocketClose
+                // again on the same FD integers would double-close them and risk closing
+                // a newly accepted socket that got the same FD number from the OS.
+                // Just remove the peer so the next AddPeer call gets a clean slate.
+                PeerManager::RemovePeer(clientId);
             });
 
             // start a new thread to receive data from the UDP socket

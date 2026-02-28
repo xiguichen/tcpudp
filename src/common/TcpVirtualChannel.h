@@ -9,7 +9,7 @@
 #include <mutex>
 #include <vector>
 
-class TcpVirtualChannel : public VirtualChannel
+class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_this<TcpVirtualChannel>
 {
 
   public:

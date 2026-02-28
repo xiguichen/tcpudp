@@ -49,9 +49,28 @@ void StopableThread::setRunning(bool value)
 
 StopableThread::~StopableThread()
 {
-    // Ensure the thread is stopped before destruction
-    if (this->running.load())
+    // Ensure the thread is stopped before destruction.
+    // Note: running may already be false if the thread was signaled to stop
+    // externally (e.g. via setRunning(false)) without being joined.
+    if (_thread.joinable())
     {
-        stop();
+        if (_thread.get_id() == std::this_thread::get_id())
+        {
+            // Destructor called from within the thread itself (e.g. the owning
+            // object is destroyed from a callback executing on this thread).
+            // Joining would deadlock; detach so the thread finishes naturally.
+            log_debug("~StopableThread: detaching self to avoid join deadlock");
+            _thread.detach();
+        }
+        else
+        {
+            this->setRunning(false);
+            log_debug("~StopableThread: joining thread");
+            try { _thread.join(); }
+            catch (const std::exception &e)
+            {
+                log_error(std::format("~StopableThread join failed: {}", e.what()));
+            }
+        }
     }
 }

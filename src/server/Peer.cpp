@@ -3,6 +3,7 @@
 #include <format>
 
 std::unordered_map<uint32_t, Peer> PeerManager::peers;
+std::mutex PeerManager::peersMutex;
 
 uint32_t Peer::GetClientId() const
 {
@@ -23,6 +24,14 @@ Peer &Peer::operator=(const Peer &other)
 
 void Peer::AddSocket(SocketFd socket)
 {
+    std::lock_guard<std::mutex> lock(socketMutex);
+    if (sockets.size() >= VC_TCP_CONNECTIONS)
+    {
+        log_error(std::format("Peer {} already has {} sockets (max {}), closing excess socket {}",
+                              clientId, sockets.size(), VC_TCP_CONNECTIONS, socket));
+        SocketClose(socket);
+        return;
+    }
     sockets.push_back(socket);
 }
 
@@ -57,11 +66,17 @@ void Peer::RemoveAllSockets()
 {
     std::lock_guard<std::mutex> lock(socketMutex);
     log_info(std::format("Removing all sockets from peer with client ID {}", clientId));
+    for (SocketFd fd : sockets)
+    {
+        log_info(std::format("Closing socket {} for peer with client ID {}", fd, clientId));
+        SocketClose(fd);
+    }
     sockets.clear();
 }
 
 Peer *PeerManager::GetPeerById(uint32_t clientId)
 {
+    std::lock_guard<std::mutex> lock(peersMutex);
     auto it = peers.find(clientId);
     if (it != peers.end())
     {
@@ -72,20 +87,30 @@ Peer *PeerManager::GetPeerById(uint32_t clientId)
 
 void PeerManager::AddPeer(uint32_t clientId)
 {
-    if (peers.find(clientId) == peers.end())
+    std::lock_guard<std::mutex> lock(peersMutex);
+    auto it = peers.find(clientId);
+    if (it == peers.end())
     {
-        Peer p = Peer(clientId);
-        peers[clientId] = p;
+        peers[clientId] = Peer(clientId);
+    }
+    else
+    {
+        // Peer already exists — client is reconnecting with stale state.
+        // Close and flush any leftover sockets before accepting new ones.
+        log_info(std::format("Peer {} already exists on reconnect, flushing stale sockets", clientId));
+        it->second.RemoveAllSockets();
     }
 }
 
 void PeerManager::RemovePeer(uint32_t clientId)
 {
+    std::lock_guard<std::mutex> lock(peersMutex);
     peers.erase(clientId);
 }
 
 void PeerManager::CloseAllSockets()
 {
+    std::lock_guard<std::mutex> lock(peersMutex);
     for (auto &pair : peers)
     {
         Peer &peer = pair.second;

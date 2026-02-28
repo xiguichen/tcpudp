@@ -9,20 +9,28 @@
 void TcpVirtualChannel::open()
 {
 
-    auto dataCallback = [this](const uint64_t messageId, std::shared_ptr<std::vector<char>> data) {
-        this->processReceivedData(messageId, data);
+    // Capture a shared_ptr to 'this' so the TcpVirtualChannel object is kept
+    // alive for the entire duration of either callback, even if the last external
+    // shared_ptr is released (e.g. via VcManager::Remove) while the callback is
+    // still executing on a read thread. Without this, ~TcpVirtualChannel would
+    // run on the read-thread itself, causing std::terminate in ~StopableThread.
+    auto selfGuard = shared_from_this();
+
+    auto dataCallback = [selfGuard](const uint64_t messageId, std::shared_ptr<std::vector<char>> data) {
+        selfGuard->processReceivedData(messageId, data);
     };
 
-    auto disconnectCB = [this](TcpConnectionSp /*unused*/) {
+    auto disconnectCB = [selfGuard](TcpConnectionSp /*unused*/) {
+        auto *self = selfGuard.get();
         // Use a flag to track if we should notify the upper layer
         bool shouldNotify = false;
         
         {
             // Ensure only one disconnect routine runs at a time
-            std::lock_guard<std::mutex> lock(disconnectMutex);
+            std::lock_guard<std::mutex> lock(self->disconnectMutex);
 
             // Early exit if already closed to prevent redundant work
-            if (!opened) {
+            if (!self->opened) {
                 log_debug("Disconnect callback called but VC already closed, skipping.");
                 return;
             }
@@ -30,16 +38,16 @@ void TcpVirtualChannel::open()
             log_debug("Disconnect detected, closing the entire virtual channel.");
 
             // Mark the virtual channel as closed to prevent further sends
-            opened = false;
-            shouldNotify = (this->disconnectCallback != nullptr);
+            self->opened = false;
+            shouldNotify = (self->disconnectCallback != nullptr);
 
             // Cancel any waiting operations on the send queue
-            if (sendQueue) {
-                sendQueue->cancelWait();
+            if (self->sendQueue) {
+                self->sendQueue->cancelWait();
             }
 
             // Close all the connections first
-            for (auto &conn : connections) {
+            for (auto &conn : self->connections) {
                 if (conn && conn->isConnected()) {
                     conn->disconnect();
                 }
@@ -47,12 +55,12 @@ void TcpVirtualChannel::open()
 
             // Set running to false for all threads without joining
             // This allows threads to exit gracefully without deadlock
-            for (auto &thread : readThreads) {
+            for (auto &thread : self->readThreads) {
                 if (thread) {
                     thread->setRunning(false);
                 }
             }
-            for (auto &thread : writeThreads) {
+            for (auto &thread : self->writeThreads) {
                 if (thread) {
                     thread->setRunning(false);
                 }
@@ -61,8 +69,8 @@ void TcpVirtualChannel::open()
         // Mutex released here - now other threads can proceed and exit
 
         // Notify upper layer outside the lock to avoid potential deadlocks
-        if (shouldNotify && this->disconnectCallback) {
-            this->disconnectCallback();
+        if (shouldNotify && self->disconnectCallback) {
+            self->disconnectCallback();
         }
     };
 
@@ -87,19 +95,16 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         auto messageId = this->lastSendMessageId.fetch_add(1);
         auto messageIdNetwork = messageId;
         log_debug(std::format("Sending message with ID: {}", messageId));
-        auto dataVec = std::make_shared<std::vector<char>>();
 
-        // Data: | 1 byte type | 8 bytes messageId | 2 bytes data length | N bytes data |
+        // Build the packet directly into the shared vector — no malloc needed.
         auto totalPacketSize = sizeof(VCDataPacket) + size;
-        VCDataPacket *packet = static_cast<VCDataPacket*>(std::malloc(totalPacketSize));
+        auto dataVec = std::make_shared<std::vector<char>>(totalPacketSize);
+
+        VCDataPacket *packet = reinterpret_cast<VCDataPacket *>(dataVec->data());
         packet->header.type = VcPacketType::DATA;
         packet->header.messageId = messageIdNetwork;
         packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
-
-        dataVec->resize(totalPacketSize);
-        std::memcpy(dataVec->data(), packet, totalPacketSize);
-        std::free(packet);
 
         // Enqueue the data for multiple connections to make sure we can deliver it without problems
         sendQueue->enqueue(dataVec);

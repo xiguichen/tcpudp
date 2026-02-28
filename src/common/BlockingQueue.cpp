@@ -35,18 +35,20 @@ std::shared_ptr<std::vector<char>> BlockingQueue::dequeue()
     }
     auto result = queue.front();
     queue.pop();
-
-    lock.unlock();
-    log_debug(
-        std::format("Dequeued data of size: {}, Queue address: {:p}", result->size(), static_cast<const void *>(this)));
-
     log_debug(std::format("Queue size after dequeue: {}, Queue address: {:p}", queue.size(),
                          static_cast<const void *>(this)));
+    lock.unlock();
+
+    log_debug(
+        std::format("Dequeued data of size: {}, Queue address: {:p}", result->size(), static_cast<const void *>(this)));
     return result;
 }
 
 void BlockingQueue::cancelWait()
 {
-    cancelled = true;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        cancelled = true;
+    }
     queueCondVar.notify_all();
 }

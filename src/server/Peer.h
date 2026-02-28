@@ -3,6 +3,7 @@
 // A peer is a remote entity of a virtual channel connection
 // One peer is associated with one or more connection
 #include <Socket.h>
+#include <VcProtocol.h>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -91,4 +92,5 @@ class PeerManager
 
   private:
     static std::unordered_map<uint32_t, Peer> peers;
+    static std::mutex peersMutex;
 };
