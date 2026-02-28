@@ -77,9 +77,10 @@ void TcpVirtualChannel::open()
     for (int i = 0; i < this->connections.size(); ++i)
     {
         auto readThread = TcpVCReadThreadFactory::createThread(this->connections[i]);
-        readThread->start();
+        // Set callbacks before starting the thread to avoid missing early events
         readThread->setDataCallback(dataCallback);
         readThread->setDisconnectCallback(disconnectCB);
+        readThread->start();
         readThreads.emplace_back(readThread);
         auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i]);
         writeThread->start();
@@ -90,6 +91,11 @@ void TcpVirtualChannel::open()
 
 void TcpVirtualChannel::send(const char *data, size_t size)
 {
+    if (!opened)
+    {
+        log_debug("send called on closed channel, ignoring");
+        return;
+    }
     if (data != nullptr && size > 0)
     {
         auto messageId = this->lastSendMessageId.fetch_add(1);
@@ -116,12 +122,13 @@ bool TcpVirtualChannel::isOpen() const
 }
 void TcpVirtualChannel::close()
 {
-    if (!opened)
+    // Atomically mark as closed; if it was already false, nothing to do
+    if (!opened.exchange(false))
     {
         return;
     }
 
-    // Cancle any waiting operations
+    // Cancel any waiting operations
     this->sendQueue->cancelWait();
 
     // Close all the connections and stop threads
@@ -161,7 +168,6 @@ void TcpVirtualChannel::close()
         }
     }
     log_debug("All write threads stopped");
-    opened = false;
 }
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {

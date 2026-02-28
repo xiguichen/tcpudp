@@ -3,26 +3,29 @@
 #include "PerformanceCounter.h"
 #include <mutex>
 
-// Mutex to protect disconnect operations
-static std::mutex disconnectMutex;
-
 void TcpConnection::disconnect()
 {
-    std::lock_guard<std::mutex> lock(disconnectMutex);
-    
-    // Check if already disconnected
-    if (!connected.load()) {
-        return;
-    }
-    
-    if (socketFd != -1)
+    std::function<void()> callbackToInvoke;
     {
-        SocketClose(socketFd);
-        socketFd = -1;
+        std::lock_guard<std::mutex> lock(disconnectMutex);
+
+        // Check if already disconnected
+        if (!connected.load()) {
+            return;
+        }
+
+        if (socketFd != -1)
+        {
+            SocketClose(socketFd);
+            socketFd = -1;
+        }
+        connected.store(false);
+        log_debug("Resetting BlockingQueue post-disconnect.");
+        // Capture callback to invoke outside the lock to prevent deadlock
+        callbackToInvoke = disconnectCallback;
     }
-    connected.store(false);
-    log_debug("Resetting BlockingQueue post-disconnect.");
-    if (disconnectCallback) { disconnectCallback(); } // Notify virtual channels
+    // Invoke callback after the lock is released
+    if (callbackToInvoke) { callbackToInvoke(); }
     log_info("TCP connection closed");
 }
 
