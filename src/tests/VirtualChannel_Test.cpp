@@ -10,8 +10,8 @@
 class TcpVirtualChannelTest : public ::testing::Test
 {
   protected:
-    TcpVirtualChannel *clientChannel;
-    TcpVirtualChannel *serverChannel;
+    std::shared_ptr<TcpVirtualChannel> clientChannel;
+    std::shared_ptr<TcpVirtualChannel> serverChannel;
     SocketFd serverSocket;
     SocketFd clientSocket;
     SocketFd serverAcceptedSocket;
@@ -90,7 +90,7 @@ class TcpVirtualChannelTest : public ::testing::Test
 
         std::cout << "Server waiting to accept connection..." << std::endl;
         serverAcceptedSocket = SocketAccept(serverSocket, (sockaddr *)&clientAddr, &clientAddrLen);
-        serverChannel = new TcpVirtualChannel({serverAcceptedSocket});
+        serverChannel = std::make_shared<TcpVirtualChannel>(std::vector<SocketFd>{serverAcceptedSocket});
 
         SocketClose(serverSocket); // Close the listening socket as it's no longer needed
         std::cout << "Server accepted connection from client." << std::endl;
@@ -120,7 +120,7 @@ class TcpVirtualChannelTest : public ::testing::Test
         ASSERT_EQ(result, 0);
         std::cout << "Client connected to server socket." << std::endl;
 
-        clientChannel = new TcpVirtualChannel({clientSocket});
+        clientChannel = std::make_shared<TcpVirtualChannel>(std::vector<SocketFd>{clientSocket});
 
         std::cout << "Client connected to server." << std::endl;
     }
@@ -128,20 +128,18 @@ class TcpVirtualChannelTest : public ::testing::Test
     void TearDown() override
     {
         log_info("TearDown started");
-        if (clientChannel->isOpen())
+        if (clientChannel && clientChannel->isOpen())
         {
             log_info("Closing client channel");
             clientChannel->close();
-            delete clientChannel;
-            clientChannel = nullptr;
         }
-        if (serverChannel->isOpen())
+        clientChannel.reset();
+        if (serverChannel && serverChannel->isOpen())
         {
             log_info("Closing server channel");
             serverChannel->close();
-            delete serverChannel;
-            serverChannel = nullptr;
         }
+        serverChannel.reset();
         log_info("Channels closed successfully");
 
 #ifdef _WIN32

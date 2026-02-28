@@ -1,5 +1,5 @@
 compile:
-	cd ../Build && cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ../src && ninja
+	cd ../Build && cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ../src && ninja
 
 test: compile
 ifeq ($(OS),Windows_NT)
