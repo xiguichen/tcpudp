@@ -1,5 +1,6 @@
 #include "Peer.h"
 #include "Log.h"
+#include "VcManager.h"
 #include <format>
 
 std::unordered_map<uint32_t, Peer> PeerManager::peers;
@@ -95,10 +96,15 @@ void PeerManager::AddPeer(uint32_t clientId)
     }
     else
     {
-        // Peer already exists — client is reconnecting with stale state.
-        // Close and flush any leftover sockets before accepting new ones.
-        log_info(std::format("Peer {} already exists on reconnect, flushing stale sockets", clientId));
-        it->second.RemoveAllSockets();
+        // Only flush stale sockets if the virtual channel doesn't exist.
+        // If VC exists, this is likely just adding more connections to build the VC
+        // (e.g., 4 TCP connections for one virtual channel).
+        // We should only treat it as a reconnect when the VC was actually removed.
+        if (!VcManager::getInstance().Exists(clientId))
+        {
+            log_info(std::format("Peer {} reconnecting, flushing stale sockets", clientId));
+            it->second.RemoveAllSockets();
+        }
     }
 }
 
