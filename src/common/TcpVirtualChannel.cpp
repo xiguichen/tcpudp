@@ -140,34 +140,43 @@ void TcpVirtualChannel::close()
             log_debug("Disconnecting a TcpConnection");
             conn->disconnect();
         }
-        else 
+        else
         {
             log_debug("TcpConnection already disconnected");
         }
     }
 
     log_debug("Closing TcpVirtualChannel");
+
+    // Stop and join all read threads
+    log_debug("Stopping and joining read threads");
     for (auto &thread : readThreads)
     {
         if (thread)
         {
             log_debug("Stopping a read thread");
             thread->stop();
-            log_debug("Read thread stopped");
+            log_debug("Joining a read thread");
+            thread->joinThread();
+            log_debug("Read thread stopped and joined");
         }
     }
 
-    log_debug("All read threads stopped");
+    log_debug("All read threads stopped and joined");
 
-    log_debug("Stopping write threads");
+    // Stop and join all write threads
+    log_debug("Stopping and joining write threads");
     for (auto &thread : writeThreads)
     {
         if (thread)
         {
             thread->stop();
+            thread->joinThread();
         }
     }
-    log_debug("All write threads stopped");
+    log_debug("All write threads stopped and joined");
+
+    opened = false;
 }
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {

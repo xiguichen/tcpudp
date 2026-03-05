@@ -1,7 +1,7 @@
 #pragma once
-#include <thread>
 #include <mutex>
 #include <atomic>
+#include <thread>
 
 class StopableThread
 {
@@ -14,6 +14,9 @@ class StopableThread
 
     // Stop the thread
     void stop();
+
+    // Join the thread (for cleanup in derived classes)
+    void joinThread();
 
     // Set the running state of the thread (public to allow external signaling)
     virtual void setRunning(bool running);

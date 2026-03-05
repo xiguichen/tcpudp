@@ -25,6 +25,10 @@ void StopableThread::stop()
             {
                 log_error(std::format("Exception while joining thread: {}", e.what()));
             }
+            catch (...)
+            {
+                log_error("Unknown exception while joining thread");
+            }
         }
         else
         {
@@ -71,6 +75,27 @@ StopableThread::~StopableThread()
             {
                 log_error(std::format("~StopableThread join failed: {}", e.what()));
             }
+        }
+    }
+
+    // Note: stop() must be called before destruction by the parent class
+    // We only join if the thread is still joinable
+    if (_thread.joinable())
+    {
+        // Thread has not been joined yet
+        // This should not happen if close() was called properly
+        log_error("StopableThread destroyed while thread is still joinable!");
+        try
+        {
+            _thread.join();
+        }
+        catch (const std::exception &e)
+        {
+            log_error(std::format("Exception while joining thread in destructor: {}", e.what()));
+        }
+        catch (...)
+        {
+            log_error("Unknown exception while joining thread in destructor");
         }
     }
 }
