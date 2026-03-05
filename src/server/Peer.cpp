@@ -96,11 +96,11 @@ void PeerManager::AddPeer(uint32_t clientId)
     }
     else
     {
-        // Only flush stale sockets if the virtual channel doesn't exist.
-        // If VC exists, this is likely just adding more connections to build the VC
+        // Only flush stale sockets if the virtual channel exists.
+        // If VC doesn't exist, we're still building up connections for a new VC
         // (e.g., 4 TCP connections for one virtual channel).
         // We should only treat it as a reconnect when the VC was actually removed.
-        if (!VcManager::getInstance().Exists(clientId))
+        if (VcManager::getInstance().Exists(clientId))
         {
             log_info(std::format("Peer {} reconnecting, flushing stale sockets", clientId));
             it->second.RemoveAllSockets();
