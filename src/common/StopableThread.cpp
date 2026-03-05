@@ -99,3 +99,11 @@ StopableThread::~StopableThread()
         }
     }
 }
+
+void StopableThread::joinThread()
+{
+    if (_thread.joinable())
+    {
+        _thread.join();
+    }
+}
