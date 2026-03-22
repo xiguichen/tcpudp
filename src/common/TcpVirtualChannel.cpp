@@ -203,9 +203,6 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
     // Check if this is a duplicate message
     if (messageId < nextMessageId)
     {
-        log_info(std::format("[PERF-DIAG] Duplicate message received: msgID={}, nextExpected={}. "
-            "Duplicates may indicate retry storms from send-timeout re-enqueue.",
-            messageId, nextMessageId.load()));
         return; // Duplicate message, ignore
     }
 
