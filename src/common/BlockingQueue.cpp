@@ -52,3 +52,9 @@ void BlockingQueue::cancelWait()
     }
     queueCondVar.notify_all();
 }
+
+size_t BlockingQueue::size()
+{
+    std::lock_guard<std::mutex> lock(queueMutex);
+    return queue.size();
+}

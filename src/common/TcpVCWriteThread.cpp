@@ -8,7 +8,10 @@ void TcpVCWriteThread::run()
     log_info("TcpVCWriteThread started");
 
     this->connection->setOnSendTimeoutCallback([this](char *buffer, size_t size) {
-        log_error("Send timeout occurred for message ID: " + std::to_string(lastMessageId));
+        auto queueDepth = writeQueue->size();
+        log_info("[PERF-DIAG] Send timeout for msgID: " + std::to_string(lastMessageId)
+            + ", re-enqueueing. Queue depth before re-enqueue: " + std::to_string(queueDepth)
+            + ". Watch for rising queue depth indicating retry storm.");
         // Re-enqueue the data for retransmission
         auto dataCopy = std::make_shared<std::vector<char>>(buffer, buffer + size);
         writeQueue->enqueue(dataCopy);

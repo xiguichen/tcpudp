@@ -113,6 +113,13 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         std::memcpy(packet->data, data, size);
 
         // Enqueue the data for multiple connections to make sure we can deliver it without problems
+        auto queueDepth = sendQueue->size();
+        if (queueDepth > 100)
+        {
+            log_info(std::format("[PERF-DIAG] Send queue depth is {}, msgID: {}. "
+                "High queue depth may indicate send timeouts causing retry buildup or lack of backpressure.",
+                queueDepth, messageId));
+        }
         sendQueue->enqueue(dataVec);
     }
 }
@@ -186,13 +193,26 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
     // Check if this is a duplicate message
     if (messageId < nextMessageId)
     {
+        log_info(std::format("[PERF-DIAG] Duplicate message received: msgID={}, nextExpected={}. "
+            "Duplicates may indicate retry storms from send-timeout re-enqueue.",
+            messageId, nextMessageId.load()));
         return; // Duplicate message, ignore
     }
 
     // Add the received data to the map
     receivedDataMap[messageId] = data;
 
+    // Detect head-of-line blocking: message arrived but can't be delivered yet
+    if (messageId != nextMessageId)
+    {
+        auto gap = messageId - nextMessageId.load();
+        log_info(std::format("[PERF-DIAG] Out-of-order message: received msgID={}, waiting for msgID={}. "
+            "Gap={}, buffered msgs={}. Head-of-line blocking: delivery stalled until msgID {} arrives.",
+            messageId, nextMessageId.load(), gap, receivedDataMap.size(), nextMessageId.load()));
+    }
+
     // Process messages in order
+    size_t deliveredCount = 0;
     std::map<uint64_t, std::shared_ptr<std::vector<char>>>::iterator it;
     while ((it = receivedDataMap.find(nextMessageId)) != receivedDataMap.end())
     {
@@ -207,6 +227,22 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
 
         // Move to the next expected message ID
         nextMessageId.fetch_add(1);
+        deliveredCount++;
+    }
+
+    if (deliveredCount > 1)
+    {
+        log_info(std::format("[PERF-DIAG] Burst delivery: {} buffered messages delivered at once. "
+            "Remaining buffered={}. Burst indicates prior head-of-line blocking was resolved.",
+            deliveredCount, receivedDataMap.size()));
+    }
+    if (!receivedDataMap.empty())
+    {
+        log_info(std::format("[PERF-DIAG] Still waiting: {} messages buffered, next expected msgID={}. "
+            "Oldest buffered msgID={}. Gap={}.",
+            receivedDataMap.size(), nextMessageId.load(),
+            receivedDataMap.begin()->first,
+            receivedDataMap.begin()->first - nextMessageId.load()));
     }
 }
 
