@@ -41,9 +41,11 @@ void TcpVirtualChannel::open()
             self->opened = false;
             shouldNotify = (self->disconnectCallback != nullptr);
 
-            // Cancel any waiting operations on the send queue
-            if (self->sendQueue) {
-                self->sendQueue->cancelWait();
+            // Cancel any waiting operations on all send queues
+            for (auto &q : self->sendQueues) {
+                if (q) {
+                    q->cancelWait();
+                }
             }
 
             // Close all the connections first
@@ -82,7 +84,7 @@ void TcpVirtualChannel::open()
         readThread->setDisconnectCallback(disconnectCB);
         readThread->start();
         readThreads.emplace_back(readThread);
-        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i]);
+        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueues[i], this->connections[i]);
         writeThread->start();
         writeThreads.emplace_back(writeThread);
     }
@@ -112,15 +114,19 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
 
-        // Enqueue the data for multiple connections to make sure we can deliver it without problems
-        auto queueDepth = sendQueue->size();
-        if (queueDepth > 100)
+        // Enqueue to ALL connections so every connection sends every message.
+        // The receiver drops duplicates via messageId — fastest connection wins.
+        for (auto &q : sendQueues)
         {
-            log_info(std::format("[PERF-DIAG] Send queue depth is {}, msgID: {}. "
-                "High queue depth may indicate send timeouts causing retry buildup or lack of backpressure.",
-                queueDepth, messageId));
+            auto queueDepth = q->size();
+            if (queueDepth > 100)
+            {
+                log_info(std::format("[PERF-DIAG] Send queue depth is {}, msgID: {}. "
+                    "High queue depth may indicate send timeouts causing retry buildup or lack of backpressure.",
+                    queueDepth, messageId));
+            }
+            q->enqueue(dataVec);
         }
-        sendQueue->enqueue(dataVec);
     }
 }
 bool TcpVirtualChannel::isOpen() const
@@ -135,8 +141,12 @@ void TcpVirtualChannel::close()
         return;
     }
 
-    // Cancel any waiting operations
-    this->sendQueue->cancelWait();
+    // Cancel any waiting operations on all send queues
+    for (auto &q : this->sendQueues) {
+        if (q) {
+            q->cancelWait();
+        }
+    }
 
     // Close all the connections and stop threads
     log_debug("Closing TcpVirtualChannel connections");
@@ -251,8 +261,8 @@ TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
     for (auto fd : fds)
     {
         connections.emplace_back(std::make_shared<TcpConnection>(fd));
+        sendQueues.emplace_back(std::make_shared<BlockingQueue>());
     }
-    sendQueue = std::make_shared<BlockingQueue>();
 }
 
 
