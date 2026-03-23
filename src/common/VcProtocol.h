@@ -30,4 +30,8 @@ const uint16_t VC_MAX_DATA_PAYLOAD_SIZE = 2000;
 // TCP Connections per virtual channel
 const uint8_t VC_TCP_CONNECTIONS = 2;
 
+// Drop incoming UDP packets when any send queue exceeds this depth.
+// Prevents unbounded memory growth when the network can't keep up.
+const size_t SEND_QUEUE_DROP_THRESHOLD = 100;
+
 #pragma pack(pop)

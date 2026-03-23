@@ -114,17 +114,23 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
 
+        // Drop packet if any send queue is too deep — backpressure for UDP data.
+        // UDP packet loss is acceptable; unbounded queuing is not.
+        for (auto &q : sendQueues)
+        {
+            if (q->size() > SEND_QUEUE_DROP_THRESHOLD)
+            {
+                log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}, msgID: {}. "
+                    "Dropping UDP packet to apply backpressure.",
+                    q->size(), SEND_QUEUE_DROP_THRESHOLD, messageId));
+                return;
+            }
+        }
+
         // Enqueue to ALL connections so every connection sends every message.
         // The receiver drops duplicates via messageId — fastest connection wins.
         for (auto &q : sendQueues)
         {
-            auto queueDepth = q->size();
-            if (queueDepth > 100)
-            {
-                log_info(std::format("[PERF-DIAG] Send queue depth is {}, msgID: {}. "
-                    "High queue depth may indicate send timeouts causing retry buildup or lack of backpressure.",
-                    queueDepth, messageId));
-            }
             q->enqueue(dataVec);
         }
     }

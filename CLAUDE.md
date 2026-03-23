@@ -45,7 +45,7 @@ src/
 
 **Virtual Channel (VC) Architecture**
 - Virtual channels abstract TCP connections using a message-based protocol
-- Each VC uses multiple TCP connections (default: 4) for reliability and throughput
+- Each VC uses multiple TCP connections (default: 2) for reliability and throughput
 - Message-based protocol (VCDataPacket) with sequence IDs and max payload of 2000 bytes
 - Managed by singleton `VcManager` to track active channels by client ID
 
