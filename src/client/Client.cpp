@@ -139,8 +139,9 @@ bool Client::PrepareUdpSocket()
             RecvUdpData(udpSocket, buffer, sizeof(buffer), 0, (struct sockaddr *)&srcAddr, &srcAddrLen);
         if (receivedBytes < 0)
         {
-            log_error("Failed to receive data from UDP socket");
-            break;
+            log_warnning("UDP receive error, retrying in 10s...");
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+            continue;
         }
         else if (receivedBytes == 0)
         {
