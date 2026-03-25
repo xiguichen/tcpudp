@@ -2,6 +2,7 @@
 
 #include "Socket.h"
 #include <atomic>
+#include <mutex>
 #include "VirtualChannel.h"
 
 class Client
@@ -38,4 +39,7 @@ class Client
     struct sockaddr_in remoteUdpAddr{};
 
     VirtualChannelSp vc = nullptr;
+    std::mutex vcMutex;
+
+    bool ReconnectVC(int maxRetries = 5, int initialBackoffMs = 1000);
 };

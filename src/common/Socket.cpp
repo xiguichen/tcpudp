@@ -155,7 +155,6 @@ int SocketSelect(SocketFd socketFd, int timeoutSec) {
 
 // Standard blocking I/O operations
 ssize_t SendTcpData(SocketFd socketFd, const void *data, size_t length, int flags) {
-    log_debug(std::format("SendTcpData: send {} bytes of data", length));
 #if defined(_WIN32)
     return send(socketFd, (const char *)data, length, flags);
 #else
@@ -166,7 +165,6 @@ ssize_t SendTcpData(SocketFd socketFd, const void *data, size_t length, int flag
 ssize_t SendUdpData(SocketFd socketFd, const void *data, size_t length,
                     int flags, const struct sockaddr *destAddr,
                     socklen_t destAddrLen) {
-    log_debug(std::format("SendUdpData: send {} bytes of data", length));
 #if defined(_WIN32)
     return sendto(socketFd, (const char *)data, length, flags, destAddr, destAddrLen);
 #else
@@ -181,50 +179,38 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize,
     ssize_t length = recvfrom(socketFd, (char *)buffer, bufferSize, flags, srcAddr, srcAddrLen);
     if (length == -1) {
         int lastError = WSAGetLastError();
-        log_error(std::format("RecvUdpData: log_error receiving data, log_error code: {}", lastError));
+        log_error(std::format("RecvUdpData error, code: {}", lastError));
     }
 #else
     ssize_t length = recvfrom(socketFd, buffer, bufferSize, flags, srcAddr, srcAddrLen);
 #endif
-    log_debug(std::format("RecvUdpData: receive {} bytes of data", length));
     return length;
 }
 
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flags) {
-
-    log_debug(std::format("Before Recv Tcp Data"));
 #if defined(_WIN32)
     ssize_t length = recv(socketFd, (char *)buffer, bufferSize, flags);
 #else
     ssize_t length = recv(socketFd, buffer, bufferSize, flags);
 #endif 
-    log_debug(std::format("RecvTcpData: receive {} bytes of data", length));
     return length;
 }
 
 // Non-blocking I/O operations with timeout
 ssize_t SendTcpDataNonBlocking(SocketFd socketFd, const void *data, size_t length, int flags, int timeoutMs) {
-
-    log_debug(std::format("Try to send {} bytes data", length));
-
-    // Check if socket is writable within timeout
     if (!IsSocketWritable(socketFd, timeoutMs)) {
         return SOCKET_ERROR_TIMEOUT;
     }
     
-    
-    // Try to send data
 #if defined(_WIN32)
     ssize_t bytesSent = send(socketFd, (const char *)data, length, flags);
 #else
     ssize_t bytesSent = send(socketFd, data, length, flags);
 #endif
 
-    // Check for errors
     if (bytesSent < 0) {
 #ifdef _WIN32
         int error = WSAGetLastError();
-        log_debug(std::format("error: {}", error));
         if (error == WSAEWOULDBLOCK) {
             bytesSent = SOCKET_ERROR_WOULD_BLOCK;
         }
@@ -235,11 +221,6 @@ ssize_t SendTcpDataNonBlocking(SocketFd socketFd, const void *data, size_t lengt
             bytesSent = SOCKET_ERROR_INTERRUPTED;
         }
 #endif
-    }
-    
-    
-    if (bytesSent > 0) {
-        log_debug(std::format("SendTcpDataNonBlocking: sent {} bytes of data", bytesSent));
     }
     
     return bytesSent;
@@ -276,27 +257,20 @@ ssize_t SendUdpDataNonBlocking(SocketFd socketFd, const void *data, size_t lengt
     }
     
     
-    if (bytesSent > 0) {
-        log_debug(std::format("SendUdpDataNonBlocking: sent {} bytes of data", bytesSent));
-    }
-    
     return bytesSent;
 }
 
 ssize_t RecvTcpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int timeoutMs) {
-    // Check if socket is readable within timeout
     if (!IsSocketReadable(socketFd, timeoutMs)) {
         return SOCKET_ERROR_TIMEOUT;
     }
     
-    // Try to receive data
 #if defined(_WIN32)
     ssize_t bytesReceived = recv(socketFd, (char *)buffer, bufferSize, flags);
 #else
     ssize_t bytesReceived = recv(socketFd, buffer, bufferSize, flags);
 #endif
 
-    // Check for errors
     if (bytesReceived < 0) {
 #ifdef _WIN32
         int error = WSAGetLastError();
@@ -311,12 +285,7 @@ ssize_t RecvTcpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
         }
 #endif
     } else if (bytesReceived == 0) {
-        // Connection closed
         bytesReceived = SOCKET_ERROR_CLOSED;
-    }
-    
-    if (bytesReceived > 0) {
-        log_debug(std::format("RecvTcpDataNonBlocking: received {} bytes of data", bytesReceived));
     }
     
     return bytesReceived;
@@ -324,20 +293,16 @@ ssize_t RecvTcpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
 
 ssize_t RecvUdpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSize, int flags,
                               struct sockaddr *srcAddr, socklen_t *srcAddrLen, int timeoutMs) {
-    // Check if socket is readable within timeout
     if (!IsSocketReadable(socketFd, timeoutMs)) {
         return SOCKET_ERROR_TIMEOUT;
     }
     
-    
-    // Try to receive data
 #if defined(_WIN32)
     ssize_t bytesReceived = recvfrom(socketFd, (char *)buffer, bufferSize, flags, srcAddr, srcAddrLen);
 #else
     ssize_t bytesReceived = recvfrom(socketFd, buffer, bufferSize, flags, srcAddr, srcAddrLen);
 #endif
 
-    // Check for errors
     if (bytesReceived < 0) {
 #ifdef _WIN32
         int error = WSAGetLastError();
@@ -351,10 +316,6 @@ ssize_t RecvUdpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
             bytesReceived = SOCKET_ERROR_INTERRUPTED;
         }
 #endif
-    }
-    
-    if (bytesReceived > 0) {
-        log_debug(std::format("RecvUdpDataNonBlocking: received {} bytes of data", bytesReceived));
     }
     
     return bytesReceived;
@@ -430,7 +391,6 @@ int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr,
 }
 
 int SocketClose(SocketFd socketFd) {
-    log_debug("close the socket");
 #ifdef _WIN32
     return closesocket(socketFd);
 #else
@@ -447,19 +407,15 @@ ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, 
         ssize_t bytesRead = recv(socketFd, bufPtr + totalBytesRead, bytesToRead - totalBytesRead, flags);
 
         if (bytesRead < 0) {
-            // An error occurred, log the error and return
             SocketLogLastError();
             return -1;
         } else if (bytesRead == 0) {
-            // The connection was closed by the peer
-            log_debug("RecvTcpDataWithSize: connection closed by peer");
             return totalBytesRead;
         }
 
         totalBytesRead += bytesRead;
     }
 
-    log_debug(std::format("RecvTcpDataWithSize: successfully received {} bytes of data", totalBytesRead));
     return totalBytesRead;
 }
 
@@ -515,15 +471,12 @@ ssize_t RecvTcpDataWithSizeNonBlocking(SocketFd socketFd, void *buffer, size_t b
             SocketLogLastError();
             return -1;
         } else if (bytesRead == 0) {
-            // Connection closed
-            log_debug("RecvTcpDataWithSizeNonBlocking: connection closed by peer");
             return totalBytesRead;
         }
         
         totalBytesRead += bytesRead;
     }
     
-    log_debug(std::format("RecvTcpDataWithSizeNonBlocking: successfully received {} bytes of data", totalBytesRead));
     return totalBytesRead;
 }
 

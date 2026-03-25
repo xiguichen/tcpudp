@@ -85,8 +85,11 @@ bool Client::PrepareVC()
 
     // Setup disconnect callback
     vc->setDisconnectCallback([this]() {
-        log_warnning("Virtual channel disconnected. Performing cleanup.");
-        this->Stop();
+        log_warnning("Virtual channel disconnected. Attempting reconnection...");
+        if (!this->ReconnectVC()) {
+            log_error("Reconnection failed, stopping client");
+            this->Stop();
+        }
     });
 
     vc->open();
@@ -153,7 +156,12 @@ bool Client::PrepareUdpSocket()
             log_debug(std::format("Received {} bytes from UDP socket", receivedBytes));
            this->remoteUdpAddr = srcAddr;
             // send data to virtual channel
-            vc->send(buffer, receivedBytes);
+            {
+                std::lock_guard<std::mutex> lock(vcMutex);
+                if (vc && vc->isOpen()) {
+                    vc->send(buffer, receivedBytes);
+                }
+            }
         }
     }
 
@@ -194,5 +202,50 @@ void Client::Start()
         // Main loop
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
+}
+
+bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
+{
+    int retryCount = 0;
+    int delayMs = 3000;
+
+    while (running && retryCount < maxRetries) {
+        // Close existing VC
+        {
+            std::lock_guard<std::mutex> lock(vcMutex);
+            if (vc) {
+                vc->close();
+                vc = nullptr;
+            }
+        }
+
+        // Close all TCP sockets
+        for (auto sock : tcpSockets) {
+            SocketClose(sock);
+        }
+        tcpSockets.clear();
+
+        // Wait before reconnect (gives server time to clean up)
+        if (!running) break;
+
+        log_warnning(std::format("Waiting {}ms before reconnection attempt {}/{}...",
+            delayMs, retryCount + 1, maxRetries));
+        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+
+        // Try to reconnect
+        if (PrepareVC()) {
+            log_info("Reconnection successful!");
+            return true;
+        }
+
+        if (!running) break;
+
+        retryCount++;
+
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+        delayMs = (retryCount == 1) ? initialBackoffMs : initialBackoffMs * (1 << (retryCount - 1));
+    }
+
+    return false;
 }
 

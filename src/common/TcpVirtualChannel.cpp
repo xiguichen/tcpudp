@@ -115,7 +115,6 @@ void TcpVirtualChannel::send(const char *data, size_t size)
 
         auto messageId = this->lastSendMessageId.fetch_add(1);
         auto messageIdNetwork = messageId;
-        log_debug(std::format("Sending message with ID: {}", messageId));
 
         // Build the packet directly into the shared vector — no malloc needed.
         auto totalPacketSize = sizeof(VCDataPacket) + size;
@@ -203,59 +202,25 @@ void TcpVirtualChannel::close()
 }
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {
-    log_debug(std::format("Processing received message with ID: {}", messageId));
     std::lock_guard<std::mutex> lock(receivedDataMutex);
 
-    // Check if this is a duplicate message
     if (messageId < nextMessageId)
     {
-        return; // Duplicate message, ignore
+        return;
     }
 
-    // Add the received data to the map
     receivedDataMap[messageId] = data;
 
-    // Detect head-of-line blocking: message arrived but can't be delivered yet
-    if (messageId != nextMessageId)
-    {
-        auto gap = messageId - nextMessageId.load();
-        log_info(std::format("[PERF-DIAG] Out-of-order message: received msgID={}, waiting for msgID={}. "
-            "Gap={}, buffered msgs={}. Head-of-line blocking: delivery stalled until msgID {} arrives.",
-            messageId, nextMessageId.load(), gap, receivedDataMap.size(), nextMessageId.load()));
-    }
-
-    // Process messages in order
-    size_t deliveredCount = 0;
     std::map<uint64_t, std::shared_ptr<std::vector<char>>>::iterator it;
     while ((it = receivedDataMap.find(nextMessageId)) != receivedDataMap.end())
     {
-        // Call the receive callback with the data
         if (receiveCallback)
         {
             receiveCallback(it->second->data(), it->second->size());
         }
 
-        // Remove the processed message from the map
         receivedDataMap.erase(it);
-
-        // Move to the next expected message ID
         nextMessageId.fetch_add(1);
-        deliveredCount++;
-    }
-
-    if (deliveredCount > 1)
-    {
-        log_info(std::format("[PERF-DIAG] Burst delivery: {} buffered messages delivered at once. "
-            "Remaining buffered={}. Burst indicates prior head-of-line blocking was resolved.",
-            deliveredCount, receivedDataMap.size()));
-    }
-    if (!receivedDataMap.empty())
-    {
-        log_info(std::format("[PERF-DIAG] Still waiting: {} messages buffered, next expected msgID={}. "
-            "Oldest buffered msgID={}. Gap={}.",
-            receivedDataMap.size(), nextMessageId.load(),
-            receivedDataMap.begin()->first,
-            receivedDataMap.begin()->first - nextMessageId.load()));
     }
 }
 
