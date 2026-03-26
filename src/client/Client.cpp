@@ -60,6 +60,12 @@ bool Client::PrepareVC()
 
         log_info("Connected to server successfully.");
         tcpSockets.push_back(tcpSocket);
+
+        // Add delay between connections to give server time to process
+        if (i == 0) {
+            log_info("Waiting 500ms before establishing second TCP connection...");
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
     }
 
     // Create virtual channel with the connected sockets
