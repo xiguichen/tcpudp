@@ -104,11 +104,12 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         // UDP packet loss is acceptable; unbounded queuing is not.
         for (auto &q : sendQueues)
         {
-            if (q->size() > SEND_QUEUE_DROP_THRESHOLD)
+            auto size = q->size();
+            if (size > SEND_QUEUE_DROP_THRESHOLD)
             {
                 log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}. "
                     "Dropping UDP packet to apply backpressure.",
-                    q->size(), SEND_QUEUE_DROP_THRESHOLD));
+                    size, SEND_QUEUE_DROP_THRESHOLD));
                 return;
             }
         }
