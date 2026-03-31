@@ -107,8 +107,6 @@ void TcpVirtualChannel::send(const char *data, size_t size)
             return;
         }
 
-        log_info("append data to send queue");
-
         auto messageId = this->lastSendMessageId.fetch_add(1);
         auto messageIdNetwork = messageId;
 
