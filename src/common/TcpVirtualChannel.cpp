@@ -41,11 +41,9 @@ void TcpVirtualChannel::open()
             self->opened = false;
             shouldNotify = (self->disconnectCallback != nullptr);
 
-            // Cancel any waiting operations on all send queues
-            for (auto &q : self->sendQueues) {
-                if (q) {
-                    q->cancelWait();
-                }
+            // Cancel any waiting operations on the send queue
+            if (self->sendQueue) {
+                self->sendQueue->cancelWait();
             }
 
             // Close all the connections first
@@ -84,7 +82,7 @@ void TcpVirtualChannel::open()
         readThread->setDisconnectCallback(disconnectCB);
         readThread->start();
         readThreads.emplace_back(readThread);
-        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueues[i], this->connections[i]);
+        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i]);
         writeThread->start();
         writeThreads.emplace_back(writeThread);
     }
@@ -100,18 +98,14 @@ void TcpVirtualChannel::send(const char *data, size_t size)
     }
     if (data != nullptr && size > 0)
     {
-        // Drop packet if any send queue is too deep — backpressure for UDP data.
-        // UDP packet loss is acceptable; unbounded queuing is not.
-        for (auto &q : sendQueues)
+        auto &q = this->sendQueue;
+        auto size = q->size();
+        if (size > SEND_QUEUE_DROP_THRESHOLD)
         {
-            auto size = q->size();
-            if (size > SEND_QUEUE_DROP_THRESHOLD)
-            {
-                log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}. "
-                    "Dropping UDP packet to apply backpressure.",
-                    size, SEND_QUEUE_DROP_THRESHOLD));
-                return;
-            }
+            log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}. "
+                "Dropping UDP packet to apply backpressure.",
+                size, SEND_QUEUE_DROP_THRESHOLD));
+            return;
         }
 
         auto messageId = this->lastSendMessageId.fetch_add(1);
@@ -126,13 +120,8 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         packet->header.messageId = messageIdNetwork;
         packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
+        sendQueue->enqueue(dataVec);
 
-        // Enqueue to ALL connections so every connection sends every message.
-        // The receiver drops duplicates via messageId — fastest connection wins.
-        for (auto &q : sendQueues)
-        {
-            q->enqueue(dataVec);
-        }
     }
 }
 bool TcpVirtualChannel::isOpen() const
@@ -147,12 +136,8 @@ void TcpVirtualChannel::close()
         return;
     }
 
-    // Cancel any waiting operations on all send queues
-    for (auto &q : this->sendQueues) {
-        if (q) {
-            q->cancelWait();
-        }
-    }
+    // Cancel any waiting operations
+    this->sendQueue->cancelWait();
 
     // Close all the connections and stop threads
     log_debug("Closing TcpVirtualChannel connections");
@@ -230,8 +215,8 @@ TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
     for (auto fd : fds)
     {
         connections.emplace_back(std::make_shared<TcpConnection>(fd));
-        sendQueues.emplace_back(std::make_shared<BlockingQueue>());
     }
+    sendQueue = std::make_shared<BlockingQueue>();
 }
 
 

@@ -37,7 +37,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
     std::vector<TcpConnectionSp> connections;
-    std::vector<BlockingQueueSp> sendQueues;
+    BlockingQueueSp sendQueue;
     std::map<uint64_t, std::shared_ptr<std::vector<char>>> receivedDataMap;
     std::mutex receivedDataMutex;
 
