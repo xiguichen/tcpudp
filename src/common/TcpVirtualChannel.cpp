@@ -98,15 +98,16 @@ void TcpVirtualChannel::send(const char *data, size_t size)
     }
     if (data != nullptr && size > 0)
     {
-        auto &q = this->sendQueue;
-        auto size = q->size();
-        if (size > SEND_QUEUE_DROP_THRESHOLD)
+        auto quesize = this->sendQueue->size();
+        if (quesize > SEND_QUEUE_DROP_THRESHOLD)
         {
             log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}. "
                 "Dropping UDP packet to apply backpressure.",
-                size, SEND_QUEUE_DROP_THRESHOLD));
+                quesize, SEND_QUEUE_DROP_THRESHOLD));
             return;
         }
+
+        log_info("append data to send queue");
 
         auto messageId = this->lastSendMessageId.fetch_add(1);
         auto messageIdNetwork = messageId;
