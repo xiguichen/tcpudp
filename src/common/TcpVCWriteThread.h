@@ -20,7 +20,6 @@ class TcpVCWriteThread : public StopableThread
   private:
     BlockingQueueSp writeQueue;
     TcpConnectionSp connection;
-    uint64_t lastMessageId = 0;
 };
 
 typedef std::shared_ptr<TcpVCWriteThread> TcpVCWriteThreadSp;

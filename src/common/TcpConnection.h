@@ -46,14 +46,10 @@ public:
     // Get the socket file descriptor
     SocketFd getSocketFd() const;
 
-    // Set callback for send timeout handling
-    void setOnSendTimeoutCallback(const std::function<void(char *buffer, size_t size)> &callback);
-
   private:
-    std::mutex disconnectMutex;                                             // Per-instance mutex for disconnect (not static — avoids cross-instance deadlock)
-    std::atomic<bool> connected{false};                                     // Connection state (atomic for thread safety)
-    SocketFd socketFd = -1;                                                 // Socket file descriptor
-    std::function<void(char *buffer, size_t size)> onSendTimeout = nullptr; // Callback for handle send timeout
+    std::mutex disconnectMutex;         // Per-instance mutex for disconnect (not static — avoids cross-instance deadlock)
+    std::atomic<bool> connected{false}; // Connection state (atomic for thread safety)
+    SocketFd socketFd = -1;             // Socket file descriptor
 };
 
 typedef std::shared_ptr<TcpConnection> TcpConnectionSp;

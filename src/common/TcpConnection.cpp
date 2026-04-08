@@ -64,22 +64,8 @@ void TcpConnection::send(const char *data, size_t size)
         {
             // Handle send error
             log_error("Failed to send data over TCP connection");
-            int lastError = SocketLogLastError();
-#ifdef _WIN32
-            if (lastError == WSAETIMEDOUT)
-#else 
-            if (lastError == ETIMEDOUT)
-#endif
-            {
-                // Invoke the send timeout callback if set
-                if (onSendTimeout)
-                {
-                    onSendTimeout(const_cast<char *>(data), size);
-                }
-            }
-            else {
-                disconnect();
-            }
+            SocketLogLastError();
+            disconnect();
         }
     }
     else
@@ -94,8 +80,4 @@ SocketFd TcpConnection::getSocketFd() const
     return socketFd;
 }
 
-void TcpConnection::setOnSendTimeoutCallback(const std::function<void(char *buffer, size_t size)> &callback)
-{
-    onSendTimeout = callback;
-}
 
