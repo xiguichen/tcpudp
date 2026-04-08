@@ -36,18 +36,23 @@ src/
 ├── server/        # TCP/UDP server implementation
 ├── common/        # Shared utilities and abstractions
 ├── tests/         # Unit tests
-├── test_vc_client/# Virtual channel test client
-├── third_party/   # Third-party dependencies (nlohmann/json)
+├── test_vc_client/# Virtual channel test client (not in CMakeLists.txt)
+├── test/          # Python integration test scripts (client.py, server.py)
+├── third_party/   # Third-party dependencies (nlohmann/json at third_party/json/nlohmann/)
 └── CMakeLists.txt # CMake build configuration
+doc/               # Architecture and feature documentation
+build.py           # Primary build script (Ninja/CMake, C++20)
+run.py             # Helper run script
 ```
 
 ### Key Architectural Patterns
 
 **Virtual Channel (VC) Architecture**
 - Virtual channels abstract TCP connections using a message-based protocol
-- Each VC uses multiple TCP connections (default: 2) for reliability and throughput
+- Each VC uses multiple TCP connections (default: 8, defined as `VC_TCP_CONNECTIONS` in `VcProtocol.h`) for reliability and throughput
 - Message-based protocol (VCDataPacket) with sequence IDs and max payload of 2000 bytes
 - Managed by singleton `VcManager` to track active channels by client ID
+- Incoming UDP packets are dropped when any send queue exceeds `SEND_QUEUE_DROP_THRESHOLD` (500) to prevent unbounded memory growth
 
 **Non-Blocking I/O**
 - All socket operations use non-blocking I/O with configurable timeouts
@@ -61,11 +66,17 @@ src/
 - `StopableThread` base class for graceful thread shutdown
 - `TcpVCReadThread` and `TcpVCWriteThread` handle individual connection I/O
 
-**Protocol**
-- Binary protocol defined in `VcProtocol.h` using packed structures
-- VCHeader contains packet type and message ID
-- VCDataPacket includes data length and payload
-- Uses `#pragma pack(push, 1)` for 1-byte alignment
+**VC Protocol** (`VcProtocol.h`)
+- Binary protocol using packed structures (`#pragma pack(push, 1)`)
+- `VCHeader` contains packet type and message ID; `VCDataPacket` includes data length and payload
+- Constants: `VC_MAX_DATA_PAYLOAD_SIZE` = 2000, `VC_TCP_CONNECTIONS` = 8, `SEND_QUEUE_DROP_THRESHOLD` = 500
+
+**UVT Protocol** (`Protocol.h`)
+- Higher-level UDP-over-TCP framing protocol ("UVT" = UDP over TCP)
+- `UvtHeader` contains size, message ID, and XOR checksum
+- `UvtUtils` provides encode/decode helpers (`AppendUdpData`, `ExtractUdpData`)
+- `MsgBind` / `MsgBindResponse` handle client-to-server binding handshake
+- `ConnectionManager` singleton tracks active connections by client ID and connection ID
 
 ### Core Components
 
@@ -88,13 +99,37 @@ src/
 
 **Client** (`src/client/Client.h/cpp`)
 - Manages TCP and UDP sockets
-- Prepares virtual channel for communication
-- Handles connection lifecycle
+- Prepares virtual channel via `PrepareVC()`
+- Handles connection lifecycle including `ReconnectVC()` with configurable retries and exponential backoff
+- Configuration via `ClientConfiguration` singleton (reads `src/client/config.json`)
 
 **Server** (`src/server/Server.h/cpp`)
 - Listens for incoming connections
-- Accepts connections and manages peer state
+- Accepts connections and delegates peer tracking to `PeerManager`
 - Uses `VcManager` to track active virtual channels
+
+**Peer / PeerManager** (`src/server/Peer.h/cpp`)
+- `Peer` holds the TCP sockets and UDP address for a connected client
+- `PeerManager` is a static class managing all peers by client ID (`GetPeerById`, `AddPeer`, `RemovePeer`, `CloseAllSockets`)
+
+**Queue Manager** (`src/common/QueueManager.h/cpp`)
+- Singleton managing per-client `BlockingQueue` instances
+- Separate queues for each direction: TCP-to-UDP and UDP-to-TCP
+
+**Data Processing** (`src/common/DataProcessorThread.h`, `DataProcessorContext.h`, `DataProcessorState.h`)
+- `DataProcessorThread` extends `StopableThread` and drives an `IDataReader` → `IDataProcessor` pipeline
+- `DataProcessorContext` implements a state machine via `DataProcessorState` for protocol parsing
+- `TcpDataReader` implements `IDataReader` for reading from a TCP socket
+
+**Factories** (`src/common/*Factory.h`)
+- `VirtualChannelFactory::create(fds)` — creates `TcpVirtualChannel`
+- `TcpConnectionFactory::create(fd)` — creates `TcpConnection`
+- `TcpVCReadThreadFactory::createThread(conn)` / `TcpVCWriteThreadFactory` — create read/write threads
+
+**Utilities** (`src/common/`)
+- `Counter<T>` / `CounterManager` — per-client atomic sent/received counters (singleton per client ID)
+- `PerformanceCounter` — tracks function execution time (min/max/avg); global `g_perfCounter`
+- `DataNotifier` / `TcpDataAckNotifierSingleton` — listener-based acknowledgement notification
 
 ## Code Style
 

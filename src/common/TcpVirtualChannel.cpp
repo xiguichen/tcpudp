@@ -98,6 +98,12 @@ void TcpVirtualChannel::send(const char *data, size_t size)
     }
     if (data != nullptr && size > 0)
     {
+        if (size > VC_MAX_DATA_PAYLOAD_SIZE)
+        {
+            log_error(std::format("UDP packet size {} exceeds VC_MAX_DATA_PAYLOAD_SIZE {}, dropping", size, VC_MAX_DATA_PAYLOAD_SIZE));
+            return;
+        }
+
         auto quesize = this->sendQueue->size();
         if (quesize > SEND_QUEUE_DROP_THRESHOLD)
         {
@@ -188,24 +194,9 @@ void TcpVirtualChannel::close()
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {
     std::lock_guard<std::mutex> lock(receivedDataMutex);
-
-    if (messageId < nextMessageId)
+    if (receiveCallback)
     {
-        return;
-    }
-
-    receivedDataMap[messageId] = data;
-
-    std::map<uint64_t, std::shared_ptr<std::vector<char>>>::iterator it;
-    while ((it = receivedDataMap.find(nextMessageId)) != receivedDataMap.end())
-    {
-        if (receiveCallback)
-        {
-            receiveCallback(it->second->data(), it->second->size());
-        }
-
-        receivedDataMap.erase(it);
-        nextMessageId.fetch_add(1);
+        receiveCallback(data->data(), data->size());
     }
 }
 

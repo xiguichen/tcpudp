@@ -277,34 +277,35 @@ TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
     static int callCount = 0;
 
     // recv data callback
+    // Packets are delivered in arrival order: messageId=2 (data3), 0 (data1), 1 (data2)
     auto recvCallback = [&callbackCount, &callbackMutex, &callbackCondition, this, data1, size1, data2, size2, data3,
                          size3](const char *recvData, size_t recvSize) {
         if (callCount == 0)
         {
             {
-                auto message = std::string("Processing first message: Expected size = ") + std::to_string(size1) + ", Received size = " + std::to_string(recvSize);
+                auto message = std::string("Processing first arrival: Expected size = ") + std::to_string(size3) + ", Received size = " + std::to_string(recvSize);
+                std::cout << message << std::endl;
+            }
+            EXPECT_EQ(recvSize, size3);
+            EXPECT_STREQ(recvData, data3);
+        }
+        else if (callCount == 1)
+        {
+            {
+                auto message = std::string("Processing second arrival: Expected size = ") + std::to_string(size1) + ", Received size = " + std::to_string(recvSize);
                 std::cout << message << std::endl;
             }
             EXPECT_EQ(recvSize, size1);
             EXPECT_STREQ(recvData, data1);
         }
-        else if (callCount == 1)
+        else if (callCount == 2)
         {
             {
-                auto message = std::string("Processing second message: Expected size = ") + std::to_string(size2) + ", Received size = " + std::to_string(recvSize);
+                auto message = std::string("Processing third arrival: Expected size = ") + std::to_string(size2) + ", Received size = " + std::to_string(recvSize);
                 std::cout << message << std::endl;
             }
             EXPECT_EQ(recvSize, size2);
             EXPECT_STREQ(recvData, data2);
-        }
-        else if (callCount == 2)
-        {
-            {
-                auto message = std::string("Processing third message: Expected size = ") + std::to_string(size3) + ", Received size = " + std::to_string(recvSize);
-                std::cout << message << std::endl;
-            }
-            EXPECT_EQ(recvSize, size3);
-            EXPECT_STREQ(recvData, data3);
         }
         else
         {
