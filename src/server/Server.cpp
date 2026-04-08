@@ -163,7 +163,7 @@ void Server::AcceptConnections()
                 }
             });
 
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId]() {
+            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, udpSocket]() {
                 // Remove VC from manager only if it exists to avoid double-removal
                 if (VcManager::getInstance().Exists(clientId)) {
                     VcManager::getInstance().Remove(clientId);
@@ -174,6 +174,9 @@ void Server::AcceptConnections()
                 // a newly accepted socket that got the same FD number from the OS.
                 // Just remove the peer so the next AddPeer call gets a clean slate.
                 PeerManager::RemovePeer(clientId);
+                // Close the UDP socket to unblock recv() in the UDP receive thread,
+                // allowing it to exit. The thread must not close it again after this.
+                SocketClose(udpSocket);
             });
 
             // start a new thread to receive data from the UDP socket
@@ -198,7 +201,7 @@ void Server::AcceptConnections()
                         vc->send(buffer, receivedBytes);
                     }
                 }
-                SocketClose(udpSocket);
+                // Socket is closed by the disconnect callback; do not close it here.
             }).detach();
 
             // Now we can open the virtual channel

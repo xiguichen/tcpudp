@@ -90,12 +90,19 @@ bool Client::PrepareVC()
     });
 
     // Setup disconnect callback
+    // ReconnectVC calls vc->close() which joins all VC threads. Since this callback
+    // is invoked synchronously from a VC read/write thread, running ReconnectVC on
+    // that same thread would cause it to join itself — a guaranteed deadlock.
+    // Spawning a detached thread lets the VC thread exit normally while reconnection
+    // proceeds independently.
     vc->setDisconnectCallback([this]() {
         log_warnning("Virtual channel disconnected. Attempting reconnection...");
-        if (!this->ReconnectVC()) {
-            log_error("Reconnection failed, stopping client");
-            this->Stop();
-        }
+        std::thread([this]() {
+            if (!this->ReconnectVC()) {
+                log_error("Reconnection failed, stopping client");
+                this->Stop();
+            }
+        }).detach();
     });
 
     vc->open();
