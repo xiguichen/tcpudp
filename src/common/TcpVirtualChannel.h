@@ -4,6 +4,8 @@
 #include "TcpVCWriteThread.h"
 #include "VirtualChannel.h"
 #include <atomic>
+#include <chrono>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -33,11 +35,13 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data);
 
   private:
+    void drainReceivedDataMap();
+
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
-    // Serializes concurrent receive callbacks from 8 read threads
+    std::map<uint64_t, std::shared_ptr<std::vector<char>>> receivedDataMap;
     std::mutex receivedDataMutex;
 
     // Mutex to ensure thread safety for disconnection handling
@@ -46,4 +50,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     // VC state
     std::atomic<bool> opened{false};
     std::atomic<long> lastSendMessageId{0};
+    std::atomic<uint64_t> nextMessageId{0};
+    std::chrono::steady_clock::time_point gapFirstSeen;
+    bool gapTimerActive{false};
 };

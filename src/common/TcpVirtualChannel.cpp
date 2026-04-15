@@ -6,6 +6,8 @@
 #include <cstring>
 #include <format>
 
+static constexpr auto REORDER_TIMEOUT_MS = std::chrono::milliseconds(500);
+
 void TcpVirtualChannel::open()
 {
 
@@ -194,9 +196,53 @@ void TcpVirtualChannel::close()
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {
     std::lock_guard<std::mutex> lock(receivedDataMutex);
-    if (receiveCallback)
+
+    if (messageId < nextMessageId)
     {
-        receiveCallback(data->data(), data->size());
+        return;
+    }
+
+    receivedDataMap[messageId] = data;
+    drainReceivedDataMap();
+
+    if (!receivedDataMap.empty())
+    {
+        if (!gapTimerActive)
+        {
+            gapFirstSeen = std::chrono::steady_clock::now();
+            gapTimerActive = true;
+        }
+        else
+        {
+            auto elapsed = std::chrono::steady_clock::now() - gapFirstSeen;
+            if (elapsed >= REORDER_TIMEOUT_MS)
+            {
+                uint64_t skipTo = receivedDataMap.begin()->first;
+                log_warnning(std::format("Reorder timeout: skipping messageIds {}-{}, advancing to {}",
+                                         nextMessageId.load(), skipTo - 1, skipTo));
+                nextMessageId.store(skipTo);
+                gapTimerActive = false;
+                drainReceivedDataMap();
+            }
+        }
+    }
+    else
+    {
+        gapTimerActive = false;
+    }
+}
+
+void TcpVirtualChannel::drainReceivedDataMap()
+{
+    std::map<uint64_t, std::shared_ptr<std::vector<char>>>::iterator it;
+    while ((it = receivedDataMap.find(nextMessageId)) != receivedDataMap.end())
+    {
+        if (receiveCallback)
+        {
+            receiveCallback(it->second->data(), it->second->size());
+        }
+        receivedDataMap.erase(it);
+        nextMessageId.fetch_add(1);
     }
 }
 
