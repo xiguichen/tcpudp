@@ -334,9 +334,9 @@ TEST_F(TcpVirtualChannelTest, processReceivedDataTest)
     {
         // instead of sending via channel, directly call processReceivedData to simulate out-of-order
         log_info("Simulating out-of-order message reception");
-        serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3));
-        serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1));
-        serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2));
+        serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3), 0);
+        serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1), 0);
+        serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2), 0);
         std::cout << "Client thread finished simulating out-of-order messages" << std::endl;
     });
 
@@ -363,8 +363,8 @@ TEST_F(TcpVirtualChannelTest, DuplicateMessageDropTest)
     clientChannel->open();
 
     // Send same messageId=0 twice
-    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1));
-    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1));
+    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1), 0);
+    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1), 0);
 
     // Only the first should have been delivered
     ASSERT_EQ(callbackCount.load(), 1);
@@ -408,10 +408,10 @@ TEST_F(TcpVirtualChannelTest, OldMessageDropTest)
     clientChannel->open();
 
     // Deliver messages 0 and 1 in order
-    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1));
-    serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2));
+    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1), 0);
+    serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2), 0);
     // Now nextMessageId==2; sending messageId=0 again should be silently dropped
-    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(dataOld, dataOld + sizeOld));
+    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(dataOld, dataOld + sizeOld), 0);
 
     ASSERT_EQ(callbackCount.load(), 2);
 }
@@ -459,7 +459,7 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutTest)
     clientChannel->open();
 
     // Send messageId=1 (skipping 0) — gets buffered, gap timer starts
-    serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2));
+    serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2), 0);
 
     // Nothing should be delivered yet (waiting for messageId=0)
     ASSERT_EQ(callbackCount.load(), 0);
@@ -472,7 +472,7 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutTest)
 
     // Send messageId=2 — this triggers the timeout check, which skips id=0,
     // then drains id=1 and id=2
-    serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3));
+    serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3), 0);
 
     // Both messages should now be delivered
     ASSERT_EQ(callbackCount.load(), 2);
@@ -500,22 +500,22 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutResetsAfterGapFilled)
     clientChannel->open();
 
     // Create first gap: send id=1 (missing id=0)
-    serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data1, data1 + size1));
+    serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data1, data1 + size1), 0);
     ASSERT_EQ(callbackCount.load(), 0);
 
     // Fill the gap quickly — both 0 and 1 delivered, timer clears
-    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data0, data0 + size0));
+    serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data0, data0 + size0), 0);
     ASSERT_EQ(callbackCount.load(), 2);
 
     // Create second gap: send id=3 (missing id=2), fresh timer starts now
-    serverChannel->processReceivedData(3, std::make_shared<std::vector<char>>(data3, data3 + size3));
+    serverChannel->processReceivedData(3, std::make_shared<std::vector<char>>(data3, data3 + size3), 0);
     ASSERT_EQ(callbackCount.load(), 2);
 
     // Wait past the timeout
     std::this_thread::sleep_for(std::chrono::milliseconds(600));
 
     // Trigger timeout check with id=4
-    serverChannel->processReceivedData(4, std::make_shared<std::vector<char>>(data4, data4 + size4));
+    serverChannel->processReceivedData(4, std::make_shared<std::vector<char>>(data4, data4 + size4), 0);
 
     // id=3 and id=4 delivered after skipping id=2
     ASSERT_EQ(callbackCount.load(), 4);

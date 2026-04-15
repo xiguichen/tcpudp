@@ -3,6 +3,7 @@
 #include "Socket.h"
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -33,8 +34,18 @@ class TcpConnection
     // Set callback for disconnect events
     void setDisconnectCallback(std::function<void()> callback);
 
+    // Diagnostics: mark/inspect TCP send progress (used to debug VC reorder timeouts)
+    void diagMarkSendStart(uint64_t messageId);
+    void diagMarkSendEnd(uint64_t messageId);
+
+    bool diagIsSendInFlight() const { return diagSendInFlight.load(); }
+    uint64_t diagInFlightMessageId() const { return diagInFlightMessageIdVal.load(); }
+    int64_t diagInFlightStartMs() const { return diagInFlightStartMsVal.load(); }
+    uint64_t diagLastSendCompletedMessageId() const { return diagLastSendCompletedMessageIdVal.load(); }
+    int64_t diagLastSendEndMs() const { return diagLastSendEndMsVal.load(); }
+
   private:
-public:
+ public:
     std::function<void()> disconnectCallback;
 
     // Method to check if the connection is established
@@ -50,6 +61,13 @@ public:
     std::mutex disconnectMutex;         // Per-instance mutex for disconnect (not static — avoids cross-instance deadlock)
     std::atomic<bool> connected{false}; // Connection state (atomic for thread safety)
     SocketFd socketFd = -1;             // Socket file descriptor
+
+    // Diagnostics-only state (atomic to avoid extra locking in send threads)
+    std::atomic<bool> diagSendInFlight{false};
+    std::atomic<uint64_t> diagInFlightMessageIdVal{0};
+    std::atomic<int64_t> diagInFlightStartMsVal{0};
+    std::atomic<uint64_t> diagLastSendCompletedMessageIdVal{0};
+    std::atomic<int64_t> diagLastSendEndMsVal{0};
 };
 
 typedef std::shared_ptr<TcpConnection> TcpConnectionSp;

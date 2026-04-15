@@ -1,10 +1,12 @@
 #include <cstddef>
+#include <chrono>
 #include <format>
 #include <cstring>
 #include "Log.h"
 #include "TcpVCReadThread.h"
 #include "VcProtocol.h"
 #include "PerformanceCounter.h"
+#include "Socket.h"
 
 void TcpVCReadThread::run()
 {
@@ -13,6 +15,11 @@ void TcpVCReadThread::run()
     try
     {
         char buffer[1500];
+        auto lastBacklogWarn = std::chrono::steady_clock::time_point{};
+        static constexpr auto BACKLOG_WARN_INTERVAL = std::chrono::seconds(1);
+        static constexpr size_t BACKLOG_BUFVEC_WARN_BYTES = 64 * 1024;
+        static constexpr auto PROCESS_SLOW_WARN_MS = std::chrono::milliseconds(100);
+
         while (this->isRunning() && this->connection->isConnected())
         {
             size_t dataSize = this->connection->receive(buffer, sizeof(buffer));
@@ -29,6 +36,7 @@ void TcpVCReadThread::run()
                 break;
             }
 
+            auto processingStart = std::chrono::steady_clock::now();
             while (this->hasEnoughData(bufferVector.data(), bufferVector.size()))
             {
                 int processedBytes = this->processBuffer(bufferVector);
@@ -45,6 +53,42 @@ void TcpVCReadThread::run()
                     log_error("Error processing buffer, stopping read thread");
                     break;
                 }
+            }
+
+            auto processingDur = std::chrono::steady_clock::now() - processingStart;
+            auto now = std::chrono::steady_clock::now();
+            bool shouldWarn = false;
+            if (bufferVector.size() >= BACKLOG_BUFVEC_WARN_BYTES)
+            {
+                shouldWarn = true;
+            }
+            if (processingDur >= PROCESS_SLOW_WARN_MS)
+            {
+                shouldWarn = true;
+            }
+            if (shouldWarn && (lastBacklogWarn.time_since_epoch().count() == 0 ||
+                               (now - lastBacklogWarn) >= BACKLOG_WARN_INTERVAL))
+            {
+                lastBacklogWarn = now;
+                int pendingBytes = SocketBytesAvailable(connection->getSocketFd());
+                auto procMs = std::chrono::duration_cast<std::chrono::milliseconds>(processingDur).count();
+
+                uint64_t headMsgId = 0;
+                uint16_t headLen = 0;
+                if (bufferVector.size() >= sizeof(VCDataPacket))
+                {
+                    const VCDataPacket *pkt = reinterpret_cast<const VCDataPacket *>(bufferVector.data());
+                    headMsgId = pkt->header.messageId;
+                    headLen = pkt->dataLength;
+                }
+
+                log_warnning(std::format("[VC] ReadThread backlog: conn={} bufVec={}B pendingBytes={} procMs={} headMsgId={} headLen={}B",
+                                         connectionIndex,
+                                         bufferVector.size(),
+                                         pendingBytes,
+                                         procMs,
+                                         headMsgId,
+                                         headLen));
             }
         }
 

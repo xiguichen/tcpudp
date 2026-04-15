@@ -1,7 +1,27 @@
 #include "TcpConnection.h"
 #include "Log.h"
 #include "PerformanceCounter.h"
+#include <chrono>
 #include <mutex>
+
+static int64_t NowSteadyMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void TcpConnection::diagMarkSendStart(uint64_t messageId)
+{
+    diagInFlightMessageIdVal.store(messageId);
+    diagInFlightStartMsVal.store(NowSteadyMs());
+    diagSendInFlight.store(true);
+}
+
+void TcpConnection::diagMarkSendEnd(uint64_t messageId)
+{
+    diagLastSendCompletedMessageIdVal.store(messageId);
+    diagLastSendEndMsVal.store(NowSteadyMs());
+    diagSendInFlight.store(false);
+}
 
 void TcpConnection::disconnect()
 {
@@ -79,5 +99,4 @@ SocketFd TcpConnection::getSocketFd() const
 {
     return socketFd;
 }
-
 

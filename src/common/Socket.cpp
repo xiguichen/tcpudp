@@ -141,6 +141,29 @@ bool IsSocketWritable(SocketFd socketFd, int timeoutMs) {
     return (SocketPoll(socketFd, POLLOUT, timeoutMs) & POLLOUT) != 0;
 }
 
+int SocketBytesAvailable(SocketFd socketFd)
+{
+    if (socketFd == -1)
+    {
+        return -1;
+    }
+#ifdef _WIN32
+    u_long bytes = 0;
+    if (ioctlsocket(socketFd, FIONREAD, &bytes) != 0)
+    {
+        return -1;
+    }
+    return static_cast<int>(bytes);
+#else
+    int bytes = 0;
+    if (ioctl(socketFd, FIONREAD, &bytes) != 0)
+    {
+        return -1;
+    }
+    return bytes;
+#endif
+}
+
 int SocketSelect(SocketFd socketFd, int timeoutSec) {
     fd_set readfds;
     FD_ZERO(&readfds);

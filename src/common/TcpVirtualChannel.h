@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_this<TcpVirtualChannel>
@@ -32,17 +33,23 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     // Method to close the channel
     virtual void close();
 
-    void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data);
+    void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex);
 
   private:
     void drainReceivedDataMap();
+
+    struct ReceivedItem
+    {
+        std::shared_ptr<std::vector<char>> data;
+        int sourceConnIndex{-1};
+    };
 
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
-    std::map<uint64_t, std::shared_ptr<std::vector<char>>> receivedDataMap;
-    std::mutex receivedDataMutex;
+    std::map<uint64_t, ReceivedItem> receivedDataMap;
+    std::timed_mutex receivedDataMutex;
 
     // Mutex to ensure thread safety for disconnection handling
     std::mutex disconnectMutex;
@@ -53,4 +60,10 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::atomic<uint64_t> nextMessageId{0};
     std::chrono::steady_clock::time_point gapFirstSeen;
     bool gapTimerActive{false};
+    int lastDeliveredConnIndex{-1};
+
+    // Per-connection receive stats (updated under receivedDataMutex)
+    std::vector<uint64_t> lastRxMessageId;
+    std::vector<std::chrono::steady_clock::time_point> lastRxTime;
+    std::vector<bool> lastRxValid;
 };

@@ -11,7 +11,7 @@ class TcpVCReadThread : public StopableThread
 
   public:
 
-    TcpVCReadThread(TcpConnectionSp connection) : connection(connection) {}
+    TcpVCReadThread(TcpConnectionSp connection, int connectionIndex) : connection(connection), connectionIndex(connectionIndex) {}
 
     virtual ~TcpVCReadThread();
 
@@ -27,6 +27,7 @@ class TcpVCReadThread : public StopableThread
 
   private:
     TcpConnectionSp connection;
+    int connectionIndex{-1};
     std::vector<char> bufferVector;
 
     inline bool hasEnoughData(const char *buffer, size_t size);

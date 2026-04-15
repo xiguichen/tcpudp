@@ -6,9 +6,9 @@ class TcpVCReadThreadFactory
 {
   public:
 
-    static TcpVCReadThreadSp createThread(TcpConnectionSp connection)
+    static TcpVCReadThreadSp createThread(TcpConnectionSp connection, int connectionIndex)
     {
-        return std::make_shared<TcpVCReadThread>(connection);
+        return std::make_shared<TcpVCReadThread>(connection, connectionIndex);
     }
 
 };

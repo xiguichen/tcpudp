@@ -8,8 +8,8 @@
 class TcpVCWriteThread : public StopableThread
 {
   public:
-    TcpVCWriteThread(BlockingQueueSp writeQueue, TcpConnectionSp connection)
-        : writeQueue(writeQueue), connection(connection)
+    TcpVCWriteThread(BlockingQueueSp writeQueue, TcpConnectionSp connection, int connectionIndex)
+        : writeQueue(writeQueue), connection(connection), connectionIndex(connectionIndex)
     {
     }
     virtual ~TcpVCWriteThread();
@@ -20,6 +20,7 @@ class TcpVCWriteThread : public StopableThread
   private:
     BlockingQueueSp writeQueue;
     TcpConnectionSp connection;
+    int connectionIndex{-1};
 };
 
 typedef std::shared_ptr<TcpVCWriteThread> TcpVCWriteThreadSp;

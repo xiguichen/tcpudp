@@ -61,6 +61,7 @@ int SocketSelect(SocketFd socketFd, int timeoutSec);
 int SocketPoll(SocketFd socketFd, int events, int timeoutMs);
 bool IsSocketReadable(SocketFd socketFd, int timeoutMs);
 bool IsSocketWritable(SocketFd socketFd, int timeoutMs);
+int SocketBytesAvailable(SocketFd socketFd);
 
 
 // Error handling
