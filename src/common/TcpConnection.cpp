@@ -23,6 +23,11 @@ void TcpConnection::diagMarkSendEnd(uint64_t messageId)
     diagSendInFlight.store(false);
 }
 
+void TcpConnection::updateLastRecvTime()
+{
+    lastRecvTimeMsVal.store(NowSteadyMs());
+}
+
 void TcpConnection::disconnect()
 {
     std::function<void()> callbackToInvoke;
@@ -64,6 +69,10 @@ size_t TcpConnection::receive(char *buffer, size_t bufferSize)
             // Close this connection
             disconnect();
             return 0;
+        }
+        if (bytesReceived > 0)
+        {
+            updateLastRecvTime();
         }
         return static_cast<size_t>(bytesReceived);
     }

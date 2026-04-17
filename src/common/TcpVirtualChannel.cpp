@@ -9,6 +9,8 @@
 #include <string>
 
 static constexpr auto REORDER_TIMEOUT_MS = std::chrono::milliseconds(500);
+static constexpr auto REORDER_EARLY_TIMEOUT_MS = std::chrono::milliseconds(200);
+static constexpr size_t REORDER_EARLY_SKIP_BUFFER_THRESHOLD = 4;
 static constexpr auto RECEIVE_CALLBACK_SLOW_WARN_MS = std::chrono::milliseconds(50);
 
 void TcpVirtualChannel::open()
@@ -283,7 +285,9 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
             else
             {
                 auto elapsed = std::chrono::steady_clock::now() - gapFirstSeen;
-                if (elapsed >= REORDER_TIMEOUT_MS)
+                bool earlySkip = receivedDataMap.size() >= REORDER_EARLY_SKIP_BUFFER_THRESHOLD &&
+                                 elapsed >= REORDER_EARLY_TIMEOUT_MS;
+                if (elapsed >= REORDER_TIMEOUT_MS || earlySkip)
                 {
                     rtDiag.fired = true;
 
