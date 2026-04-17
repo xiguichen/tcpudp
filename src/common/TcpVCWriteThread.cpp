@@ -12,10 +12,6 @@ void TcpVCWriteThread::run()
 
     static constexpr auto SLOW_SEND_WARN_MS = std::chrono::milliseconds(100);
     static constexpr int WRITABLE_CHECK_TIMEOUT_MS = 50;
-    static constexpr int64_t CONN_STALE_THRESHOLD_MS = 500;
-    static constexpr int MAX_CONSECUTIVE_SKIPS = 3;
-
-    int consecutiveHealthSkips = 0;
 
     while (this->isRunning())
     {
@@ -40,22 +36,6 @@ void TcpVCWriteThread::run()
                 payloadLen = packet->dataLength;
             }
 
-            auto lastRx = connection->lastRecvTimeMs();
-            auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-            if (lastRx > 0 && (nowMs - lastRx) > CONN_STALE_THRESHOLD_MS &&
-                consecutiveHealthSkips < MAX_CONSECUTIVE_SKIPS)
-            {
-                log_warnning(std::format(
-                    "[VC] WriteThread conn={}: connection stale (lastRx={}ms ago), re-enqueueing messageId={}",
-                    connectionIndex, nowMs - lastRx, messageId));
-                writeQueue->enqueue(data);
-                consecutiveHealthSkips++;
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
-
             if (!IsSocketWritable(connection->getSocketFd(), WRITABLE_CHECK_TIMEOUT_MS))
             {
                 log_warnning(std::format(
@@ -65,8 +45,6 @@ void TcpVCWriteThread::run()
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
-
-            consecutiveHealthSkips = 0;
 
             auto start = std::chrono::steady_clock::now();
             connection->diagMarkSendStart(messageId);
