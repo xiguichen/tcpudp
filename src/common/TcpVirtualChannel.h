@@ -36,13 +36,20 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex);
 
   private:
-    void drainReceivedDataMap();
-
     struct ReceivedItem
     {
         std::shared_ptr<std::vector<char>> data;
         int sourceConnIndex{-1};
     };
+
+    struct DeliveryItem
+    {
+        uint64_t messageId;
+        std::shared_ptr<std::vector<char>> data;
+        int sourceConnIndex;
+    };
+
+    std::vector<DeliveryItem> drainReceivedDataMap();
 
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
@@ -53,6 +60,10 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     // Mutex to ensure thread safety for disconnection handling
     std::mutex disconnectMutex;
+
+    // Serializes callback delivery so messages are delivered in order
+    // without blocking read threads from adding data to the map
+    std::mutex deliveryMutex;
 
     // VC state
     std::atomic<bool> opened{false};
