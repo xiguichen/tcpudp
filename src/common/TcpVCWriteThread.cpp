@@ -1,14 +1,17 @@
 #include "TcpVCWriteThread.h"
 #include "Log.h"
+#include "Socket.h"
 #include "VcProtocol.h"
 #include <chrono>
 #include <format>
+#include <thread>
 
 void TcpVCWriteThread::run()
 {
     log_info("TcpVCWriteThread started");
 
     static constexpr auto SLOW_SEND_WARN_MS = std::chrono::milliseconds(100);
+    static constexpr int WRITABLE_CHECK_TIMEOUT_MS = 50;
 
     while (this->isRunning())
     {
@@ -31,6 +34,16 @@ void TcpVCWriteThread::run()
                 const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(data->data());
                 messageId = packet->header.messageId;
                 payloadLen = packet->dataLength;
+            }
+
+            if (!IsSocketWritable(connection->getSocketFd(), WRITABLE_CHECK_TIMEOUT_MS))
+            {
+                log_warnning(std::format(
+                    "[VC] WriteThread conn={}: socket not writable after {}ms, re-enqueueing messageId={}",
+                    connectionIndex, WRITABLE_CHECK_TIMEOUT_MS, messageId));
+                writeQueue->enqueue(data);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
             }
 
             auto start = std::chrono::steady_clock::now();

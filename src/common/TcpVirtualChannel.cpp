@@ -212,6 +212,29 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
 
     std::vector<DeliveryItem> itemsToDeliver;
 
+    struct
+    {
+        bool fired = false;
+        long long elapsedMs = 0;
+        uint64_t missingStart = 0, missingEnd = 0, skipTo = 0;
+        size_t mapSize = 0;
+        int lastDelivConn = -1;
+        uint64_t firstBuf = 0, lastBuf = 0;
+        int firstBufConn = -1, lastBufConn = -1;
+        int suspectConn = -1;
+        uint64_t suspectLastRx = 0;
+        long long suspectAgeMs = 0;
+        std::vector<size_t> bufByConn;
+        size_t bufUnknown = 0;
+        struct RxEntry
+        {
+            bool valid = false;
+            uint64_t msgId = 0;
+            long long ageMs = 0;
+        };
+        std::vector<RxEntry> rxEntries;
+    } rtDiag;
+
     {
         std::unique_lock<std::timed_mutex> lock(receivedDataMutex, std::defer_lock);
         if (!lock.try_lock_for(RX_MUTEX_WAIT_WARN_MS))
@@ -262,106 +285,60 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
                 auto elapsed = std::chrono::steady_clock::now() - gapFirstSeen;
                 if (elapsed >= REORDER_TIMEOUT_MS)
                 {
+                    rtDiag.fired = true;
+
                     auto firstIt = receivedDataMap.begin();
                     auto lastIt = std::prev(receivedDataMap.end());
-
-                    uint64_t skipTo = firstIt->first;
-                    uint64_t missingStart = nextMessageId.load();
-                    uint64_t missingEnd = (skipTo > 0) ? (skipTo - 1) : 0;
-
-                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+                    rtDiag.skipTo = firstIt->first;
+                    rtDiag.missingStart = nextMessageId.load();
+                    rtDiag.missingEnd = (rtDiag.skipTo > 0) ? (rtDiag.skipTo - 1) : 0;
+                    rtDiag.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+                    rtDiag.mapSize = receivedDataMap.size();
+                    rtDiag.lastDelivConn = lastDeliveredConnIndex;
+                    rtDiag.firstBuf = firstIt->first;
+                    rtDiag.firstBufConn = firstIt->second.sourceConnIndex;
+                    rtDiag.lastBuf = lastIt->first;
+                    rtDiag.lastBufConn = lastIt->second.sourceConnIndex;
 
                     auto now = std::chrono::steady_clock::now();
 
-                    int suspectConn = -1;
-                    uint64_t suspectLastRx = 0;
-                    long long suspectAgeMs = 0;
                     for (size_t i = 0; i < lastRxValid.size(); ++i)
                     {
-                        if (!lastRxValid[i])
-                        {
+                        if (!lastRxValid[i] || lastRxMessageId[i] >= rtDiag.missingStart)
                             continue;
-                        }
-                        if (lastRxMessageId[i] >= missingStart)
-                        {
-                            continue;
-                        }
                         auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
-                        if (suspectConn == -1 || lastRxMessageId[i] < suspectLastRx ||
-                            (lastRxMessageId[i] == suspectLastRx && ageMs > suspectAgeMs))
+                        if (rtDiag.suspectConn == -1 || lastRxMessageId[i] < rtDiag.suspectLastRx ||
+                            (lastRxMessageId[i] == rtDiag.suspectLastRx && ageMs > rtDiag.suspectAgeMs))
                         {
-                            suspectConn = static_cast<int>(i);
-                            suspectLastRx = lastRxMessageId[i];
-                            suspectAgeMs = ageMs;
+                            rtDiag.suspectConn = static_cast<int>(i);
+                            rtDiag.suspectLastRx = lastRxMessageId[i];
+                            rtDiag.suspectAgeMs = ageMs;
                         }
                     }
 
-                    int suspectPendingBytes = -1;
-                    if (suspectConn >= 0 && static_cast<size_t>(suspectConn) < connections.size() &&
-                        connections[suspectConn])
-                    {
-                        suspectPendingBytes = SocketBytesAvailable(connections[suspectConn]->getSocketFd());
-                    }
-
-                    std::vector<size_t> bufferedByConn(connections.size(), 0);
-                    size_t bufferedUnknown = 0;
+                    rtDiag.bufByConn.assign(connections.size(), 0);
                     for (const auto &kv : receivedDataMap)
                     {
                         int connIdx = kv.second.sourceConnIndex;
-                        if (connIdx >= 0 && static_cast<size_t>(connIdx) < bufferedByConn.size())
-                        {
-                            bufferedByConn[connIdx]++;
-                        }
+                        if (connIdx >= 0 && static_cast<size_t>(connIdx) < rtDiag.bufByConn.size())
+                            rtDiag.bufByConn[connIdx]++;
                         else
-                        {
-                            bufferedUnknown++;
-                        }
+                            rtDiag.bufUnknown++;
                     }
-                    std::string bufferedSummary;
-                    bufferedSummary.reserve(96);
-                    bufferedSummary += "bufByConn=[";
-                    for (size_t i = 0; i < bufferedByConn.size(); ++i)
-                    {
-                        if (i > 0)
-                        {
-                            bufferedSummary += ",";
-                        }
-                        bufferedSummary += std::format("{}:{}", i, bufferedByConn[i]);
-                    }
-                    if (bufferedUnknown > 0)
-                    {
-                        bufferedSummary += std::format(",u:{}", bufferedUnknown);
-                    }
-                    bufferedSummary += "]";
 
-                    std::string rxSummary;
-                    rxSummary.reserve(128);
-                    rxSummary += "rx=[";
+                    rtDiag.rxEntries.resize(lastRxValid.size());
                     for (size_t i = 0; i < lastRxValid.size(); ++i)
                     {
-                        if (i > 0)
+                        rtDiag.rxEntries[i].valid = lastRxValid[i];
+                        if (lastRxValid[i])
                         {
-                            rxSummary += ",";
+                            rtDiag.rxEntries[i].msgId = lastRxMessageId[i];
+                            rtDiag.rxEntries[i].ageMs =
+                                std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
                         }
-                        if (!lastRxValid[i])
-                        {
-                            rxSummary += std::format("{}:-", i);
-                            continue;
-                        }
-                        auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
-                        rxSummary += std::format("{}:{}@{}ms", i, lastRxMessageId[i], ageMs);
                     }
-                    rxSummary += "]";
 
-                    log_warnning(std::format(
-                        "Reorder timeout ({}ms): skipping messageIds {}-{}, advancing to {}. Buffered={} "
-                        "(lastDeliveredConn={}, firstBuffered={} conn={}, lastBuffered={} conn={}, suspectConn={} "
-                        "suspectRx={}@{}ms pendingBytes={}, {}, {})",
-                        elapsedMs, missingStart, missingEnd, skipTo, receivedDataMap.size(), lastDeliveredConnIndex,
-                        firstIt->first, firstIt->second.sourceConnIndex, lastIt->first, lastIt->second.sourceConnIndex,
-                        suspectConn, suspectConn == -1 ? 0ULL : suspectLastRx, suspectConn == -1 ? 0LL : suspectAgeMs,
-                        suspectPendingBytes, bufferedSummary, rxSummary));
-                    nextMessageId.store(skipTo);
+                    nextMessageId.store(rtDiag.skipTo);
                     gapTimerActive = false;
                     auto moreItems = drainReceivedDataMap();
                     itemsToDeliver.insert(itemsToDeliver.end(), std::make_move_iterator(moreItems.begin()),
@@ -375,6 +352,72 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
         }
     }
     // receivedDataMutex released — read threads return to socket immediately
+
+    if (rtDiag.fired)
+    {
+        int suspectPendingBytes = -1;
+        if (rtDiag.suspectConn >= 0 && static_cast<size_t>(rtDiag.suspectConn) < connections.size() &&
+            connections[rtDiag.suspectConn])
+        {
+            suspectPendingBytes = SocketBytesAvailable(connections[rtDiag.suspectConn]->getSocketFd());
+        }
+
+        std::string sendDiag;
+        if (rtDiag.suspectConn >= 0 && static_cast<size_t>(rtDiag.suspectConn) < connections.size() &&
+            connections[rtDiag.suspectConn])
+        {
+            auto &conn = connections[rtDiag.suspectConn];
+            if (conn->diagIsSendInFlight())
+            {
+                auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+                sendDiag = std::format(", sendInFlight=true sendMsgId={} sendAgeMs={}", conn->diagInFlightMessageId(),
+                                       nowMs - conn->diagInFlightStartMs());
+            }
+            else
+            {
+                sendDiag = std::format(", sendIdle lastSendMsgId={}", conn->diagLastSendCompletedMessageId());
+            }
+        }
+
+        std::string bufferedSummary;
+        bufferedSummary.reserve(96);
+        bufferedSummary += "bufByConn=[";
+        for (size_t i = 0; i < rtDiag.bufByConn.size(); ++i)
+        {
+            if (i > 0)
+                bufferedSummary += ",";
+            bufferedSummary += std::format("{}:{}", i, rtDiag.bufByConn[i]);
+        }
+        if (rtDiag.bufUnknown > 0)
+            bufferedSummary += std::format(",u:{}", rtDiag.bufUnknown);
+        bufferedSummary += "]";
+
+        std::string rxSummary;
+        rxSummary.reserve(128);
+        rxSummary += "rx=[";
+        for (size_t i = 0; i < rtDiag.rxEntries.size(); ++i)
+        {
+            if (i > 0)
+                rxSummary += ",";
+            if (!rtDiag.rxEntries[i].valid)
+                rxSummary += std::format("{}:-", i);
+            else
+                rxSummary += std::format("{}:{}@{}ms", i, rtDiag.rxEntries[i].msgId, rtDiag.rxEntries[i].ageMs);
+        }
+        rxSummary += "]";
+
+        log_warnning(std::format(
+            "Reorder timeout ({}ms): skipping messageIds {}-{}, advancing to {}. Buffered={} "
+            "(lastDeliveredConn={}, firstBuffered={} conn={}, lastBuffered={} conn={}, suspectConn={} "
+            "suspectRx={}@{}ms pendingBytes={}{}, {}, {})",
+            rtDiag.elapsedMs, rtDiag.missingStart, rtDiag.missingEnd, rtDiag.skipTo, rtDiag.mapSize,
+            rtDiag.lastDelivConn, rtDiag.firstBuf, rtDiag.firstBufConn, rtDiag.lastBuf, rtDiag.lastBufConn,
+            rtDiag.suspectConn, rtDiag.suspectConn == -1 ? 0ULL : rtDiag.suspectLastRx,
+            rtDiag.suspectConn == -1 ? 0LL : rtDiag.suspectAgeMs, suspectPendingBytes, sendDiag, bufferedSummary,
+            rxSummary));
+    }
 
     if (!itemsToDeliver.empty())
     {
