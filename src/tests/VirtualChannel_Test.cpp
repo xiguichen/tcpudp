@@ -366,6 +366,9 @@ TEST_F(TcpVirtualChannelTest, DuplicateMessageDropTest)
     serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1), 0);
     serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data1, data1 + size1), 0);
 
+    // Wait for async delivery thread to process
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     // Only the first should have been delivered
     ASSERT_EQ(callbackCount.load(), 1);
 }
@@ -412,6 +415,9 @@ TEST_F(TcpVirtualChannelTest, OldMessageDropTest)
     serverChannel->processReceivedData(1, std::make_shared<std::vector<char>>(data2, data2 + size2), 0);
     // Now nextMessageId==2; sending messageId=0 again should be silently dropped
     serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(dataOld, dataOld + sizeOld), 0);
+
+    // Wait for async delivery thread to process
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     ASSERT_EQ(callbackCount.load(), 2);
 }
@@ -474,6 +480,9 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutTest)
     // then drains id=1 and id=2
     serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3), 0);
 
+    // Wait for async delivery thread to process
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     // Both messages should now be delivered
     ASSERT_EQ(callbackCount.load(), 2);
 }
@@ -505,6 +514,7 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutResetsAfterGapFilled)
 
     // Fill the gap quickly — both 0 and 1 delivered, timer clears
     serverChannel->processReceivedData(0, std::make_shared<std::vector<char>>(data0, data0 + size0), 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     ASSERT_EQ(callbackCount.load(), 2);
 
     // Create second gap: send id=3 (missing id=2), fresh timer starts now
@@ -516,6 +526,9 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutResetsAfterGapFilled)
 
     // Trigger timeout check with id=4
     serverChannel->processReceivedData(4, std::make_shared<std::vector<char>>(data4, data4 + size4), 0);
+
+    // Wait for async delivery thread to process
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // id=3 and id=4 delivered after skipping id=2
     ASSERT_EQ(callbackCount.load(), 4);

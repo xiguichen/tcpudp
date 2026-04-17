@@ -75,6 +75,9 @@ void TcpVirtualChannel::open()
         }
     };
 
+    deliveryRunning = true;
+    deliveryThread = std::thread(&TcpVirtualChannel::deliveryThreadFunc, this);
+
     for (int i = 0; i < this->connections.size(); ++i)
     {
         auto readThread = TcpVCReadThreadFactory::createThread(this->connections[i], i);
@@ -139,61 +142,69 @@ bool TcpVirtualChannel::isOpen() const
 }
 void TcpVirtualChannel::close()
 {
-    // Atomically mark as closed; if it was already false, nothing to do
-    if (!opened.exchange(false))
+    bool wasOpen = opened.exchange(false);
+
+    if (wasOpen)
     {
-        return;
+        // Cancel any waiting operations
+        this->sendQueue->cancelWait();
+
+        // Close all the connections and stop threads
+        log_debug("Closing TcpVirtualChannel connections");
+        for (auto &conn : connections)
+        {
+            if (conn && conn->isConnected())
+            {
+                log_debug("Disconnecting a TcpConnection");
+                conn->disconnect();
+            }
+            else
+            {
+                log_debug("TcpConnection already disconnected");
+            }
+        }
+
+        log_debug("Closing TcpVirtualChannel");
+
+        // Stop and join all read threads
+        log_debug("Stopping and joining read threads");
+        for (auto &thread : readThreads)
+        {
+            if (thread)
+            {
+                log_debug("Stopping a read thread");
+                thread->stop();
+                log_debug("Joining a read thread");
+                thread->joinThread();
+                log_debug("Read thread stopped and joined");
+            }
+        }
+
+        log_debug("All read threads stopped and joined");
+
+        // Stop and join all write threads
+        log_debug("Stopping and joining write threads");
+        for (auto &thread : writeThreads)
+        {
+            if (thread)
+            {
+                thread->stop();
+                thread->joinThread();
+            }
+        }
+        log_debug("All write threads stopped and joined");
     }
 
-    // Cancel any waiting operations
-    this->sendQueue->cancelWait();
-
-    // Close all the connections and stop threads
-    log_debug("Closing TcpVirtualChannel connections");
-    for (auto &conn : connections)
+    // Always stop delivery thread (handles disconnect callback setting opened=false first)
     {
-        if (conn && conn->isConnected())
-        {
-            log_debug("Disconnecting a TcpConnection");
-            conn->disconnect();
-        }
-        else
-        {
-            log_debug("TcpConnection already disconnected");
-        }
+        std::lock_guard<std::mutex> lock(deliveryMutex);
+        deliveryRunning = false;
     }
-
-    log_debug("Closing TcpVirtualChannel");
-
-    // Stop and join all read threads
-    log_debug("Stopping and joining read threads");
-    for (auto &thread : readThreads)
+    deliveryCv.notify_one();
+    if (deliveryThread.joinable())
     {
-        if (thread)
-        {
-            log_debug("Stopping a read thread");
-            thread->stop();
-            log_debug("Joining a read thread");
-            thread->joinThread();
-            log_debug("Read thread stopped and joined");
-        }
+        deliveryThread.join();
     }
-
-    log_debug("All read threads stopped and joined");
-
-    // Stop and join all write threads
-    log_debug("Stopping and joining write threads");
-    for (auto &thread : writeThreads)
-    {
-        if (thread)
-        {
-            thread->stop();
-            thread->joinThread();
-        }
-    }
-    log_debug("All write threads stopped and joined");
-
-    opened = false;
 }
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex)
 {
@@ -363,37 +374,18 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
             gapTimerActive = false;
         }
     }
-    // receivedDataMutex released — other read threads can now add data immediately
+    // receivedDataMutex released — read threads return to socket immediately
 
-    if (!itemsToDeliver.empty() && receiveCallback)
+    if (!itemsToDeliver.empty())
     {
-        std::lock_guard<std::mutex> dlock(deliveryMutex);
-
-        static constexpr auto DELIVERY_SLOW_WARN_MS = std::chrono::milliseconds(100);
-        auto deliveryStart = std::chrono::steady_clock::now();
-        long long cbTotalMs = 0;
-
-        for (auto &item : itemsToDeliver)
         {
-            auto cbStart = std::chrono::steady_clock::now();
-            receiveCallback(item.data->data(), item.data->size());
-            auto cbDur = std::chrono::steady_clock::now() - cbStart;
-            cbTotalMs += std::chrono::duration_cast<std::chrono::milliseconds>(cbDur).count();
-            if (cbDur >= RECEIVE_CALLBACK_SLOW_WARN_MS)
+            std::lock_guard<std::mutex> lock(deliveryMutex);
+            for (auto &item : itemsToDeliver)
             {
-                auto cbMs = std::chrono::duration_cast<std::chrono::milliseconds>(cbDur).count();
-                log_warnning(std::format("[VC] Slow receiveCallback: messageId={} conn={} bytes={} cbMs={}",
-                                         item.messageId, item.sourceConnIndex, item.data->size(), cbMs));
+                deliveryBuffer.push_back(std::move(item));
             }
         }
-
-        auto deliveryDur = std::chrono::steady_clock::now() - deliveryStart;
-        if (deliveryDur >= DELIVERY_SLOW_WARN_MS)
-        {
-            auto deliveryMs = std::chrono::duration_cast<std::chrono::milliseconds>(deliveryDur).count();
-            log_warnning(std::format("[VC] delivery slow: delivered={} deliveryMs={} cbTotalMs={}",
-                                     itemsToDeliver.size(), deliveryMs, cbTotalMs));
-        }
+        deliveryCv.notify_one();
     }
 }
 
@@ -411,6 +403,57 @@ std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDat
     }
 
     return items;
+}
+
+void TcpVirtualChannel::deliveryThreadFunc()
+{
+    log_info("Delivery thread started");
+
+    static constexpr auto DELIVERY_SLOW_WARN_MS = std::chrono::milliseconds(100);
+
+    while (true)
+    {
+        std::vector<DeliveryItem> items;
+        {
+            std::unique_lock<std::mutex> lock(deliveryMutex);
+            deliveryCv.wait(lock, [this] { return !deliveryBuffer.empty() || !deliveryRunning; });
+            if (!deliveryRunning && deliveryBuffer.empty())
+            {
+                break;
+            }
+            items = std::move(deliveryBuffer);
+        }
+
+        auto deliveryStart = std::chrono::steady_clock::now();
+        long long cbTotalMs = 0;
+
+        for (auto &item : items)
+        {
+            if (receiveCallback)
+            {
+                auto cbStart = std::chrono::steady_clock::now();
+                receiveCallback(item.data->data(), item.data->size());
+                auto cbDur = std::chrono::steady_clock::now() - cbStart;
+                cbTotalMs += std::chrono::duration_cast<std::chrono::milliseconds>(cbDur).count();
+                if (cbDur >= RECEIVE_CALLBACK_SLOW_WARN_MS)
+                {
+                    auto cbMs = std::chrono::duration_cast<std::chrono::milliseconds>(cbDur).count();
+                    log_warnning(std::format("[VC] Slow receiveCallback: messageId={} conn={} bytes={} cbMs={}",
+                                             item.messageId, item.sourceConnIndex, item.data->size(), cbMs));
+                }
+            }
+        }
+
+        auto deliveryDur = std::chrono::steady_clock::now() - deliveryStart;
+        if (deliveryDur >= DELIVERY_SLOW_WARN_MS)
+        {
+            auto deliveryMs = std::chrono::duration_cast<std::chrono::milliseconds>(deliveryDur).count();
+            log_warnning(std::format("[VC] delivery slow: delivered={} deliveryMs={} cbTotalMs={}",
+                                     items.size(), deliveryMs, cbTotalMs));
+        }
+    }
+
+    log_info("Delivery thread stopped");
 }
 
 TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)

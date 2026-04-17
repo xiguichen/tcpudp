@@ -7,8 +7,10 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <condition_variable>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_this<TcpVirtualChannel>
@@ -61,9 +63,14 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     // Mutex to ensure thread safety for disconnection handling
     std::mutex disconnectMutex;
 
-    // Serializes callback delivery so messages are delivered in order
-    // without blocking read threads from adding data to the map
+    // Dedicated delivery thread: read threads enqueue items (non-blocking),
+    // this thread invokes receiveCallback to avoid blocking readers
     std::mutex deliveryMutex;
+    std::condition_variable deliveryCv;
+    std::vector<DeliveryItem> deliveryBuffer;
+    std::thread deliveryThread;
+    std::atomic<bool> deliveryRunning{false};
+    void deliveryThreadFunc();
 
     // VC state
     std::atomic<bool> opened{false};
