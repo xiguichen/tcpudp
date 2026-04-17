@@ -178,9 +178,7 @@ int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
         throw std::logic_error("Data length exceeds maximum allowed size");
     }
 
-    std::shared_ptr<std::vector<char>> data = std::make_shared<std::vector<char>>();
-    data->reserve(dataLength);
-    data->insert(data->end(), dataPacket->data, dataPacket->data + dataLength);
+    auto data = std::make_shared<std::vector<char>>(dataPacket->data, dataPacket->data + dataLength);
     if (dataCallback)
     {
         dataCallback(dataPacket->header.messageId, data);

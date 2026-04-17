@@ -39,8 +39,8 @@ bool Client::PrepareVC()
         }
 
         SocketSetTcpNoDelay(tcpSocket, true);
-        // SocketSetReceiveBufferSize(tcpSocket, 1024 * 1024);
-        // SocketSetSendBufferSize(tcpSocket, 1024 * 1024);
+        SocketSetReceiveBufferSize(tcpSocket, 1024 * 1024);
+        SocketSetSendBufferSize(tcpSocket, 1024 * 1024);
 
         // Send client ID to server immediately after connecting
         MsgBind bindMsg;

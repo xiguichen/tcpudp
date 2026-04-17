@@ -79,18 +79,22 @@ void TcpConnection::send(const char *data, size_t size)
 {
     if (connected.load() && socketFd != -1)
     {
-        auto bytesSent = SendTcpData(socketFd, data, size, 0);
-        if (bytesSent == -1)
+        size_t totalSent = 0;
+        while (totalSent < size)
         {
-            // Handle send error
-            log_error("Failed to send data over TCP connection");
-            SocketLogLastError();
-            disconnect();
+            auto bytesSent = SendTcpData(socketFd, data + totalSent, size - totalSent, 0);
+            if (bytesSent <= 0)
+            {
+                log_error("Failed to send data over TCP connection");
+                SocketLogLastError();
+                disconnect();
+                return;
+            }
+            totalSent += bytesSent;
         }
     }
     else
     {
-        // Handle not connected state
         log_error("Attempted to send data on a disconnected TCP connection");
     }
 }
