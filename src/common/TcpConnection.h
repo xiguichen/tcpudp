@@ -44,9 +44,6 @@ class TcpConnection
     uint64_t diagLastSendCompletedMessageId() const { return diagLastSendCompletedMessageIdVal.load(); }
     int64_t diagLastSendEndMs() const { return diagLastSendEndMsVal.load(); }
 
-    void updateLastRecvTime();
-    int64_t lastRecvTimeMs() const { return lastRecvTimeMsVal.load(); }
-
   private:
  public:
     std::function<void()> disconnectCallback;
@@ -71,10 +68,6 @@ class TcpConnection
     std::atomic<int64_t> diagInFlightStartMsVal{0};
     std::atomic<uint64_t> diagLastSendCompletedMessageIdVal{0};
     std::atomic<int64_t> diagLastSendEndMsVal{0};
-
-    // Receive-side health: updated by read thread on every successful receive,
-    // checked by write thread to detect stale connections
-    std::atomic<int64_t> lastRecvTimeMsVal{0};
 };
 
 typedef std::shared_ptr<TcpConnection> TcpConnectionSp;
