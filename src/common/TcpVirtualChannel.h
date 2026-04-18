@@ -1,5 +1,6 @@
 #include "BlockingQueue.h"
 #include "Socket.h"
+#include "SpscQueue.h"
 #include "TcpVCReadThread.h"
 #include "TcpVCWriteThread.h"
 #include "VirtualChannel.h"
@@ -46,9 +47,9 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     struct DeliveryItem
     {
-        uint64_t messageId;
+        uint64_t messageId{0};
         std::shared_ptr<std::vector<char>> data;
-        int sourceConnIndex;
+        int sourceConnIndex{-1};
     };
 
     std::vector<DeliveryItem> drainReceivedDataMap();
@@ -57,20 +58,26 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::vector<TcpVCWriteThreadSp> writeThreads;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
+
+    // Lock-free per-connection receive queues (one SPSC queue per connection).
+    // Each read thread is the sole producer for its queue; the reorder thread
+    // is the sole consumer. No mutex needed on the data path.
+    std::vector<std::unique_ptr<SpscQueue<DeliveryItem>>> connReceiveQueues;
+    std::atomic<uint64_t> reorderEnqueueSeq{0};
+    std::mutex reorderMutex;
+    std::condition_variable reorderCv;
+
+    // Reorder state — accessed only by the reorder thread (no lock needed)
     std::map<uint64_t, ReceivedItem> receivedDataMap;
-    std::timed_mutex receivedDataMutex;
 
     // Mutex to ensure thread safety for disconnection handling
     std::mutex disconnectMutex;
 
-    // Dedicated delivery thread: read threads enqueue items (non-blocking),
-    // this thread invokes receiveCallback to avoid blocking readers
-    std::mutex deliveryMutex;
-    std::condition_variable deliveryCv;
-    std::vector<DeliveryItem> deliveryBuffer;
-    std::thread deliveryThread;
-    std::atomic<bool> deliveryRunning{false};
-    void deliveryThreadFunc();
+    // Reorder thread: drains per-connection SPSC queues, reorders messages,
+    // checks gap timeouts, and invokes receiveCallback directly
+    std::thread reorderThread;
+    std::atomic<bool> reorderRunning{false};
+    void reorderThreadFunc();
 
     // VC state
     std::atomic<bool> opened{false};
@@ -80,7 +87,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     bool gapTimerActive{false};
     int lastDeliveredConnIndex{-1};
 
-    // Per-connection receive stats (updated under receivedDataMutex)
+    // Per-connection receive stats (accessed only by reorder thread)
     std::vector<uint64_t> lastRxMessageId;
     std::vector<std::chrono::steady_clock::time_point> lastRxTime;
     std::vector<bool> lastRxValid;

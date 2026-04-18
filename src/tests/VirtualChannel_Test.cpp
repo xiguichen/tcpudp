@@ -422,7 +422,7 @@ TEST_F(TcpVirtualChannelTest, OldMessageDropTest)
     ASSERT_EQ(callbackCount.load(), 2);
 }
 
-// Test that the reorder timeout skips missing messages when a later packet triggers the check
+// Test that the reorder timeout skips missing messages automatically (active timeout)
 TEST_F(TcpVirtualChannelTest, ReorderTimeoutTest)
 {
     std::atomic<int> callbackCount = 0;
@@ -439,13 +439,11 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutTest)
     auto recvCallback = [&](const char *recvData, size_t recvSize) {
         if (localCallCount == 0)
         {
-            // After timeout, messageId=1 is delivered first
             EXPECT_EQ(recvSize, size2);
             EXPECT_STREQ(recvData, data2);
         }
         else if (localCallCount == 1)
         {
-            // Then messageId=2
             EXPECT_EQ(recvSize, size3);
             EXPECT_STREQ(recvData, data3);
         }
@@ -470,20 +468,17 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutTest)
     // Nothing should be delivered yet (waiting for messageId=0)
     ASSERT_EQ(callbackCount.load(), 0);
 
-    // Wait longer than the 500ms reorder timeout
-    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    // Wait longer than the 500ms reorder timeout — active thread fires automatically
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
 
-    // Still 0 — passive timeout only triggers on the next processReceivedData call
-    ASSERT_EQ(callbackCount.load(), 0);
+    // Active timeout skipped id=0 and delivered id=1
+    ASSERT_EQ(callbackCount.load(), 1);
 
-    // Send messageId=2 — this triggers the timeout check, which skips id=0,
-    // then drains id=1 and id=2
+    // Send messageId=2 — delivered immediately since nextMessageId is now 2
     serverChannel->processReceivedData(2, std::make_shared<std::vector<char>>(data3, data3 + size3), 0);
 
-    // Wait for async delivery thread to process
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // Both messages should now be delivered
     ASSERT_EQ(callbackCount.load(), 2);
 }
 
@@ -521,15 +516,14 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutResetsAfterGapFilled)
     serverChannel->processReceivedData(3, std::make_shared<std::vector<char>>(data3, data3 + size3), 0);
     ASSERT_EQ(callbackCount.load(), 2);
 
-    // Wait past the timeout
-    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    // Wait past the timeout — active thread fires automatically, skips id=2, delivers id=3
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    ASSERT_EQ(callbackCount.load(), 3);
 
-    // Trigger timeout check with id=4
+    // Send id=4 — delivered immediately since nextMessageId is now 4
     serverChannel->processReceivedData(4, std::make_shared<std::vector<char>>(data4, data4 + size4), 0);
 
-    // Wait for async delivery thread to process
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // id=3 and id=4 delivered after skipping id=2
     ASSERT_EQ(callbackCount.load(), 4);
 }

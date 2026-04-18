@@ -25,7 +25,7 @@ void TcpVirtualChannel::open()
         auto *self = selfGuard.get();
         // Use a flag to track if we should notify the upper layer
         bool shouldNotify = false;
-        
+
         {
             // Ensure only one disconnect routine runs at a time
             std::lock_guard<std::mutex> lock(self->disconnectMutex);
@@ -75,8 +75,20 @@ void TcpVirtualChannel::open()
         }
     };
 
-    deliveryRunning = true;
-    deliveryThread = std::thread(&TcpVirtualChannel::deliveryThreadFunc, this);
+    // Initialize per-connection receive stats
+    lastRxMessageId.resize(connections.size(), 0);
+    lastRxTime.resize(connections.size());
+    lastRxValid.assign(connections.size(), false);
+
+    // Create per-connection lock-free SPSC queues
+    connReceiveQueues.clear();
+    for (size_t i = 0; i < connections.size(); ++i)
+    {
+        connReceiveQueues.push_back(std::make_unique<SpscQueue<DeliveryItem>>());
+    }
+
+    reorderRunning = true;
+    reorderThread = std::thread(&TcpVirtualChannel::reorderThreadFunc, this);
 
     for (int i = 0; i < this->connections.size(); ++i)
     {
@@ -195,241 +207,30 @@ void TcpVirtualChannel::close()
         log_debug("All write threads stopped and joined");
     }
 
-    // Always stop delivery thread (handles disconnect callback setting opened=false first)
+    // Always stop reorder thread
+    reorderRunning.store(false);
+    reorderCv.notify_one();
+    if (reorderThread.joinable())
     {
-        std::lock_guard<std::mutex> lock(deliveryMutex);
-        deliveryRunning = false;
-    }
-    deliveryCv.notify_one();
-    if (deliveryThread.joinable())
-    {
-        deliveryThread.join();
+        reorderThread.join();
     }
 }
-void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex)
+
+void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data,
+                                             int sourceConnIndex)
 {
-    static constexpr auto RX_MUTEX_WAIT_WARN_MS = std::chrono::milliseconds(50);
-
-    std::vector<DeliveryItem> itemsToDeliver;
-
-    struct
+    if (sourceConnIndex >= 0 && static_cast<size_t>(sourceConnIndex) < connReceiveQueues.size())
     {
-        bool fired = false;
-        long long elapsedMs = 0;
-        uint64_t missingStart = 0, missingEnd = 0, skipTo = 0;
-        size_t mapSize = 0;
-        int lastDelivConn = -1;
-        uint64_t firstBuf = 0, lastBuf = 0;
-        int firstBufConn = -1, lastBufConn = -1;
-        int suspectConn = -1;
-        uint64_t suspectLastRx = 0;
-        long long suspectAgeMs = 0;
-        std::vector<size_t> bufByConn;
-        size_t bufUnknown = 0;
-        struct RxEntry
+        bool enqueued = connReceiveQueues[sourceConnIndex]->try_enqueue({messageId, data, sourceConnIndex});
+        if (!enqueued)
         {
-            bool valid = false;
-            uint64_t msgId = 0;
-            long long ageMs = 0;
-        };
-        std::vector<RxEntry> rxEntries;
-    } rtDiag;
-
-    {
-        std::unique_lock<std::timed_mutex> lock(receivedDataMutex, std::defer_lock);
-        if (!lock.try_lock_for(RX_MUTEX_WAIT_WARN_MS))
-        {
-            int pending = -1;
-            if (sourceConnIndex >= 0 && static_cast<size_t>(sourceConnIndex) < connections.size() &&
-                connections[sourceConnIndex])
-            {
-                pending = SocketBytesAvailable(connections[sourceConnIndex]->getSocketFd());
-            }
             log_warnning(
-                std::format("[VC] processReceivedData waiting on receivedDataMutex: conn={} messageId={} pendingBytes={}",
-                            sourceConnIndex, messageId, pending));
-            lock.lock();
-        }
-
-        if (lastRxMessageId.empty())
-        {
-            lastRxMessageId.resize(connections.size());
-            lastRxTime.resize(connections.size());
-            lastRxValid.assign(connections.size(), false);
-        }
-
-        if (sourceConnIndex >= 0 && static_cast<size_t>(sourceConnIndex) < lastRxMessageId.size())
-        {
-            lastRxMessageId[sourceConnIndex] = messageId;
-            lastRxTime[sourceConnIndex] = std::chrono::steady_clock::now();
-            lastRxValid[sourceConnIndex] = true;
-        }
-
-        if (messageId < nextMessageId)
-        {
+                std::format("[VC] connReceiveQueue[{}] full, dropping messageId={}", sourceConnIndex, messageId));
             return;
         }
-
-        receivedDataMap[messageId] = ReceivedItem{data, sourceConnIndex};
-        itemsToDeliver = drainReceivedDataMap();
-
-        if (!receivedDataMap.empty())
-        {
-            if (!gapTimerActive)
-            {
-                gapFirstSeen = std::chrono::steady_clock::now();
-                gapTimerActive = true;
-            }
-            else
-            {
-                auto elapsed = std::chrono::steady_clock::now() - gapFirstSeen;
-                if (elapsed >= REORDER_TIMEOUT_MS)
-                {
-                    rtDiag.fired = true;
-
-                    auto firstIt = receivedDataMap.begin();
-                    auto lastIt = std::prev(receivedDataMap.end());
-                    rtDiag.skipTo = firstIt->first;
-                    rtDiag.missingStart = nextMessageId.load();
-                    rtDiag.missingEnd = (rtDiag.skipTo > 0) ? (rtDiag.skipTo - 1) : 0;
-                    rtDiag.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-                    rtDiag.mapSize = receivedDataMap.size();
-                    rtDiag.lastDelivConn = lastDeliveredConnIndex;
-                    rtDiag.firstBuf = firstIt->first;
-                    rtDiag.firstBufConn = firstIt->second.sourceConnIndex;
-                    rtDiag.lastBuf = lastIt->first;
-                    rtDiag.lastBufConn = lastIt->second.sourceConnIndex;
-
-                    auto now = std::chrono::steady_clock::now();
-
-                    for (size_t i = 0; i < lastRxValid.size(); ++i)
-                    {
-                        if (!lastRxValid[i] || lastRxMessageId[i] >= rtDiag.missingStart)
-                            continue;
-                        auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
-                        if (rtDiag.suspectConn == -1 || lastRxMessageId[i] < rtDiag.suspectLastRx ||
-                            (lastRxMessageId[i] == rtDiag.suspectLastRx && ageMs > rtDiag.suspectAgeMs))
-                        {
-                            rtDiag.suspectConn = static_cast<int>(i);
-                            rtDiag.suspectLastRx = lastRxMessageId[i];
-                            rtDiag.suspectAgeMs = ageMs;
-                        }
-                    }
-
-                    rtDiag.bufByConn.assign(connections.size(), 0);
-                    for (const auto &kv : receivedDataMap)
-                    {
-                        int connIdx = kv.second.sourceConnIndex;
-                        if (connIdx >= 0 && static_cast<size_t>(connIdx) < rtDiag.bufByConn.size())
-                            rtDiag.bufByConn[connIdx]++;
-                        else
-                            rtDiag.bufUnknown++;
-                    }
-
-                    rtDiag.rxEntries.resize(lastRxValid.size());
-                    for (size_t i = 0; i < lastRxValid.size(); ++i)
-                    {
-                        rtDiag.rxEntries[i].valid = lastRxValid[i];
-                        if (lastRxValid[i])
-                        {
-                            rtDiag.rxEntries[i].msgId = lastRxMessageId[i];
-                            rtDiag.rxEntries[i].ageMs =
-                                std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
-                        }
-                    }
-
-                    nextMessageId.store(rtDiag.skipTo);
-                    gapTimerActive = false;
-                    auto moreItems = drainReceivedDataMap();
-                    itemsToDeliver.insert(itemsToDeliver.end(), std::make_move_iterator(moreItems.begin()),
-                                          std::make_move_iterator(moreItems.end()));
-                }
-            }
-        }
-        else
-        {
-            gapTimerActive = false;
-        }
+        reorderEnqueueSeq.fetch_add(1, std::memory_order_release);
     }
-    // receivedDataMutex released — read threads return to socket immediately
-
-    if (rtDiag.fired)
-    {
-        int suspectPendingBytes = -1;
-        if (rtDiag.suspectConn >= 0 && static_cast<size_t>(rtDiag.suspectConn) < connections.size() &&
-            connections[rtDiag.suspectConn])
-        {
-            suspectPendingBytes = SocketBytesAvailable(connections[rtDiag.suspectConn]->getSocketFd());
-        }
-
-        std::string sendDiag;
-        if (rtDiag.suspectConn >= 0 && static_cast<size_t>(rtDiag.suspectConn) < connections.size() &&
-            connections[rtDiag.suspectConn])
-        {
-            auto &conn = connections[rtDiag.suspectConn];
-            if (conn->diagIsSendInFlight())
-            {
-                auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 std::chrono::steady_clock::now().time_since_epoch())
-                                 .count();
-                sendDiag = std::format(", sendInFlight=true sendMsgId={} sendAgeMs={}", conn->diagInFlightMessageId(),
-                                       nowMs - conn->diagInFlightStartMs());
-            }
-            else
-            {
-                sendDiag = std::format(", sendIdle lastSendMsgId={}", conn->diagLastSendCompletedMessageId());
-            }
-        }
-
-        std::string bufferedSummary;
-        bufferedSummary.reserve(96);
-        bufferedSummary += "bufByConn=[";
-        for (size_t i = 0; i < rtDiag.bufByConn.size(); ++i)
-        {
-            if (i > 0)
-                bufferedSummary += ",";
-            bufferedSummary += std::format("{}:{}", i, rtDiag.bufByConn[i]);
-        }
-        if (rtDiag.bufUnknown > 0)
-            bufferedSummary += std::format(",u:{}", rtDiag.bufUnknown);
-        bufferedSummary += "]";
-
-        std::string rxSummary;
-        rxSummary.reserve(128);
-        rxSummary += "rx=[";
-        for (size_t i = 0; i < rtDiag.rxEntries.size(); ++i)
-        {
-            if (i > 0)
-                rxSummary += ",";
-            if (!rtDiag.rxEntries[i].valid)
-                rxSummary += std::format("{}:-", i);
-            else
-                rxSummary += std::format("{}:{}@{}ms", i, rtDiag.rxEntries[i].msgId, rtDiag.rxEntries[i].ageMs);
-        }
-        rxSummary += "]";
-
-        log_warnning(std::format(
-            "Reorder timeout ({}ms): skipping messageIds {}-{}, advancing to {}. Buffered={} "
-            "(lastDeliveredConn={}, firstBuffered={} conn={}, lastBuffered={} conn={}, suspectConn={} "
-            "suspectRx={}@{}ms pendingBytes={}{}, {}, {})",
-            rtDiag.elapsedMs, rtDiag.missingStart, rtDiag.missingEnd, rtDiag.skipTo, rtDiag.mapSize,
-            rtDiag.lastDelivConn, rtDiag.firstBuf, rtDiag.firstBufConn, rtDiag.lastBuf, rtDiag.lastBufConn,
-            rtDiag.suspectConn, rtDiag.suspectConn == -1 ? 0ULL : rtDiag.suspectLastRx,
-            rtDiag.suspectConn == -1 ? 0LL : rtDiag.suspectAgeMs, suspectPendingBytes, sendDiag, bufferedSummary,
-            rxSummary));
-    }
-
-    if (!itemsToDeliver.empty())
-    {
-        {
-            std::lock_guard<std::mutex> lock(deliveryMutex);
-            for (auto &item : itemsToDeliver)
-            {
-                deliveryBuffer.push_back(std::move(item));
-            }
-        }
-        deliveryCv.notify_one();
-    }
+    reorderCv.notify_one();
 }
 
 std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDataMap()
@@ -448,36 +249,188 @@ std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDat
     return items;
 }
 
-void TcpVirtualChannel::deliveryThreadFunc()
+void TcpVirtualChannel::reorderThreadFunc()
 {
-    log_info("Delivery thread started");
+    log_info("Reorder thread started");
 
-    static constexpr auto DELIVERY_SLOW_WARN_MS = std::chrono::milliseconds(100);
+    uint64_t lastProcessedSeq = 0;
 
-    while (true)
+    while (reorderRunning.load())
     {
-        std::vector<DeliveryItem> items;
+        bool gotAny = false;
+
+        // Drain all per-connection lock-free SPSC queues (zero contention)
+        for (size_t i = 0; i < connReceiveQueues.size(); i++)
         {
-            std::unique_lock<std::mutex> lock(deliveryMutex);
-            deliveryCv.wait(lock, [this] { return !deliveryBuffer.empty() || !deliveryRunning; });
-            if (!deliveryRunning && deliveryBuffer.empty())
+            DeliveryItem item;
+            while (connReceiveQueues[i]->try_dequeue(item))
             {
-                break;
+                if (item.sourceConnIndex >= 0 &&
+                    static_cast<size_t>(item.sourceConnIndex) < lastRxMessageId.size())
+                {
+                    lastRxMessageId[item.sourceConnIndex] = item.messageId;
+                    lastRxTime[item.sourceConnIndex] = std::chrono::steady_clock::now();
+                    lastRxValid[item.sourceConnIndex] = true;
+                }
+
+                if (item.messageId < nextMessageId)
+                    continue;
+
+                receivedDataMap.try_emplace(item.messageId, ReceivedItem{item.data, item.sourceConnIndex});
+                gotAny = true;
             }
-            items = std::move(deliveryBuffer);
+        }
+        lastProcessedSeq = reorderEnqueueSeq.load(std::memory_order_acquire);
+
+        // Drain consecutive messages
+        auto itemsToDeliver = drainReceivedDataMap();
+
+        // Check reorder timeout (no lock needed — single-thread access)
+        if (!receivedDataMap.empty())
+        {
+            if (!gapTimerActive)
+            {
+                gapFirstSeen = std::chrono::steady_clock::now();
+                gapTimerActive = true;
+            }
+            else
+            {
+                auto elapsed = std::chrono::steady_clock::now() - gapFirstSeen;
+                if (elapsed >= REORDER_TIMEOUT_MS)
+                {
+                    auto firstIt = receivedDataMap.begin();
+                    auto lastIt = std::prev(receivedDataMap.end());
+                    auto skipTo = firstIt->first;
+                    auto missingStart = nextMessageId.load();
+                    auto missingEnd = (skipTo > 0) ? (skipTo - 1) : 0ULL;
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+                    auto mapSize = receivedDataMap.size();
+                    auto lastDelivConn = lastDeliveredConnIndex;
+                    auto firstBuf = firstIt->first;
+                    auto firstBufConn = firstIt->second.sourceConnIndex;
+                    auto lastBuf = lastIt->first;
+                    auto lastBufConn = lastIt->second.sourceConnIndex;
+
+                    auto now = std::chrono::steady_clock::now();
+
+                    int suspectConn = -1;
+                    uint64_t suspectLastRx = 0;
+                    long long suspectAgeMs = 0;
+                    for (size_t i = 0; i < lastRxValid.size(); ++i)
+                    {
+                        if (!lastRxValid[i] || lastRxMessageId[i] >= missingStart)
+                            continue;
+                        auto ageMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
+                        if (suspectConn == -1 || lastRxMessageId[i] < suspectLastRx ||
+                            (lastRxMessageId[i] == suspectLastRx && ageMs > suspectAgeMs))
+                        {
+                            suspectConn = static_cast<int>(i);
+                            suspectLastRx = lastRxMessageId[i];
+                            suspectAgeMs = ageMs;
+                        }
+                    }
+
+                    std::vector<size_t> bufByConn(connections.size(), 0);
+                    size_t bufUnknown = 0;
+                    for (const auto &kv : receivedDataMap)
+                    {
+                        int connIdx = kv.second.sourceConnIndex;
+                        if (connIdx >= 0 && static_cast<size_t>(connIdx) < bufByConn.size())
+                            bufByConn[connIdx]++;
+                        else
+                            bufUnknown++;
+                    }
+
+                    nextMessageId.store(skipTo);
+                    gapTimerActive = false;
+                    auto moreItems = drainReceivedDataMap();
+                    itemsToDeliver.insert(itemsToDeliver.end(), std::make_move_iterator(moreItems.begin()),
+                                          std::make_move_iterator(moreItems.end()));
+
+                    // Diagnostics outside the hot path
+                    int suspectPendingBytes = -1;
+                    if (suspectConn >= 0 && static_cast<size_t>(suspectConn) < connections.size() &&
+                        connections[suspectConn])
+                    {
+                        suspectPendingBytes = SocketBytesAvailable(connections[suspectConn]->getSocketFd());
+                    }
+
+                    std::string sendDiag;
+                    if (suspectConn >= 0 && static_cast<size_t>(suspectConn) < connections.size() &&
+                        connections[suspectConn])
+                    {
+                        auto &conn = connections[suspectConn];
+                        if (conn->diagIsSendInFlight())
+                        {
+                            auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count();
+                            sendDiag = std::format(", sendInFlight=true sendMsgId={} sendAgeMs={}",
+                                                   conn->diagInFlightMessageId(),
+                                                   nowMs - conn->diagInFlightStartMs());
+                        }
+                        else
+                        {
+                            sendDiag =
+                                std::format(", sendIdle lastSendMsgId={}", conn->diagLastSendCompletedMessageId());
+                        }
+                    }
+
+                    std::string bufferedSummary;
+                    bufferedSummary.reserve(96);
+                    bufferedSummary += "bufByConn=[";
+                    for (size_t i = 0; i < bufByConn.size(); ++i)
+                    {
+                        if (i > 0)
+                            bufferedSummary += ",";
+                        bufferedSummary += std::format("{}:{}", i, bufByConn[i]);
+                    }
+                    if (bufUnknown > 0)
+                        bufferedSummary += std::format(",u:{}", bufUnknown);
+                    bufferedSummary += "]";
+
+                    std::string rxSummary;
+                    rxSummary.reserve(128);
+                    rxSummary += "rx=[";
+                    for (size_t i = 0; i < lastRxValid.size(); ++i)
+                    {
+                        if (i > 0)
+                            rxSummary += ",";
+                        if (!lastRxValid[i])
+                            rxSummary += std::format("{}:-", i);
+                        else
+                        {
+                            auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
+                            rxSummary += std::format("{}:{}@{}ms", i, lastRxMessageId[i], ageMs);
+                        }
+                    }
+                    rxSummary += "]";
+
+                    log_warnning(std::format(
+                        "Reorder timeout ({}ms): skipping messageIds {}-{}, advancing to {}. Buffered={} "
+                        "(lastDeliveredConn={}, firstBuffered={} conn={}, lastBuffered={} conn={}, suspectConn={} "
+                        "suspectRx={}@{}ms pendingBytes={}{}, {}, {})",
+                        elapsedMs, missingStart, missingEnd, skipTo, mapSize, lastDelivConn, firstBuf, firstBufConn,
+                        lastBuf, lastBufConn, suspectConn, suspectConn == -1 ? 0ULL : suspectLastRx,
+                        suspectConn == -1 ? 0LL : suspectAgeMs, suspectPendingBytes, sendDiag, bufferedSummary,
+                        rxSummary));
+                }
+            }
+        }
+        else
+        {
+            gapTimerActive = false;
         }
 
-        auto deliveryStart = std::chrono::steady_clock::now();
-        long long cbTotalMs = 0;
-
-        for (auto &item : items)
+        // Deliver messages via callback (single thread — no lock needed)
+        for (auto &item : itemsToDeliver)
         {
             if (receiveCallback)
             {
                 auto cbStart = std::chrono::steady_clock::now();
                 receiveCallback(item.data->data(), item.data->size());
                 auto cbDur = std::chrono::steady_clock::now() - cbStart;
-                cbTotalMs += std::chrono::duration_cast<std::chrono::milliseconds>(cbDur).count();
                 if (cbDur >= RECEIVE_CALLBACK_SLOW_WARN_MS)
                 {
                     auto cbMs = std::chrono::duration_cast<std::chrono::milliseconds>(cbDur).count();
@@ -487,16 +440,31 @@ void TcpVirtualChannel::deliveryThreadFunc()
             }
         }
 
-        auto deliveryDur = std::chrono::steady_clock::now() - deliveryStart;
-        if (deliveryDur >= DELIVERY_SLOW_WARN_MS)
+        // Wait for new data or gap timeout
+        if (!gotAny && itemsToDeliver.empty())
         {
-            auto deliveryMs = std::chrono::duration_cast<std::chrono::milliseconds>(deliveryDur).count();
-            log_warnning(std::format("[VC] delivery slow: delivered={} deliveryMs={} cbTotalMs={}",
-                                     items.size(), deliveryMs, cbTotalMs));
+            std::unique_lock<std::mutex> lock(reorderMutex);
+            if (gapTimerActive)
+            {
+                auto remaining = REORDER_TIMEOUT_MS - (std::chrono::steady_clock::now() - gapFirstSeen);
+                if (remaining > std::chrono::milliseconds::zero())
+                {
+                    reorderCv.wait_for(lock, remaining, [&] {
+                        return reorderEnqueueSeq.load(std::memory_order_acquire) > lastProcessedSeq ||
+                               !reorderRunning;
+                    });
+                }
+            }
+            else
+            {
+                reorderCv.wait(lock, [&] {
+                    return reorderEnqueueSeq.load(std::memory_order_acquire) > lastProcessedSeq || !reorderRunning;
+                });
+            }
         }
     }
 
-    log_info("Delivery thread stopped");
+    log_info("Reorder thread stopped");
 }
 
 TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
