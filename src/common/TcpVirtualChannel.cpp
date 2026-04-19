@@ -8,7 +8,7 @@
 #include <format>
 #include <string>
 
-static constexpr auto REORDER_TIMEOUT_MS = std::chrono::milliseconds(500);
+static constexpr auto REORDER_TIMEOUT_MS = std::chrono::milliseconds(4000);
 static constexpr auto RECEIVE_CALLBACK_SLOW_WARN_MS = std::chrono::milliseconds(50);
 
 void TcpVirtualChannel::open()
