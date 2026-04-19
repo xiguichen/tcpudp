@@ -68,8 +68,8 @@ void Server::AcceptConnections()
         }
 
         SocketSetTcpNoDelay(clientSocket, true);
-        SocketSetReceiveBufferSize(clientSocket, 1024 * 1024);
-        SocketSetSendBufferSize(clientSocket, 1024 * 1024);
+        SocketSetReceiveBufferSize(clientSocket, 512 * 1024);
+        SocketSetSendBufferSize(clientSocket, 128 * 1024);
 
         // Log client connection
         char clientIP[INET_ADDRSTRLEN + 1];
