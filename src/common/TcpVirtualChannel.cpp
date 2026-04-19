@@ -8,7 +8,6 @@
 #include <format>
 #include <string>
 
-static constexpr auto REORDER_TIMEOUT_MS = std::chrono::milliseconds(4000);
 static constexpr auto RECEIVE_CALLBACK_SLOW_WARN_MS = std::chrono::milliseconds(50);
 
 void TcpVirtualChannel::open()
@@ -87,6 +86,13 @@ void TcpVirtualChannel::open()
         connReceiveQueues.push_back(std::make_unique<SpscQueue<DeliveryItem>>());
     }
 
+    // Create per-connection send stats
+    connSendStats.clear();
+    for (size_t i = 0; i < connections.size(); ++i)
+    {
+        connSendStats.push_back(std::make_shared<ConnSendStats>());
+    }
+
     reorderRunning = true;
     reorderThread = std::thread(&TcpVirtualChannel::reorderThreadFunc, this);
 
@@ -101,7 +107,7 @@ void TcpVirtualChannel::open()
         readThread->setDisconnectCallback(disconnectCB);
         readThread->start();
         readThreads.emplace_back(readThread);
-        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i], i);
+        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i], i, connSendStats[i]);
         writeThread->start();
         writeThreads.emplace_back(writeThread);
     }
@@ -296,7 +302,7 @@ void TcpVirtualChannel::reorderThreadFunc()
             else
             {
                 auto elapsed = std::chrono::steady_clock::now() - gapFirstSeen;
-                if (elapsed >= REORDER_TIMEOUT_MS)
+                if (elapsed >= reorderTimeoutMs)
                 {
                     auto firstIt = receivedDataMap.begin();
                     auto lastIt = std::prev(receivedDataMap.end());
@@ -407,14 +413,41 @@ void TcpVirtualChannel::reorderThreadFunc()
                     }
                     rxSummary += "]";
 
+                    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     now.time_since_epoch())
+                                     .count();
+                    std::string txSummary;
+                    txSummary.reserve(192);
+                    txSummary += "tx=[";
+                    for (size_t i = 0; i < connSendStats.size(); ++i)
+                    {
+                        if (i > 0)
+                            txSummary += ",";
+                        auto &s = connSendStats[i];
+                        if (!s->valid.load(std::memory_order_acquire))
+                            txSummary += std::format("{}:-", i);
+                        else
+                        {
+                            auto txAge = nowMs - s->lastTxTimeMs.load(std::memory_order_relaxed);
+                            txSummary += std::format("{}:{}@{}ms/n{}/r{}/s{}",
+                                                     i,
+                                                     s->lastTxMessageId.load(std::memory_order_relaxed),
+                                                     txAge,
+                                                     s->txCount.load(std::memory_order_relaxed),
+                                                     s->reenqueueCount.load(std::memory_order_relaxed),
+                                                     s->slowSendCount.load(std::memory_order_relaxed));
+                        }
+                    }
+                    txSummary += "]";
+
                     log_warnning(std::format(
                         "Reorder timeout ({}ms): skipping messageIds {}-{}, advancing to {}. Buffered={} "
                         "(lastDeliveredConn={}, firstBuffered={} conn={}, lastBuffered={} conn={}, suspectConn={} "
-                        "suspectRx={}@{}ms pendingBytes={}{}, {}, {})",
+                        "suspectRx={}@{}ms pendingBytes={}{}, {}, {}, {})",
                         elapsedMs, missingStart, missingEnd, skipTo, mapSize, lastDelivConn, firstBuf, firstBufConn,
                         lastBuf, lastBufConn, suspectConn, suspectConn == -1 ? 0ULL : suspectLastRx,
                         suspectConn == -1 ? 0LL : suspectAgeMs, suspectPendingBytes, sendDiag, bufferedSummary,
-                        rxSummary));
+                        rxSummary, txSummary));
                 }
             }
         }
@@ -440,13 +473,77 @@ void TcpVirtualChannel::reorderThreadFunc()
             }
         }
 
+        // Periodic health log (every 10 seconds)
+        {
+            static constexpr auto HEALTH_LOG_INTERVAL = std::chrono::seconds(10);
+            auto now = std::chrono::steady_clock::now();
+            if (lastHealthLogTime.time_since_epoch().count() == 0)
+                lastHealthLogTime = now;
+            if (now - lastHealthLogTime >= HEALTH_LOG_INTERVAL)
+            {
+                lastHealthLogTime = now;
+                auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 now.time_since_epoch())
+                                 .count();
+
+                std::string rxInfo;
+                rxInfo.reserve(128);
+                rxInfo += "rx=[";
+                for (size_t i = 0; i < lastRxValid.size(); ++i)
+                {
+                    if (i > 0)
+                        rxInfo += ",";
+                    if (!lastRxValid[i])
+                        rxInfo += std::format("{}:-", i);
+                    else
+                    {
+                        auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRxTime[i]).count();
+                        rxInfo += std::format("{}:{}@{}ms", i, lastRxMessageId[i], ageMs);
+                    }
+                }
+                rxInfo += "]";
+
+                std::string txInfo;
+                txInfo.reserve(192);
+                txInfo += "tx=[";
+                for (size_t i = 0; i < connSendStats.size(); ++i)
+                {
+                    if (i > 0)
+                        txInfo += ",";
+                    auto &s = connSendStats[i];
+                    if (!s->valid.load(std::memory_order_acquire))
+                        txInfo += std::format("{}:-", i);
+                    else
+                    {
+                        auto txAge = nowMs - s->lastTxTimeMs.load(std::memory_order_relaxed);
+                        txInfo += std::format("{}:{}@{}ms/n{}/r{}/s{}",
+                                              i,
+                                              s->lastTxMessageId.load(std::memory_order_relaxed),
+                                              txAge,
+                                              s->txCount.load(std::memory_order_relaxed),
+                                              s->reenqueueCount.load(std::memory_order_relaxed),
+                                              s->slowSendCount.load(std::memory_order_relaxed));
+                    }
+                }
+                txInfo += "]";
+
+                log_info(std::format("[VC] Health: nextMsgId={} buffered={} queueDepth={} gap={}, {}, {}",
+                                     nextMessageId.load(),
+                                     receivedDataMap.size(),
+                                     sendQueue->size(),
+                                     gapTimerActive ? "active" : "none",
+                                     rxInfo,
+                                     txInfo));
+            }
+        }
+
         // Wait for new data or gap timeout
         if (!gotAny && itemsToDeliver.empty())
         {
             std::unique_lock<std::mutex> lock(reorderMutex);
             if (gapTimerActive)
             {
-                auto remaining = REORDER_TIMEOUT_MS - (std::chrono::steady_clock::now() - gapFirstSeen);
+                auto remaining = reorderTimeoutMs - (std::chrono::steady_clock::now() - gapFirstSeen);
                 if (remaining > std::chrono::milliseconds::zero())
                 {
                     reorderCv.wait_for(lock, remaining, [&] {

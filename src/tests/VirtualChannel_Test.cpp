@@ -459,6 +459,7 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutTest)
         callbackCondition.notify_all();
     };
     serverChannel->setReceiveCallback(recvCallback);
+    serverChannel->setReorderTimeout(std::chrono::milliseconds(500));
     serverChannel->open();
     clientChannel->open();
 
@@ -500,6 +501,7 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutResetsAfterGapFilled)
         callbackCount++;
     };
     serverChannel->setReceiveCallback(recvCallback);
+    serverChannel->setReorderTimeout(std::chrono::milliseconds(500));
     serverChannel->open();
     clientChannel->open();
 

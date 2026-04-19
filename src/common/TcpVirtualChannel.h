@@ -38,6 +38,8 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex);
 
+    void setReorderTimeout(std::chrono::milliseconds timeout) { reorderTimeoutMs = timeout; }
+
   private:
     struct ReceivedItem
     {
@@ -58,6 +60,9 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::vector<TcpVCWriteThreadSp> writeThreads;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
+
+    // Per-connection send stats (written by write threads, read by reorder thread)
+    std::vector<std::shared_ptr<ConnSendStats>> connSendStats;
 
     // Lock-free per-connection receive queues (one SPSC queue per connection).
     // Each read thread is the sole producer for its queue; the reorder thread
@@ -86,6 +91,8 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::chrono::steady_clock::time_point gapFirstSeen;
     bool gapTimerActive{false};
     int lastDeliveredConnIndex{-1};
+    std::chrono::steady_clock::time_point lastHealthLogTime;
+    std::chrono::milliseconds reorderTimeoutMs{4000};
 
     // Per-connection receive stats (accessed only by reorder thread)
     std::vector<uint64_t> lastRxMessageId;

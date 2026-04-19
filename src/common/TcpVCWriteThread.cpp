@@ -41,6 +41,8 @@ void TcpVCWriteThread::run()
                 log_warnning(std::format(
                     "[VC] WriteThread conn={}: socket not writable after {}ms, re-enqueueing messageId={}",
                     connectionIndex, WRITABLE_CHECK_TIMEOUT_MS, messageId));
+                if (sendStats)
+                    sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                 writeQueue->enqueue(data);
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
@@ -51,6 +53,20 @@ void TcpVCWriteThread::run()
             connection->send(data->data(), data->size());
             connection->diagMarkSendEnd(messageId);
             auto dur = std::chrono::steady_clock::now() - start;
+
+            if (sendStats)
+            {
+                auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+                sendStats->lastTxMessageId.store(messageId, std::memory_order_relaxed);
+                sendStats->lastTxTimeMs.store(nowMs, std::memory_order_relaxed);
+                sendStats->txCount.fetch_add(1, std::memory_order_relaxed);
+                sendStats->valid.store(true, std::memory_order_release);
+                if (dur >= SLOW_SEND_WARN_MS)
+                    sendStats->slowSendCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
             if (dur >= SLOW_SEND_WARN_MS)
             {
                 auto durMs = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
