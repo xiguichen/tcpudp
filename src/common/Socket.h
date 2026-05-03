@@ -3,13 +3,33 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h>
 typedef int ssize_t;  // Define ssize_t for Windows
 typedef SOCKET SocketFd;  // Use SOCKET type for Windows
 typedef SOCKADDR_IN sockaddr_in;
 typedef SOCKADDR sockaddr;
 // typedef int socklen_t;
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "mswsock.lib")
+
+
+// MIB_TCP_INFO structure for Windows
+#ifndef MIB_TCP_STATE_CLOSED
+#define MIB_TCP_STATE_CLOSED 1
+#define MIB_TCP_STATE_LISTEN 2
+#define MIB_TCP_STATE_SYN_SENT 3
+#define MIB_TCP_STATE_SYN_RECEIVED 4
+#define MIB_TCP_STATE_ESTABLISHED 5
+#define MIB_TCP_STATE_FIN_WAIT1 6
+#define MIB_TCP_STATE_FIN_WAIT2 7
+#define MIB_TCP_STATE_CLOSE_WAIT 8
+#define MIB_TCP_STATE_CLOSING 9
+#define MIB_TCP_STATE_LAST_ACK 10
+#define MIB_TCP_STATE_TIME_WAIT 11
+#define MIB_TCP_STATE_DELETE_TCB 12
+#endif
 #else
+#include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>

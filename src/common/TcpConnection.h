@@ -7,6 +7,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <chrono>
+#include <optional>
 
 class TcpConnection
 {
@@ -44,6 +46,27 @@ class TcpConnection
     uint64_t diagLastSendCompletedMessageId() const { return diagLastSendCompletedMessageIdVal.load(); }
     int64_t diagLastSendEndMs() const { return diagLastSendEndMsVal.load(); }
 
+    // Socket quality-aware sending: runtime info and congestion monitoring
+    struct TcpConnectionRuntimeInfo
+    {
+        bool supported = false;
+        bool valid = false;
+        bool isCongested = false;
+        bool isInExponentialBackoff = false;
+        bool retransmissionIndicatorIsBytes = false;
+        bool rtoIsApproximate = false;
+        uint32_t rtoUs = 0;
+        uint32_t smoothedRttUs = 0;
+        uint32_t congestionWindowBytes = 0;
+        uint32_t bytesInFlight = 0;
+        uint32_t retransmissionIndicator = 0;
+        uint32_t timeoutEpisodes = 0;
+    };
+
+    TcpConnectionRuntimeInfo sampleRuntimeInfo();
+    bool refreshRuntimeInfoIfStale(std::chrono::milliseconds refreshInterval);
+    TcpConnectionRuntimeInfo getLastRuntimeInfo() const;
+
   private:
  public:
     std::function<void()> disconnectCallback;
@@ -68,6 +91,12 @@ class TcpConnection
     std::atomic<int64_t> diagInFlightStartMsVal{0};
     std::atomic<uint64_t> diagLastSendCompletedMessageIdVal{0};
     std::atomic<int64_t> diagLastSendEndMsVal{0};
+
+    // Runtime info state for quality-aware sending
+    mutable std::mutex runtimeInfoMutex;
+    std::chrono::steady_clock::time_point lastRefreshTime;
+    TcpConnectionRuntimeInfo lastRuntimeInfo;
+    bool runtimeInfoStale = false;
 };
 
 typedef std::shared_ptr<TcpConnection> TcpConnectionSp;

@@ -6,6 +6,8 @@
 #include <format>
 #include <thread>
 
+static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
+
 void TcpVCWriteThread::run()
 {
     log_info("TcpVCWriteThread started");
@@ -38,9 +40,31 @@ void TcpVCWriteThread::run()
 
             if (!IsSocketWritable(connection->getSocketFd(), WRITABLE_CHECK_TIMEOUT_MS))
             {
+                connection->refreshRuntimeInfoIfStale(std::chrono::milliseconds{TCP_RUNTIME_REFRESH_MS});
+                auto runtimeInfo = connection->getLastRuntimeInfo();
                 log_warnning(std::format(
                     "[VC] WriteThread conn={}: socket not writable after {}ms, re-enqueueing messageId={}",
                     connectionIndex, WRITABLE_CHECK_TIMEOUT_MS, messageId));
+                if (sendStats)
+                    sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+                writeQueue->enqueue(data);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+
+            // Check socket quality: congestion and exponential backoff state
+            connection->refreshRuntimeInfoIfStale(std::chrono::milliseconds{TCP_RUNTIME_REFRESH_MS});
+            auto runtimeInfo = connection->getLastRuntimeInfo();
+
+            if (runtimeInfo.isCongested || runtimeInfo.isInExponentialBackoff)
+            {
+                log_warnning(std::format(
+                    "[VC] WriteThread conn={}: socket congested or in backoff, re-enqueueing messageId={} "
+                    "(congested={}, backoff={})",
+                    connectionIndex, messageId,
+                    runtimeInfo.isCongested ? "yes" : "no",
+                    runtimeInfo.isInExponentialBackoff ? "yes" : "no"));
+
                 if (sendStats)
                     sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                 writeQueue->enqueue(data);
@@ -67,9 +91,12 @@ void TcpVCWriteThread::run()
                     sendStats->slowSendCount.fetch_add(1, std::memory_order_relaxed);
             }
 
+            connection->refreshRuntimeInfoIfStale(std::chrono::milliseconds{TCP_RUNTIME_REFRESH_MS});
+
             if (dur >= SLOW_SEND_WARN_MS)
             {
                 auto durMs = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
+                auto runtimeInfo = connection->sampleRuntimeInfo();
                 log_warnning(std::format("[VC] Slow TCP send: conn={} messageId={} payload={}B total={}B sendMs={}",
                                          connectionIndex,
                                          messageId,

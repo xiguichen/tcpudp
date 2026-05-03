@@ -1,8 +1,14 @@
 #include "TcpConnection.h"
 #include "Log.h"
 #include "PerformanceCounter.h"
+#include "Socket.h"
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mstcpip.h>
 #include <chrono>
 #include <mutex>
+#include <cstring>
+#include <algorithm>
 
 static int64_t NowSteadyMs()
 {
@@ -102,5 +108,88 @@ void TcpConnection::send(const char *data, size_t size)
 SocketFd TcpConnection::getSocketFd() const
 {
     return socketFd;
+}
+
+TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
+{
+    TcpConnectionRuntimeInfo info = {};
+
+    if (!connected.load())
+    {
+        return info;
+    }
+
+#ifdef _WIN32
+    // Windows-specific TCP telemetry
+    // TCP_INFO is not reliably available across all Windows SDK versions
+    // We'll rely on the fallback values
+    info.supported = false;
+    info.valid = false;
+    info.isCongested = false;
+    info.isInExponentialBackoff = false;
+    info.rtoUs = 0;
+    info.rtoIsApproximate = false;
+    info.smoothedRttUs = 0;
+    info.congestionWindowBytes = 0;
+    info.bytesInFlight = 0;
+    info.retransmissionIndicator = 0;
+    info.retransmissionIndicatorIsBytes = false;
+    info.timeoutEpisodes = 0;
+#else
+    // Linux/macOS: use getsockopt with TCP_INFO
+    // Note: This requires CAP_NET_ADMIN or running as root on some systems
+    tcp_info tcpInfo = {};
+    socklen_t tcpInfoLen = sizeof(tcpInfo);
+
+    if (getsockopt(socketFd, IPPROTO_TCP, TCP_INFO, &tcpInfo, &tcpInfoLen) == 0)
+    {
+        info.supported = true;
+        info.valid = true;
+
+        // Map Linux TCP_INFO to our runtime info structure
+        info.congestionWindowBytes = tcpInfo.tcpi_rtt;
+        info.smoothedRttUs = tcpInfo.tcpi_rttvar * 1000;
+        info.rtoUs = tcpInfo.tcpi_rto * 1000;
+
+        // Estimate bytes in flight (simplified)
+        info.bytesInFlight = tcpInfo.tcpi_snd_cwnd * 1460; // Assuming 1460 MTU
+
+        // RTO is approximate (not exact) on Linux
+        info.rtoIsApproximate = true;
+
+        // Timeout episodes
+        info.timeoutEpisodes = tcpInfo.tcpi_retransmits;
+
+        // Determine congestion state
+        info.isCongested = (info.congestionWindowBytes > 0 && info.bytesInFlight > info.congestionWindowBytes);
+        info.isInExponentialBackoff = (info.timeoutEpisodes > 0);
+    }
+#endif
+
+    return info;
+}
+
+bool TcpConnection::refreshRuntimeInfoIfStale(std::chrono::milliseconds refreshInterval)
+{
+    auto now = std::chrono::steady_clock::now();
+
+    std::lock_guard<std::mutex> lock(runtimeInfoMutex);
+
+    if ((now - lastRefreshTime) < refreshInterval)
+    {
+        return false; // Not stale
+    }
+
+    lastRefreshTime = now;
+    runtimeInfoStale = false;
+    lastRuntimeInfo = sampleRuntimeInfo();
+
+    return true; // Was stale, now refreshed
+}
+
+TcpConnection::TcpConnectionRuntimeInfo TcpConnection::getLastRuntimeInfo() const
+{
+    std::lock_guard<std::mutex> lock(runtimeInfoMutex);
+    return lastRuntimeInfo;
 }
 
