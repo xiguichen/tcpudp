@@ -144,12 +144,12 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         info.valid = true;
 
         // Map Linux TCP_INFO to our runtime info structure
-        info.congestionWindowBytes = tcpInfo.tcpi_rtt;
-        info.smoothedRttUs = tcpInfo.tcpi_rttvar * 1000;
+        info.congestionWindowBytes = tcpInfo.tcpi_snd_cwnd;
+        info.smoothedRttUs = tcpInfo.tcpi_rtt;
         info.rtoUs = tcpInfo.tcpi_rto * 1000;
 
         // Estimate bytes in flight (simplified)
-        info.bytesInFlight = tcpInfo.tcpi_snd_cwnd * 1460; // Assuming 1460 MTU
+        info.bytesInFlight = tcpInfo.tcpi_unacked * 1460; // Assuming 1460 MTU
 
         // RTO is approximate (not exact) on Linux
         info.rtoIsApproximate = true;

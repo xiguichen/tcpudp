@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // 1 byte pack structures
@@ -7,6 +8,9 @@
 
 enum class VcPacketType : uint8_t {
   DATA = 0x00,
+  RESEND_REQUEST = 0x01,
+  RESEND_RESPONSE = 0x02,
+  MISSING_NOTIFY = 0x03,
 };
 
 struct VCHeader
@@ -22,7 +26,32 @@ struct VCDataPacket
     uint8_t data[];
 };
 
+struct VCResendRequest
+{
+    VCHeader header;
+    uint64_t missingMessageId;
+};
+
+struct VCResendResponse
+{
+    VCHeader header;
+    uint16_t dataLength;
+    uint8_t data[];
+};
+
+static constexpr size_t VC_MAX_MISSING_IDS_PER_NOTIFY = 64;
+
+struct VCMissingNotify
+{
+    VCHeader header;
+    uint8_t count;
+    uint64_t missingIds[VC_MAX_MISSING_IDS_PER_NOTIFY];
+};
+
 const uint32_t VC_MIN_DATA_PACKET_SIZE = sizeof(VCDataPacket);
+const uint32_t VC_MIN_RESEND_REQUEST_SIZE = sizeof(VCResendRequest);
+const uint32_t VC_MIN_RESEND_RESPONSE_SIZE = sizeof(VCResendResponse);
+const uint32_t VC_MIN_MISSING_NOTIFY_SIZE = sizeof(VCMissingNotify);
 
  // Max size of the data payload
 const uint16_t VC_MAX_DATA_PAYLOAD_SIZE = 2000;

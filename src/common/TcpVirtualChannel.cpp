@@ -12,24 +12,15 @@ static constexpr auto RECEIVE_CALLBACK_SLOW_WARN_MS = std::chrono::milliseconds(
 
 void TcpVirtualChannel::open()
 {
-
-    // Capture a shared_ptr to 'this' so the TcpVirtualChannel object is kept
-    // alive for the entire duration of either callback, even if the last external
-    // shared_ptr is released (e.g. via VcManager::Remove) while the callback is
-    // still executing on a read thread. Without this, ~TcpVirtualChannel would
-    // run on the read-thread itself, causing std::terminate in ~StopableThread.
     auto selfGuard = shared_from_this();
 
     auto disconnectCB = [selfGuard](TcpConnectionSp /*unused*/) {
         auto *self = selfGuard.get();
-        // Use a flag to track if we should notify the upper layer
         bool shouldNotify = false;
 
         {
-            // Ensure only one disconnect routine runs at a time
             std::lock_guard<std::mutex> lock(self->disconnectMutex);
 
-            // Early exit if already closed to prevent redundant work
             if (!self->opened) {
                 log_debug("Disconnect callback called but VC already closed, skipping.");
                 return;
@@ -37,24 +28,19 @@ void TcpVirtualChannel::open()
 
             log_debug("Disconnect detected, closing the entire virtual channel.");
 
-            // Mark the virtual channel as closed to prevent further sends
             self->opened = false;
             shouldNotify = (self->disconnectCallback != nullptr);
 
-            // Cancel any waiting operations on the send queue
             if (self->sendQueue) {
                 self->sendQueue->cancelWait();
             }
 
-            // Close all the connections first
             for (auto &conn : self->connections) {
                 if (conn && conn->isConnected()) {
                     conn->disconnect();
                 }
             }
 
-            // Set running to false for all threads without joining
-            // This allows threads to exit gracefully without deadlock
             for (auto &thread : self->readThreads) {
                 if (thread) {
                     thread->setRunning(false);
@@ -66,31 +52,36 @@ void TcpVirtualChannel::open()
                 }
             }
         }
-        // Mutex released here - now other threads can proceed and exit
 
-        // Notify upper layer outside the lock to avoid potential deadlocks
         if (shouldNotify && self->disconnectCallback) {
             self->disconnectCallback();
         }
     };
 
-    // Initialize per-connection receive stats
     lastRxMessageId.resize(connections.size(), 0);
     lastRxTime.resize(connections.size());
     lastRxValid.assign(connections.size(), false);
 
-    // Create per-connection lock-free SPSC queues
     connReceiveQueues.clear();
     for (size_t i = 0; i < connections.size(); ++i)
     {
         connReceiveQueues.push_back(std::make_unique<SpscQueue<DeliveryItem>>());
     }
 
-    // Create per-connection send stats
     connSendStats.clear();
     for (size_t i = 0; i < connections.size(); ++i)
     {
         connSendStats.push_back(std::make_shared<ConnSendStats>());
+    }
+
+    messageTracker = std::make_shared<MessageTracker>();
+
+    socketStatuses.clear();
+    for (size_t i = 0; i < connections.size(); ++i)
+    {
+        auto status = std::make_shared<SocketStatus>();
+        status->connectionIndex = static_cast<int>(i);
+        socketStatuses.push_back(status);
     }
 
     reorderRunning = true;
@@ -102,12 +93,20 @@ void TcpVirtualChannel::open()
         auto dataCallback = [selfGuard, i](const uint64_t messageId, std::shared_ptr<std::vector<char>> data) {
             selfGuard->processReceivedData(messageId, data, i);
         };
-        // Set callbacks before starting the thread to avoid missing early events
+        auto resendRequestCallback = [selfGuard](uint64_t messageId) {
+            selfGuard->processResendRequest(messageId);
+        };
+        auto missingNotifyCallback = [selfGuard](const std::vector<uint64_t> &missingIds) {
+            selfGuard->processMissingNotify(missingIds);
+        };
         readThread->setDataCallback(dataCallback);
+        readThread->setResendRequestCallback(resendRequestCallback);
+        readThread->setMissingNotifyCallback(missingNotifyCallback);
         readThread->setDisconnectCallback(disconnectCB);
         readThread->start();
         readThreads.emplace_back(readThread);
-        auto writeThread = TcpVCWriteThreadFactory::createThread(sendQueue, this->connections[i], i, connSendStats[i]);
+        auto writeThread = TcpVCWriteThreadFactory::createThread(
+            sendQueue, this->connections[i], i, connSendStats[i], messageTracker, socketStatuses[i]);
         writeThread->start();
         writeThreads.emplace_back(writeThread);
     }
@@ -141,7 +140,6 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         auto messageId = this->lastSendMessageId.fetch_add(1);
         auto messageIdNetwork = messageId;
 
-        // Build the packet directly into the shared vector — no malloc needed.
         auto totalPacketSize = sizeof(VCDataPacket) + size;
         auto dataVec = std::make_shared<std::vector<char>>(totalPacketSize);
 
@@ -150,24 +148,34 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         packet->header.messageId = messageIdNetwork;
         packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
-        sendQueue->enqueue(dataVec);
 
+        {
+            std::lock_guard<std::mutex> lock(sentDataMutex);
+            if (sentDataCache.size() >= MAX_SENT_DATA_CACHE)
+            {
+                auto oldest = sentDataCache.begin();
+                sentDataCache.erase(oldest);
+            }
+            sentDataCache[messageId] = dataVec;
+        }
+
+        sendQueue->enqueue(dataVec);
     }
 }
+
 bool TcpVirtualChannel::isOpen() const
 {
     return opened;
 }
+
 void TcpVirtualChannel::close()
 {
     bool wasOpen = opened.exchange(false);
 
     if (wasOpen)
     {
-        // Cancel any waiting operations
         this->sendQueue->cancelWait();
 
-        // Close all the connections and stop threads
         log_debug("Closing TcpVirtualChannel connections");
         for (auto &conn : connections)
         {
@@ -184,7 +192,6 @@ void TcpVirtualChannel::close()
 
         log_debug("Closing TcpVirtualChannel");
 
-        // Stop and join all read threads
         log_debug("Stopping and joining read threads");
         for (auto &thread : readThreads)
         {
@@ -200,7 +207,6 @@ void TcpVirtualChannel::close()
 
         log_debug("All read threads stopped and joined");
 
-        // Stop and join all write threads
         log_debug("Stopping and joining write threads");
         for (auto &thread : writeThreads)
         {
@@ -213,17 +219,26 @@ void TcpVirtualChannel::close()
         log_debug("All write threads stopped and joined");
     }
 
-    // Always stop reorder thread
     reorderRunning.store(false);
     reorderCv.notify_one();
     if (reorderThread.joinable())
     {
         reorderThread.join();
     }
+
+    if (messageTracker)
+    {
+        messageTracker->clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(sentDataMutex);
+        sentDataCache.clear();
+    }
 }
 
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data,
-                                             int sourceConnIndex)
+                                              int sourceConnIndex)
 {
     if (sourceConnIndex >= 0 && static_cast<size_t>(sourceConnIndex) < connReceiveQueues.size())
     {
@@ -239,6 +254,123 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
     reorderCv.notify_one();
 }
 
+void TcpVirtualChannel::processResendRequest(uint64_t messageId)
+{
+    log_info(std::format("[RESEND] Received resend request for messageId={}", messageId));
+
+    if (messageTracker)
+    {
+        int connIndex = messageTracker->getConnectionIndex(messageId);
+        if (connIndex >= 0 && static_cast<size_t>(connIndex) < socketStatuses.size())
+        {
+            log_info(std::format("[RESEND] Marking conn={} as degraded for messageId={}", connIndex, messageId));
+            socketStatuses[connIndex]->markDegraded();
+        }
+    }
+
+    std::shared_ptr<std::vector<char>> dataVec;
+    {
+        std::lock_guard<std::mutex> lock(sentDataMutex);
+        auto it = sentDataCache.find(messageId);
+        if (it != sentDataCache.end())
+        {
+            dataVec = it->second;
+        }
+    }
+
+    if (dataVec && resendCallback)
+    {
+        const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
+        resendCallback(messageId, reinterpret_cast<const char *>(packet->data), packet->dataLength);
+    }
+    else if (!dataVec)
+    {
+        log_warnning(std::format("[RESEND] No cached data for messageId={}, cannot resend", messageId));
+    }
+}
+
+void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missingIds)
+{
+    log_info(std::format("[MISSING] Received missing notify for {} messageIds", missingIds.size()));
+
+    for (uint64_t messageId : missingIds)
+    {
+        if (messageTracker)
+        {
+            int connIndex = messageTracker->getConnectionIndex(messageId);
+            if (connIndex >= 0 && static_cast<size_t>(connIndex) < socketStatuses.size())
+            {
+                socketStatuses[connIndex]->markDegraded();
+            }
+        }
+
+        std::shared_ptr<std::vector<char>> dataVec;
+        {
+            std::lock_guard<std::mutex> lock(sentDataMutex);
+            auto it = sentDataCache.find(messageId);
+            if (it != sentDataCache.end())
+            {
+                dataVec = it->second;
+            }
+        }
+
+        if (dataVec && resendCallback)
+        {
+            const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
+            resendCallback(messageId, reinterpret_cast<const char *>(packet->data), packet->dataLength);
+        }
+    }
+}
+
+void TcpVirtualChannel::sendMissingNotifications()
+{
+    if (receivedDataMap.empty() || !gapTimerActive)
+    {
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - gapFirstSeen < missingNotifyIntervalMs)
+    {
+        return;
+    }
+
+    std::vector<uint64_t> missingIds;
+    auto expected = nextMessageId.load();
+    for (const auto &kv : receivedDataMap)
+    {
+        for (uint64_t id = expected; id < kv.first; ++id)
+        {
+            if (notifiedMissingIds.find(id) == notifiedMissingIds.end())
+            {
+                missingIds.push_back(id);
+                if (missingIds.size() >= VC_MAX_MISSING_IDS_PER_NOTIFY)
+                {
+                    break;
+                }
+            }
+        }
+        if (missingIds.size() >= VC_MAX_MISSING_IDS_PER_NOTIFY)
+        {
+            break;
+        }
+    }
+
+    if (!missingIds.empty())
+    {
+        for (auto id : missingIds)
+        {
+            notifiedMissingIds.insert(id);
+        }
+        lastNotifyTime = now;
+
+        if (missingNotifyCallback)
+        {
+            missingNotifyCallback(missingIds);
+        }
+    }
+}
+
 std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDataMap()
 {
     std::vector<DeliveryItem> items;
@@ -246,6 +378,7 @@ std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDat
     std::map<uint64_t, ReceivedItem>::iterator it;
     while ((it = receivedDataMap.find(nextMessageId)) != receivedDataMap.end())
     {
+        notifiedMissingIds.erase(it->first);
         lastDeliveredConnIndex = it->second.sourceConnIndex;
         items.push_back({it->first, std::move(it->second.data), it->second.sourceConnIndex});
         receivedDataMap.erase(it);
@@ -265,7 +398,6 @@ void TcpVirtualChannel::reorderThreadFunc()
     {
         bool gotAny = false;
 
-        // Drain all per-connection lock-free SPSC queues (zero contention)
         for (size_t i = 0; i < connReceiveQueues.size(); i++)
         {
             DeliveryItem item;
@@ -288,10 +420,8 @@ void TcpVirtualChannel::reorderThreadFunc()
         }
         lastProcessedSeq = reorderEnqueueSeq.load(std::memory_order_acquire);
 
-        // Drain consecutive messages
         auto itemsToDeliver = drainReceivedDataMap();
 
-        // Check reorder timeout (no lock needed — single-thread access)
         if (!receivedDataMap.empty())
         {
             if (!gapTimerActive)
@@ -354,7 +484,6 @@ void TcpVirtualChannel::reorderThreadFunc()
                     itemsToDeliver.insert(itemsToDeliver.end(), std::make_move_iterator(moreItems.begin()),
                                           std::make_move_iterator(moreItems.end()));
 
-                    // Diagnostics outside the hot path
                     int suspectPendingBytes = -1;
                     if (suspectConn >= 0 && static_cast<size_t>(suspectConn) < connections.size() &&
                         connections[suspectConn])
@@ -456,7 +585,8 @@ void TcpVirtualChannel::reorderThreadFunc()
             gapTimerActive = false;
         }
 
-        // Deliver messages via callback (single thread — no lock needed)
+        sendMissingNotifications();
+
         for (auto &item : itemsToDeliver)
         {
             if (receiveCallback)
@@ -473,7 +603,6 @@ void TcpVirtualChannel::reorderThreadFunc()
             }
         }
 
-        // Periodic health log (every 10 seconds)
         {
             static constexpr auto HEALTH_LOG_INTERVAL = std::chrono::seconds(10);
             auto now = std::chrono::steady_clock::now();
@@ -537,7 +666,6 @@ void TcpVirtualChannel::reorderThreadFunc()
             }
         }
 
-        // Wait for new data or gap timeout
         if (!gotAny && itemsToDeliver.empty())
         {
             std::unique_lock<std::mutex> lock(reorderMutex);
@@ -571,4 +699,5 @@ TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
         connections.emplace_back(std::make_shared<TcpConnection>(fd));
     }
     sendQueue = std::make_shared<BlockingQueue>();
+    lastNotifyTime = std::chrono::steady_clock::now();
 }

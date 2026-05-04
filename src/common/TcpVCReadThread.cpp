@@ -126,6 +126,14 @@ int TcpVCReadThread::processBuffer(std::vector<char> &buffer)
         return processDataBuffer(buffer);
         break;
     }
+    case VcPacketType::RESEND_REQUEST: {
+        return processResendRequestBuffer(buffer);
+        break;
+    }
+    case VcPacketType::MISSING_NOTIFY: {
+        return processMissingNotifyBuffer(buffer);
+        break;
+    }
     default: {
         log_error("Unknown packet type received");
         throw std::logic_error("Unknown packet type");
@@ -141,12 +149,15 @@ inline bool TcpVCReadThread::hasEnoughData(const char *buffer, size_t size)
     }
 
     uint8_t packetType = static_cast<uint8_t>(buffer[0]);
-    if (packetType == static_cast<uint8_t>(VcPacketType::DATA))
+    switch (static_cast<VcPacketType>(packetType))
     {
+    case VcPacketType::DATA:
         return hasEnoughDataForData(buffer, size);
-    }
-    else
-    {
+    case VcPacketType::RESEND_REQUEST:
+        return hasEnoughDataForResendRequest(buffer, size);
+    case VcPacketType::MISSING_NOTIFY:
+        return hasEnoughDataForMissingNotify(buffer, size);
+    default:
         throw std::logic_error("Unknown packet type");
     }
 }
@@ -158,7 +169,6 @@ bool TcpVCReadThread::hasEnoughDataForData(const char *buffer, size_t size)
         return false;
     }
 
-    // Extract the data length from the buffer
     VCDataPacket *dataPacket = (VCDataPacket *)buffer;
     uint16_t dataLength = dataPacket->dataLength;
     if (dataLength > VC_MAX_DATA_PAYLOAD_SIZE)
@@ -167,6 +177,22 @@ bool TcpVCReadThread::hasEnoughDataForData(const char *buffer, size_t size)
     }
 
     return size >= VC_MIN_DATA_PACKET_SIZE + dataLength;
+}
+
+bool TcpVCReadThread::hasEnoughDataForResendRequest(const char *buffer, size_t size)
+{
+    return size >= VC_MIN_RESEND_REQUEST_SIZE;
+}
+
+bool TcpVCReadThread::hasEnoughDataForMissingNotify(const char *buffer, size_t size)
+{
+    if (size < VC_MIN_MISSING_NOTIFY_SIZE)
+    {
+        return false;
+    }
+    const VCMissingNotify *notify = reinterpret_cast<const VCMissingNotify *>(buffer);
+    size_t expectedSize = sizeof(VCHeader) + 1 + notify->count * sizeof(uint64_t);
+    return size >= expectedSize;
 }
 
 int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
@@ -185,11 +211,34 @@ int TcpVCReadThread::processDataBuffer(std::vector<char> &buffer)
     }
     return sizeof(VCDataPacket) + dataLength;
 }
+
+int TcpVCReadThread::processResendRequestBuffer(std::vector<char> &buffer)
+{
+    VCResendRequest *request = reinterpret_cast<VCResendRequest *>(buffer.data());
+    if (resendRequestCallback)
+    {
+        resendRequestCallback(request->missingMessageId);
+    }
+    return sizeof(VCResendRequest);
+}
+
+int TcpVCReadThread::processMissingNotifyBuffer(std::vector<char> &buffer)
+{
+    VCMissingNotify *notify = reinterpret_cast<VCMissingNotify *>(buffer.data());
+    std::vector<uint64_t> missingIds(notify->missingIds, notify->missingIds + notify->count);
+    if (missingNotifyCallback)
+    {
+        missingNotifyCallback(missingIds);
+    }
+    return sizeof(VCHeader) + 1 + notify->count * sizeof(uint64_t);
+}
+
 void TcpVCReadThread::setDataCallback(
     std::function<void(const uint64_t messageId, std::shared_ptr<std::vector<char>> data)> callback)
 {
     dataCallback = callback;
 }
+
 void TcpVCReadThread::setDisconnectCallback(std::function<void(TcpConnectionSp connection)> callback)
 {
     this->disconnectCallback = callback;

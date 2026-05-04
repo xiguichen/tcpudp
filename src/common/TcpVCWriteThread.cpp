@@ -7,6 +7,7 @@
 #include <thread>
 
 static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
+static constexpr auto SOCKET_AVOIDANCE_BASE_MS = std::chrono::milliseconds(2000);
 
 void TcpVCWriteThread::run()
 {
@@ -38,6 +39,18 @@ void TcpVCWriteThread::run()
                 payloadLen = packet->dataLength;
             }
 
+            if (socketStatus && socketStatus->isCurrentlyDegraded(SOCKET_AVOIDANCE_BASE_MS))
+            {
+                log_debug(std::format(
+                    "[VC] WriteThread conn={}: socket degraded, re-enqueueing messageId={}",
+                    connectionIndex, messageId));
+                if (sendStats)
+                    sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+                writeQueue->enqueue(data);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+
             if (!IsSocketWritable(connection->getSocketFd(), WRITABLE_CHECK_TIMEOUT_MS))
             {
                 connection->refreshRuntimeInfoIfStale(std::chrono::milliseconds{TCP_RUNTIME_REFRESH_MS});
@@ -52,7 +65,6 @@ void TcpVCWriteThread::run()
                 continue;
             }
 
-            // Check socket quality: congestion and exponential backoff state
             connection->refreshRuntimeInfoIfStale(std::chrono::milliseconds{TCP_RUNTIME_REFRESH_MS});
             auto runtimeInfo = connection->getLastRuntimeInfo();
 
@@ -77,6 +89,11 @@ void TcpVCWriteThread::run()
             connection->send(data->data(), data->size());
             connection->diagMarkSendEnd(messageId);
             auto dur = std::chrono::steady_clock::now() - start;
+
+            if (messageTracker)
+            {
+                messageTracker->recordMessage(messageId, connectionIndex);
+            }
 
             if (sendStats)
             {

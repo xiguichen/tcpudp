@@ -1,3 +1,5 @@
+#pragma once
+
 #include "BlockingQueue.h"
 #include "Socket.h"
 #include "SpscQueue.h"
@@ -6,12 +8,14 @@
 #include "VirtualChannel.h"
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <condition_variable>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_this<TcpVirtualChannel>
@@ -24,21 +28,37 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
         this->close();
     };
 
-    // Method to open the channel
     virtual void open();
 
-    // Method to send data through the channel
     virtual void send(const char *data, size_t size);
 
-    // Method to check if the channel is open
     virtual bool isOpen() const;
 
-    // Method to close the channel
     virtual void close();
 
     void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex);
 
+    void processResendRequest(uint64_t messageId);
+
+    void processMissingNotify(const std::vector<uint64_t> &missingIds);
+
     void setReorderTimeout(std::chrono::milliseconds timeout) { reorderTimeoutMs = timeout; }
+
+    void setMissingNotifyInterval(std::chrono::milliseconds timeout) { missingNotifyIntervalMs = timeout; }
+
+    void setResendCallback(std::function<void(uint64_t messageId, const char *data, size_t size)> callback)
+    {
+        resendCallback = std::move(callback);
+    }
+
+    void setMissingNotifyCallback(std::function<void(const std::vector<uint64_t> &missingIds)> callback)
+    {
+        missingNotifyCallback = std::move(callback);
+    }
+
+    std::shared_ptr<MessageTracker> getMessageTracker() const { return messageTracker; }
+
+    std::vector<std::shared_ptr<SocketStatus>> getSocketStatuses() const { return socketStatuses; }
 
   private:
     struct ReceivedItem
@@ -56,35 +76,28 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     std::vector<DeliveryItem> drainReceivedDataMap();
 
+    void sendMissingNotifications();
+
     std::vector<TcpVCReadThreadSp> readThreads;
     std::vector<TcpVCWriteThreadSp> writeThreads;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
 
-    // Per-connection send stats (written by write threads, read by reorder thread)
     std::vector<std::shared_ptr<ConnSendStats>> connSendStats;
 
-    // Lock-free per-connection receive queues (one SPSC queue per connection).
-    // Each read thread is the sole producer for its queue; the reorder thread
-    // is the sole consumer. No mutex needed on the data path.
     std::vector<std::unique_ptr<SpscQueue<DeliveryItem>>> connReceiveQueues;
     std::atomic<uint64_t> reorderEnqueueSeq{0};
     std::mutex reorderMutex;
     std::condition_variable reorderCv;
 
-    // Reorder state — accessed only by the reorder thread (no lock needed)
     std::map<uint64_t, ReceivedItem> receivedDataMap;
 
-    // Mutex to ensure thread safety for disconnection handling
     std::mutex disconnectMutex;
 
-    // Reorder thread: drains per-connection SPSC queues, reorders messages,
-    // checks gap timeouts, and invokes receiveCallback directly
     std::thread reorderThread;
     std::atomic<bool> reorderRunning{false};
     void reorderThreadFunc();
 
-    // VC state
     std::atomic<bool> opened{false};
     std::atomic<long> lastSendMessageId{0};
     std::atomic<uint64_t> nextMessageId{0};
@@ -94,8 +107,21 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::chrono::steady_clock::time_point lastHealthLogTime;
     std::chrono::milliseconds reorderTimeoutMs{4000};
 
-    // Per-connection receive stats (accessed only by reorder thread)
     std::vector<uint64_t> lastRxMessageId;
     std::vector<std::chrono::steady_clock::time_point> lastRxTime;
     std::vector<bool> lastRxValid;
+
+    std::shared_ptr<MessageTracker> messageTracker;
+    std::vector<std::shared_ptr<SocketStatus>> socketStatuses;
+
+    std::unordered_set<uint64_t> notifiedMissingIds;
+    std::chrono::steady_clock::time_point lastNotifyTime;
+    std::chrono::milliseconds missingNotifyIntervalMs{200};
+
+    std::map<uint64_t, std::shared_ptr<std::vector<char>>> sentDataCache;
+    std::mutex sentDataMutex;
+    static constexpr size_t MAX_SENT_DATA_CACHE = 1024;
+
+    std::function<void(uint64_t messageId, const char *data, size_t size)> resendCallback;
+    std::function<void(const std::vector<uint64_t> &missingIds)> missingNotifyCallback;
 };
