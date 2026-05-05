@@ -2,14 +2,15 @@
 #include "Log.h"
 #include "PerformanceCounter.h"
 #include "Socket.h"
-#include <chrono>
-#include <mutex>
-#include <cstring>
 #include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <mutex>
 
 static int64_t NowSteadyMs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
 void TcpConnection::diagMarkSendStart(uint64_t messageId)
@@ -33,7 +34,8 @@ void TcpConnection::disconnect()
         std::lock_guard<std::mutex> lock(disconnectMutex);
 
         // Check if already disconnected
-        if (!connected.load()) {
+        if (!connected.load())
+        {
             return;
         }
 
@@ -48,7 +50,10 @@ void TcpConnection::disconnect()
         callbackToInvoke = disconnectCallback;
     }
     // Invoke callback after the lock is released
-    if (callbackToInvoke) { callbackToInvoke(); }
+    if (callbackToInvoke)
+    {
+        callbackToInvoke();
+    }
     log_info("TCP connection closed");
 }
 
@@ -144,12 +149,13 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         info.valid = true;
 
         // Map Linux TCP_INFO to our runtime info structure
-        info.congestionWindowBytes = tcpInfo.tcpi_snd_cwnd;
+        // Note: tcpi_snd_cwnd is in MSS units (packets), not bytes
+        info.congestionWindowBytes = tcpInfo.tcpi_snd_cwnd * tcpInfo.tcpi_snd_mss;
         info.smoothedRttUs = tcpInfo.tcpi_rtt;
         info.rtoUs = tcpInfo.tcpi_rto * 1000;
 
-        // Estimate bytes in flight (simplified)
-        info.bytesInFlight = tcpInfo.tcpi_unacked * 1460; // Assuming 1460 MTU
+        // Estimate bytes in flight using actual MSS
+        info.bytesInFlight = tcpInfo.tcpi_unacked * tcpInfo.tcpi_snd_mss;
 
         // RTO is approximate (not exact) on Linux
         info.rtoIsApproximate = true;
@@ -157,8 +163,8 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         // Timeout episodes
         info.timeoutEpisodes = tcpInfo.tcpi_retransmits;
 
-        // Determine congestion state
-        info.isCongested = (info.congestionWindowBytes > 0 && info.bytesInFlight > info.congestionWindowBytes);
+        // Determine congestion state: compare packets in flight vs congestion window
+        info.isCongested = (tcpInfo.tcpi_unacked > tcpInfo.tcpi_snd_cwnd);
         info.isInExponentialBackoff = (info.timeoutEpisodes > 0);
     }
 #endif
@@ -189,4 +195,3 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::getLastRuntimeInfo() cons
     std::lock_guard<std::mutex> lock(runtimeInfoMutex);
     return lastRuntimeInfo;
 }
-

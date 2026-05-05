@@ -29,7 +29,8 @@ void TcpVCWriteThread::run()
             log_info("Thread exiting on stop signal");
             break;
         }
-        if (this->connection && this->connection->isConnected()) {
+        if (this->connection && this->connection->isConnected())
+        {
             uint64_t messageId = 0;
             uint16_t payloadLen = 0;
             if (data->size() >= sizeof(VCDataPacket))
@@ -41,13 +42,12 @@ void TcpVCWriteThread::run()
 
             if (socketStatus && socketStatus->isCurrentlyDegraded(SOCKET_AVOIDANCE_BASE_MS))
             {
-                log_debug(std::format(
-                    "[VC] WriteThread conn={}: socket degraded, re-enqueueing messageId={}",
-                    connectionIndex, messageId));
+                log_debug(std::format("[VC] WriteThread conn={}: socket degraded, re-enqueueing messageId={}",
+                                      connectionIndex, messageId));
                 if (sendStats)
                     sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                 writeQueue->enqueue(data);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
 
@@ -55,9 +55,9 @@ void TcpVCWriteThread::run()
             {
                 connection->refreshRuntimeInfoIfStale(std::chrono::milliseconds{TCP_RUNTIME_REFRESH_MS});
                 auto runtimeInfo = connection->getLastRuntimeInfo();
-                log_warnning(std::format(
-                    "[VC] WriteThread conn={}: socket not writable after {}ms, re-enqueueing messageId={}",
-                    connectionIndex, WRITABLE_CHECK_TIMEOUT_MS, messageId));
+                log_warnning(
+                    std::format("[VC] WriteThread conn={}: socket not writable after {}ms, re-enqueueing messageId={}",
+                                connectionIndex, WRITABLE_CHECK_TIMEOUT_MS, messageId));
                 if (sendStats)
                     sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                 writeQueue->enqueue(data);
@@ -70,17 +70,25 @@ void TcpVCWriteThread::run()
 
             if (runtimeInfo.isCongested || runtimeInfo.isInExponentialBackoff)
             {
-                log_warnning(std::format(
-                    "[VC] WriteThread conn={}: socket congested or in backoff, re-enqueueing messageId={} "
-                    "(congested={}, backoff={})",
-                    connectionIndex, messageId,
-                    runtimeInfo.isCongested ? "yes" : "no",
-                    runtimeInfo.isInExponentialBackoff ? "yes" : "no"));
+                log_warnning(
+                    std::format("[VC] WriteThread conn={}: socket congested or in backoff, re-enqueueing messageId={} "
+                                "(congested={}, backoff={})",
+                                connectionIndex, messageId, runtimeInfo.isCongested ? "yes" : "no",
+                                runtimeInfo.isInExponentialBackoff ? "yes" : "no"));
 
                 if (sendStats)
                     sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+
+                if (socketStatus)
+                    socketStatus->markDegraded();
+
                 writeQueue->enqueue(data);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+                if (runtimeInfo.isInExponentialBackoff)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                else
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
                 continue;
             }
 
@@ -115,11 +123,7 @@ void TcpVCWriteThread::run()
                 auto durMs = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
                 auto runtimeInfo = connection->sampleRuntimeInfo();
                 log_warnning(std::format("[VC] Slow TCP send: conn={} messageId={} payload={}B total={}B sendMs={}",
-                                         connectionIndex,
-                                         messageId,
-                                         payloadLen,
-                                         data->size(),
-                                         durMs));
+                                         connectionIndex, messageId, payloadLen, data->size(), durMs));
             }
         }
     }
