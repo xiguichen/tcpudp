@@ -2,12 +2,12 @@
 
 #include "Socket.h"
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <chrono>
 #include <optional>
 
 class TcpConnection
@@ -40,18 +40,32 @@ class TcpConnection
     void diagMarkSendStart(uint64_t messageId);
     void diagMarkSendEnd(uint64_t messageId);
 
-    bool diagIsSendInFlight() const { return diagSendInFlight.load(); }
-    uint64_t diagInFlightMessageId() const { return diagInFlightMessageIdVal.load(); }
-    int64_t diagInFlightStartMs() const { return diagInFlightStartMsVal.load(); }
-    uint64_t diagLastSendCompletedMessageId() const { return diagLastSendCompletedMessageIdVal.load(); }
-    int64_t diagLastSendEndMs() const { return diagLastSendEndMsVal.load(); }
+    bool diagIsSendInFlight() const
+    {
+        return diagSendInFlight.load();
+    }
+    uint64_t diagInFlightMessageId() const
+    {
+        return diagInFlightMessageIdVal.load();
+    }
+    int64_t diagInFlightStartMs() const
+    {
+        return diagInFlightStartMsVal.load();
+    }
+    uint64_t diagLastSendCompletedMessageId() const
+    {
+        return diagLastSendCompletedMessageIdVal.load();
+    }
+    int64_t diagLastSendEndMs() const
+    {
+        return diagLastSendEndMsVal.load();
+    }
 
     // Socket quality-aware sending: runtime info and congestion monitoring
     struct TcpConnectionRuntimeInfo
     {
         bool supported = false;
         bool valid = false;
-        bool isCongested = false;
         bool isInExponentialBackoff = false;
         bool retransmissionIndicatorIsBytes = false;
         bool rtoIsApproximate = false;
@@ -68,11 +82,14 @@ class TcpConnection
     TcpConnectionRuntimeInfo getLastRuntimeInfo() const;
 
   private:
- public:
+  public:
     std::function<void()> disconnectCallback;
 
     // Method to check if the connection is established
-    bool isConnected() const { return connected.load(); };
+    bool isConnected() const
+    {
+        return connected.load();
+    };
 
     // Method to close the TCP connection
     void disconnect();
@@ -81,7 +98,7 @@ class TcpConnection
     SocketFd getSocketFd() const;
 
   private:
-    std::mutex disconnectMutex;         // Per-instance mutex for disconnect (not static — avoids cross-instance deadlock)
+    std::mutex disconnectMutex; // Per-instance mutex for disconnect (not static — avoids cross-instance deadlock)
     std::atomic<bool> connected{false}; // Connection state (atomic for thread safety)
     SocketFd socketFd = -1;             // Socket file descriptor
 

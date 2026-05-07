@@ -18,6 +18,29 @@
 #include <unordered_set>
 #include <vector>
 
+class SentDataCache
+{
+    struct ConnShard
+    {
+        std::mutex mutex;
+        std::unordered_map<uint64_t, std::shared_ptr<std::vector<char>>> items;
+        std::vector<uint64_t> insertionOrder;
+    };
+
+  public:
+    SentDataCache() = default;
+    explicit SentDataCache(size_t numConns, size_t capacityPerConn)
+        : shards(numConns), capacityPerConn(capacityPerConn) {}
+
+    void insert(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int connIndex);
+    std::shared_ptr<std::vector<char>> find(uint64_t messageId);
+    void clear();
+
+  private:
+    std::vector<ConnShard> shards;
+    size_t capacityPerConn = 128;
+};
+
 class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_this<TcpVirtualChannel>
 {
 
@@ -118,9 +141,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::chrono::steady_clock::time_point lastNotifyTime;
     std::chrono::milliseconds missingNotifyIntervalMs{200};
 
-    std::map<uint64_t, std::shared_ptr<std::vector<char>>> sentDataCache;
-    std::mutex sentDataMutex;
-    static constexpr size_t MAX_SENT_DATA_CACHE = 1024;
+    SentDataCache sentDataCache;
 
     std::function<void(uint64_t messageId, const char *data, size_t size)> resendCallback;
     std::function<void(const std::vector<uint64_t> &missingIds)> missingNotifyCallback;

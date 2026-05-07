@@ -21,39 +21,55 @@ struct ConnSendStats
 
 class MessageTracker
 {
+    struct Shard
+    {
+        std::mutex mutex;
+        std::unordered_map<uint64_t, int> messageToConn;
+    };
+
   public:
+    MessageTracker() = default;
+    explicit MessageTracker(size_t numShards) : shards(numShards) {}
+
     void recordMessage(uint64_t messageId, int connectionIndex)
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        messageToConn[messageId] = connectionIndex;
+        size_t idx = static_cast<size_t>(connectionIndex) % shards.size();
+        std::lock_guard<std::mutex> lock(shards[idx].mutex);
+        shards[idx].messageToConn[messageId] = connectionIndex;
     }
 
     int getConnectionIndex(uint64_t messageId)
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        auto it = messageToConn.find(messageId);
-        if (it != messageToConn.end())
+        for (auto &shard : shards)
         {
-            return it->second;
+            std::lock_guard<std::mutex> lock(shard.mutex);
+            auto it = shard.messageToConn.find(messageId);
+            if (it != shard.messageToConn.end())
+                return it->second;
         }
         return -1;
     }
 
     void removeMessage(uint64_t messageId)
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        messageToConn.erase(messageId);
+        for (auto &shard : shards)
+        {
+            std::lock_guard<std::mutex> lock(shard.mutex);
+            shard.messageToConn.erase(messageId);
+        }
     }
 
     void clear()
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        messageToConn.clear();
+        for (auto &shard : shards)
+        {
+            std::lock_guard<std::mutex> lock(shard.mutex);
+            shard.messageToConn.clear();
+        }
     }
 
   private:
-    std::mutex mutex;
-    std::unordered_map<uint64_t, int> messageToConn;
+    std::vector<Shard> shards;
 };
 
 struct SocketStatus

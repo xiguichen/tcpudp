@@ -7,7 +7,7 @@
 #include <thread>
 
 static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
-static constexpr auto SOCKET_AVOIDANCE_BASE_MS = std::chrono::milliseconds(2000);
+static constexpr auto SOCKET_AVOIDANCE_BASE_MS = std::chrono::milliseconds(500);
 
 void TcpVCWriteThread::run()
 {
@@ -47,7 +47,7 @@ void TcpVCWriteThread::run()
                 if (sendStats)
                     sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                 writeQueue->enqueue(data);
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
                 continue;
             }
 
@@ -68,13 +68,10 @@ void TcpVCWriteThread::run()
             connection->refreshRuntimeInfoIfStale(std::chrono::milliseconds{TCP_RUNTIME_REFRESH_MS});
             auto runtimeInfo = connection->getLastRuntimeInfo();
 
-            if (runtimeInfo.isCongested || runtimeInfo.isInExponentialBackoff)
+            if (runtimeInfo.isInExponentialBackoff)
             {
-                log_warnning(
-                    std::format("[VC] WriteThread conn={}: socket congested or in backoff, re-enqueueing messageId={} "
-                                "(congested={}, backoff={})",
-                                connectionIndex, messageId, runtimeInfo.isCongested ? "yes" : "no",
-                                runtimeInfo.isInExponentialBackoff ? "yes" : "no"));
+                log_warnning(std::format("[VC] WriteThread conn={}: socket in backoff, re-enqueueing messageId={}",
+                                         connectionIndex, messageId));
 
                 if (sendStats)
                     sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
@@ -84,10 +81,7 @@ void TcpVCWriteThread::run()
 
                 writeQueue->enqueue(data);
 
-                if (runtimeInfo.isInExponentialBackoff)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                else
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
                 continue;
             }

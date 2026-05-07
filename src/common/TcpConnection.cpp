@@ -127,7 +127,6 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
     // We'll rely on the fallback values
     info.supported = false;
     info.valid = false;
-    info.isCongested = false;
     info.isInExponentialBackoff = false;
     info.rtoUs = 0;
     info.rtoIsApproximate = false;
@@ -163,8 +162,7 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         // Timeout episodes
         info.timeoutEpisodes = tcpInfo.tcpi_retransmits;
 
-        // Determine congestion state: compare packets in flight vs congestion window
-        info.isCongested = (tcpInfo.tcpi_unacked > tcpInfo.tcpi_snd_cwnd);
+        // Exponential backoff (retransmits) indicates real congestion
         info.isInExponentialBackoff = (info.timeoutEpisodes > 0);
     }
 #endif

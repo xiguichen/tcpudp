@@ -10,6 +10,44 @@
 
 static constexpr auto RECEIVE_CALLBACK_SLOW_WARN_MS = std::chrono::milliseconds(50);
 
+void SentDataCache::insert(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int connIndex)
+{
+    if (connIndex < 0 || static_cast<size_t>(connIndex) >= shards.size())
+        return;
+    auto &shard = shards[connIndex];
+    std::lock_guard<std::mutex> lock(shard.mutex);
+    shard.items[messageId] = std::move(data);
+    shard.insertionOrder.push_back(messageId);
+    if (shard.insertionOrder.size() > capacityPerConn)
+    {
+        uint64_t oldest = shard.insertionOrder.front();
+        shard.insertionOrder.erase(shard.insertionOrder.begin());
+        shard.items.erase(oldest);
+    }
+}
+
+std::shared_ptr<std::vector<char>> SentDataCache::find(uint64_t messageId)
+{
+    for (auto &shard : shards)
+    {
+        std::lock_guard<std::mutex> lock(shard.mutex);
+        auto it = shard.items.find(messageId);
+        if (it != shard.items.end())
+            return it->second;
+    }
+    return nullptr;
+}
+
+void SentDataCache::clear()
+{
+    for (auto &shard : shards)
+    {
+        std::lock_guard<std::mutex> lock(shard.mutex);
+        shard.items.clear();
+        shard.insertionOrder.clear();
+    }
+}
+
 void TcpVirtualChannel::open()
 {
     auto selfGuard = shared_from_this();
@@ -74,7 +112,8 @@ void TcpVirtualChannel::open()
         connSendStats.push_back(std::make_shared<ConnSendStats>());
     }
 
-    messageTracker = std::make_shared<MessageTracker>();
+    messageTracker = std::make_shared<MessageTracker>(connections.size());
+    sentDataCache = SentDataCache(connections.size(), 128);
 
     socketStatuses.clear();
     for (size_t i = 0; i < connections.size(); ++i)
@@ -149,14 +188,10 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
 
+        // Round-robin cache sharding
         {
-            std::lock_guard<std::mutex> lock(sentDataMutex);
-            if (sentDataCache.size() >= MAX_SENT_DATA_CACHE)
-            {
-                auto oldest = sentDataCache.begin();
-                sentDataCache.erase(oldest);
-            }
-            sentDataCache[messageId] = dataVec;
+            int cacheConn = static_cast<int>(messageId % connections.size());
+            sentDataCache.insert(messageId, dataVec, cacheConn);
         }
 
         sendQueue->enqueue(dataVec);
@@ -231,10 +266,7 @@ void TcpVirtualChannel::close()
         messageTracker->clear();
     }
 
-    {
-        std::lock_guard<std::mutex> lock(sentDataMutex);
-        sentDataCache.clear();
-    }
+    sentDataCache.clear();
 }
 
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data,
@@ -268,15 +300,7 @@ void TcpVirtualChannel::processResendRequest(uint64_t messageId)
         }
     }
 
-    std::shared_ptr<std::vector<char>> dataVec;
-    {
-        std::lock_guard<std::mutex> lock(sentDataMutex);
-        auto it = sentDataCache.find(messageId);
-        if (it != sentDataCache.end())
-        {
-            dataVec = it->second;
-        }
-    }
+    auto dataVec = sentDataCache.find(messageId);
 
     if (dataVec && resendCallback)
     {
@@ -304,15 +328,7 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
             }
         }
 
-        std::shared_ptr<std::vector<char>> dataVec;
-        {
-            std::lock_guard<std::mutex> lock(sentDataMutex);
-            auto it = sentDataCache.find(messageId);
-            if (it != sentDataCache.end())
-            {
-                dataVec = it->second;
-            }
-        }
+        auto dataVec = sentDataCache.find(messageId);
 
         if (dataVec && resendCallback)
         {
