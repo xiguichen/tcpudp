@@ -47,7 +47,7 @@ void TcpVCWriteThread::run()
                 if (sendStats)
                     sendStats->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                 writeQueue->enqueue(data);
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 continue;
             }
 

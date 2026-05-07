@@ -68,7 +68,6 @@ class TcpConnection
         bool valid = false;
         bool isInExponentialBackoff = false;
         bool retransmissionIndicatorIsBytes = false;
-        bool rtoIsApproximate = false;
         uint32_t rtoUs = 0;
         uint32_t smoothedRttUs = 0;
         uint32_t congestionWindowBytes = 0;

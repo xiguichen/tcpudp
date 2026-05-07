@@ -57,7 +57,7 @@ const uint32_t VC_MIN_MISSING_NOTIFY_SIZE = sizeof(VCMissingNotify);
 const uint16_t VC_MAX_DATA_PAYLOAD_SIZE = 2000;
 
 // TCP Connections per virtual channel
-const uint8_t VC_TCP_CONNECTIONS = 8;
+const uint8_t VC_TCP_CONNECTIONS = 32;
 
 // Drop incoming UDP packets when any send queue exceeds this depth.
 // Prevents unbounded memory growth when the network can't keep up.

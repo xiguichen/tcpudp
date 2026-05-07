@@ -129,7 +129,6 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
     info.valid = false;
     info.isInExponentialBackoff = false;
     info.rtoUs = 0;
-    info.rtoIsApproximate = false;
     info.smoothedRttUs = 0;
     info.congestionWindowBytes = 0;
     info.bytesInFlight = 0;
@@ -156,14 +155,11 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         // Estimate bytes in flight using actual MSS
         info.bytesInFlight = tcpInfo.tcpi_unacked * tcpInfo.tcpi_snd_mss;
 
-        // RTO is approximate (not exact) on Linux
-        info.rtoIsApproximate = true;
-
         // Timeout episodes
         info.timeoutEpisodes = tcpInfo.tcpi_retransmits;
 
         // Exponential backoff (retransmits) indicates real congestion
-        info.isInExponentialBackoff = (info.timeoutEpisodes > 0);
+        info.isInExponentialBackoff = (tcpInfo.tcpi_backoff > 1);
     }
 #endif
 
