@@ -49,7 +49,7 @@ run.py             # Helper run script
 
 **Virtual Channel (VC) Architecture**
 - Virtual channels abstract TCP connections using a message-based protocol
-- Each VC uses multiple TCP connections (default: 8, defined as `VC_TCP_CONNECTIONS` in `VcProtocol.h`) for reliability and throughput
+- Each VC uses multiple TCP connections (default: 32, defined as `VC_TCP_CONNECTIONS` in `VcProtocol.h`) for reliability and throughput
 - Message-based protocol (VCDataPacket) with sequence IDs and max payload of 2000 bytes
 - Managed by singleton `VcManager` to track active channels by client ID
 - Incoming UDP packets are dropped when any send queue exceeds `SEND_QUEUE_DROP_THRESHOLD` (500) to prevent unbounded memory growth
@@ -69,7 +69,7 @@ run.py             # Helper run script
 **VC Protocol** (`VcProtocol.h`)
 - Binary protocol using packed structures (`#pragma pack(push, 1)`)
 - `VCHeader` contains packet type and message ID; `VCDataPacket` includes data length and payload
-- Constants: `VC_MAX_DATA_PAYLOAD_SIZE` = 2000, `VC_TCP_CONNECTIONS` = 8, `SEND_QUEUE_DROP_THRESHOLD` = 500
+- Constants: `VC_MAX_DATA_PAYLOAD_SIZE` = 2000, `VC_TCP_CONNECTIONS` = 32, `SEND_QUEUE_DROP_THRESHOLD` = 500
 
 **UVT Protocol** (`Protocol.h`)
 - Higher-level UDP-over-TCP framing protocol ("UVT" = UDP over TCP)
