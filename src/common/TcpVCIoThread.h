@@ -38,6 +38,7 @@ class TcpVCIoThread : public StopableThread
     bool sendFromConnection(int connIndex, std::shared_ptr<std::vector<char>> dataVec);
     void readFromConnection(int connIndex);
     void refreshConnRuntimeInfo(size_t connIndex);
+    void drainSendQueue(const std::vector<struct pollfd> &pollfds, bool onlyNonDegraded);
 
     static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
     static constexpr auto SLOW_SEND_WARN_MS = std::chrono::milliseconds(100);

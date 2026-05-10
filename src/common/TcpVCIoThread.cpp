@@ -100,6 +100,8 @@ void TcpVCIoThread::run()
             continue;
         }
 
+        drainSendQueue(pollfds, true);
+
         for (size_t i = 0; i < numConns; i++)
         {
             if (pollfds[i].fd < 0) continue;
@@ -111,90 +113,71 @@ void TcpVCIoThread::run()
             }
         }
 
-        if (sendQueue && sendQueue->size() > 0)
-        {
-            for (size_t i = 0; i < numConns; i++)
-            {
-                if (!(pollfds[i].revents & POLLOUT)) continue;
-                if (socketStatuses[i]->isCurrentlyDegraded(std::chrono::milliseconds(500)))
-                {
-                    log_debug(std::format("Connection {} degraded, skipping", i));
-                    continue;
-                }
+        drainSendQueue(pollfds, false);
 
-                auto reenqueueData = [this](std::shared_ptr<std::vector<char>> dataVec, size_t connIdx) {
-                    if (connIdx < connSendStats.size() && connSendStats[connIdx])
-                        connSendStats[connIdx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
-                    sendQueue->enqueue(dataVec);
-                };
-
-                while (sendQueue->size() > 0)
-                {
-                    auto dataVec = sendQueue->tryDequeue();
-                    if (!dataVec) break;
-
-                    refreshConnRuntimeInfo(i);
-
-                    if (socketStatuses[i]->isCurrentlyDegraded(std::chrono::milliseconds(500)))
-                    {
-                        log_debug(std::format("Connection {} degraded, re-enqueuing", i));
-                        reenqueueData(dataVec, i);
-                        continue;
-                    }
-
-                    auto runtimeInfo = connections[i]->getLastRuntimeInfo();
-                    if (runtimeInfo.isInExponentialBackoff)
-                    {
-                        log_warnning(std::format("Connection {} in exponential backoff, marking degraded and re-enqueuing", i));
-                        socketStatuses[i]->markDegraded();
-                        reenqueueData(dataVec, i);
-                        continue;
-                    }
-
-                    if (!sendFromConnection(static_cast<int>(i), dataVec))
-                    {
-                        reenqueueData(dataVec, i);
-                        break;
-                    }
-                }
-
-                if (sendQueue->size() == 0) break;
-            }
-
-            if (sendQueue->size() > 0)
-            {
-                for (size_t i = 0; i < numConns; i++)
-                {
-                    if (!(pollfds[i].revents & POLLOUT)) continue;
-
-                    while (sendQueue->size() > 0)
-                    {
-                        auto dataVec = sendQueue->tryDequeue();
-                        if (!dataVec) break;
-
-                        refreshConnRuntimeInfo(i);
-
-                        if (!sendFromConnection(static_cast<int>(i), dataVec))
-                        {
-                            sendQueue->enqueue(dataVec);
-                            if (i < connSendStats.size() && connSendStats[i])
-                                connSendStats[i]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
-                            break;
-                        }
-                    }
-
-                    if (sendQueue->size() == 0) break;
-                }
-            }
-        }
-
-        if (ready == 0 && sendQueue->size() == 0)
+        if (ready == 0 && (!sendQueue || sendQueue->size() == 0))
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
     log_info("TcpVCIoThread stopped");
+}
+
+void TcpVCIoThread::drainSendQueue(const std::vector<struct pollfd> &pollfds, bool onlyNonDegraded)
+{
+    if (!sendQueue || sendQueue->size() == 0) return;
+    size_t numConns = connections.size();
+
+    auto reenqueueData = [this](std::shared_ptr<std::vector<char>> dataVec, size_t connIdx) {
+        if (connIdx < connSendStats.size() && connSendStats[connIdx])
+            connSendStats[connIdx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+        sendQueue->enqueue(dataVec);
+    };
+
+    for (size_t i = 0; i < numConns; i++)
+    {
+        if (pollfds[i].fd < 0) continue;
+        if (!(pollfds[i].revents & POLLOUT)) continue;
+
+        if (onlyNonDegraded && socketStatuses[i]->isCurrentlyDegraded(std::chrono::milliseconds(500)))
+        {
+            log_debug(std::format("Connection {} degraded, skipping", i));
+            continue;
+        }
+
+        while (sendQueue->size() > 0)
+        {
+            auto dataVec = sendQueue->tryDequeue();
+            if (!dataVec) break;
+
+            refreshConnRuntimeInfo(i);
+
+            if (onlyNonDegraded && socketStatuses[i]->isCurrentlyDegraded(std::chrono::milliseconds(500)))
+            {
+                log_debug(std::format("Connection {} degraded, re-enqueuing", i));
+                reenqueueData(dataVec, i);
+                continue;
+            }
+
+            auto runtimeInfo = connections[i]->getLastRuntimeInfo();
+            if (onlyNonDegraded && runtimeInfo.isInExponentialBackoff)
+            {
+                log_warnning(std::format("Connection {} in exponential backoff, marking degraded and re-enqueuing", i));
+                socketStatuses[i]->markDegraded();
+                reenqueueData(dataVec, i);
+                continue;
+            }
+
+            if (!sendFromConnection(static_cast<int>(i), dataVec))
+            {
+                reenqueueData(dataVec, i);
+                break;
+            }
+        }
+
+        if (sendQueue->size() == 0) break;
+    }
 }
 
 bool TcpVCIoThread::sendFromConnection(int connIndex, std::shared_ptr<std::vector<char>> dataVec)
