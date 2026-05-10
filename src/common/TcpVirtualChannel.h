@@ -4,6 +4,7 @@
 #include "Socket.h"
 #include "SpscQueue.h"
 #include "TcpVCIoThread.h"
+#include "TcpVCSendThread.h"
 #include "TcpVCWriteThread.h"
 #include "VirtualChannel.h"
 #include <atomic>
@@ -102,6 +103,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     void sendMissingNotifications();
 
     std::shared_ptr<TcpVCIoThread> ioThread;
+    std::shared_ptr<TcpVCSendThread> sendThread;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
 

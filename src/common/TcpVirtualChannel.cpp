@@ -1,7 +1,5 @@
 #include "TcpVirtualChannel.h"
 #include "Log.h"
-#include "TcpVCReadThreadFactory.h"
-#include "TcpVCWriteThreadFactory.h"
 #include "VcProtocol.h"
 #include <chrono>
 #include <cstring>
@@ -82,6 +80,10 @@ void TcpVirtualChannel::open()
             if (self->ioThread) {
                 self->ioThread->setRunning(false);
             }
+
+            if (self->sendThread) {
+                self->sendThread->setRunning(false);
+            }
         }
 
         if (shouldNotify && self->disconnectCallback) {
@@ -131,10 +133,6 @@ void TcpVirtualChannel::open()
 
     ioThread = std::make_shared<TcpVCIoThread>(
         connections,
-        sendQueue,
-        connSendStats,
-        messageTracker,
-        socketStatuses,
         dataCb,
         resendReqCb,
         missingNotifyCb,
@@ -142,6 +140,16 @@ void TcpVirtualChannel::open()
     );
 
     ioThread->start();
+
+    sendThread = std::make_shared<TcpVCSendThread>(
+        connections,
+        sendQueue,
+        connSendStats,
+        messageTracker,
+        socketStatuses
+    );
+
+    sendThread->start();
 
     opened = true;
 }
@@ -208,14 +216,16 @@ void TcpVirtualChannel::close()
         for (auto &conn : connections)
         {
             if (conn && conn->isConnected())
-            {
-                log_debug("Disconnecting a TcpConnection");
                 conn->disconnect();
-            }
-            else
-            {
-                log_debug("TcpConnection already disconnected");
-            }
+        }
+
+        if (sendThread)
+        {
+            log_debug("Stopping and joining send thread");
+            sendThread->stop();
+            sendThread->joinThread();
+            sendThread.reset();
+            log_debug("Send thread stopped and joined");
         }
 
         if (ioThread)
