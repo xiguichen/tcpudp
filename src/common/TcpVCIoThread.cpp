@@ -1,8 +1,7 @@
 #include "TcpVCIoThread.h"
 #include "Log.h"
-#include <cerrno>
+#include "Socket.h"
 #include <chrono>
-#include <cstring>
 #include <format>
 #include <thread>
 
@@ -54,12 +53,16 @@ void TcpVCIoThread::run()
 
     while (this->isRunning())
     {
+        bool hasDataToSend = sendQueue && sendQueue->size() > 0;
+
         for (size_t i = 0; i < numConns; i++)
         {
             if (connections[i] && connections[i]->isConnected())
             {
                 pollfds[i].fd = connections[i]->getSocketFd();
-                pollfds[i].events = POLLIN | POLLOUT;
+                pollfds[i].events = POLLIN;
+                if (hasDataToSend)
+                    pollfds[i].events |= POLLOUT;
                 pollfds[i].revents = 0;
             }
             else
@@ -199,22 +202,24 @@ void TcpVCIoThread::readFromConnection(int connIndex)
 
     while (this->isRunning())
     {
-        ssize_t n = recv(conn->getSocketFd(), temp, sizeof(temp), 0);
+        ssize_t n = RecvTcpDataNonBlocking(conn->getSocketFd(), temp, sizeof(temp), 0, 0);
         if (n > 0)
         {
             buf.data.insert(buf.data.end(), temp, temp + n);
         }
-        else if (n == 0)
+        else if (n == SOCKET_ERROR_CLOSED)
         {
             log_info("Connection closed");
             if (disconnectCallback)
                 disconnectCallback(conn);
             return;
         }
+        else if (n == SOCKET_ERROR_WOULD_BLOCK || n == SOCKET_ERROR_TIMEOUT)
+        {
+            break;
+        }
         else
         {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                break;
             log_error("Read error on connection");
             if (disconnectCallback)
                 disconnectCallback(conn);
