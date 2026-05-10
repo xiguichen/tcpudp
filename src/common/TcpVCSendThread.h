@@ -28,8 +28,6 @@ class TcpVCSendThread : public StopableThread
     int rateConnection(size_t connIndex);
 
     static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
-    static constexpr int SEND_TIMEOUT_MS = 1800;
-    static constexpr auto SLOW_SEND_WARN_MS = std::chrono::milliseconds(100);
 
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;

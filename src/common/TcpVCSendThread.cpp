@@ -59,6 +59,14 @@ int TcpVCSendThread::rateConnection(size_t connIndex)
     score -= static_cast<int>(info.smoothedRttUs / 500);
     score -= static_cast<int>(info.bytesInFlight / 500);
     score -= info.timeoutEpisodes * 200;
+
+    if (connIndex < connSendStats.size() && connSendStats[connIndex])
+    {
+        auto &stats = connSendStats[connIndex];
+        uint64_t failCount = stats->reenqueueCount.load(std::memory_order_relaxed);
+        score -= static_cast<int>(failCount) * 200;
+    }
+
     return score > 0 ? score : 0;
 }
 
@@ -83,13 +91,11 @@ void TcpVCSendThread::run()
             uint16_t payloadLen = packet->dataLength;
 
             bool sent = false;
-            int bestIndex = -1;
-            int bestScore = -1;
 
             for (size_t trial = 0; trial < 2 && !sent; trial++)
             {
-                bestIndex = -1;
-                bestScore = -1;
+                int bestIndex = -1;
+                int bestScore = -1;
 
                 for (size_t i = 0; i < connections.size(); i++)
                 {
@@ -120,13 +126,11 @@ void TcpVCSendThread::run()
                 }
 
                 auto &conn = connections[bestIndex];
-                auto sendStart = std::chrono::steady_clock::now();
                 conn->diagMarkSendStart(messageId);
 
-                ssize_t n = SendTcpDataNonBlocking(conn->getSocketFd(), dataVec->data(), dataVec->size(), 0, SEND_TIMEOUT_MS);
+                ssize_t n = SendTcpDataNonBlocking(conn->getSocketFd(), dataVec->data(), dataVec->size(), 0, 0);
 
                 conn->diagMarkSendEnd(messageId);
-                auto sendDur = std::chrono::steady_clock::now() - sendStart;
 
                 if (n > 0)
                 {
@@ -143,30 +147,22 @@ void TcpVCSendThread::run()
                         stats->lastTxTimeMs.store(nowMs);
                         stats->txCount.fetch_add(1);
                         stats->valid.store(true);
-
-                        if (sendDur >= SLOW_SEND_WARN_MS)
-                        {
-                            stats->slowSendCount.fetch_add(1);
-                            auto durMs = std::chrono::duration_cast<std::chrono::milliseconds>(sendDur).count();
-                            log_warnning(std::format("Slow TCP send: conn={} messageId={} payload={}B total={}B sendMs={}",
-                                                     bestIndex, messageId, payloadLen, dataVec->size(), durMs));
-                        }
                     }
 
                     sent = true;
                 }
                 else
                 {
-                    log_debug(std::format("Send failed on conn={} messageId={}, marking degraded", bestIndex, messageId));
+                    log_debug(std::format("Send blocked on conn={} messageId={}, marking degraded", bestIndex, messageId));
                     if (static_cast<size_t>(bestIndex) < socketStatuses.size())
                         socketStatuses[bestIndex]->markDegraded();
                     if (static_cast<size_t>(bestIndex) < connSendStats.size() && connSendStats[bestIndex])
-                        connSendStats[bestIndex]->slowSendCount.fetch_add(1);
+                        connSendStats[bestIndex]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
 
                     if (trial == 1)
                     {
                         sendQueue->enqueue(dataVec);
-                        log_warnning(std::format("Send failed on all connections for messageId={}, re-enqueuing", messageId));
+                        log_warnning(std::format("Send blocked on all connections for messageId={}, re-enqueuing", messageId));
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     }
                 }
