@@ -29,8 +29,12 @@ TcpVCIoThread::TcpVCIoThread(std::vector<TcpConnectionSp> connections_,
       disconnectCallback(std::move(disconnectCallback_))
 {
     readBuffers.resize(connections.size());
-    for (auto &conn : connections)
+    lastRuntimeRefresh.resize(connections.size());
+    auto now = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < connections.size(); i++)
     {
+        auto &conn = connections[i];
+        lastRuntimeRefresh[i] = now;
         if (conn && conn->isConnected())
         {
             SocketFd fd = conn->getSocketFd();
@@ -40,6 +44,20 @@ TcpVCIoThread::TcpVCIoThread(std::vector<TcpConnectionSp> connections_,
             }
         }
     }
+}
+
+void TcpVCIoThread::refreshConnRuntimeInfo(size_t connIndex)
+{
+    if (connIndex >= connections.size()) return;
+    auto &conn = connections[connIndex];
+    if (!conn || !conn->isConnected()) return;
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastRuntimeRefresh[connIndex] < std::chrono::milliseconds(TCP_RUNTIME_REFRESH_MS))
+        return;
+
+    lastRuntimeRefresh[connIndex] = now;
+    conn->refreshRuntimeInfoIfStale(std::chrono::milliseconds(TCP_RUNTIME_REFRESH_MS));
 }
 
 TcpVCIoThread::~TcpVCIoThread() = default;
@@ -104,14 +122,38 @@ void TcpVCIoThread::run()
                     continue;
                 }
 
+                auto reenqueueData = [this](std::shared_ptr<std::vector<char>> dataVec, size_t connIdx) {
+                    if (connIdx < connSendStats.size() && connSendStats[connIdx])
+                        connSendStats[connIdx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+                    sendQueue->enqueue(dataVec);
+                };
+
                 while (sendQueue->size() > 0)
                 {
                     auto dataVec = sendQueue->tryDequeue();
                     if (!dataVec) break;
 
+                    refreshConnRuntimeInfo(i);
+
+                    if (socketStatuses[i]->isCurrentlyDegraded(std::chrono::milliseconds(500)))
+                    {
+                        log_debug(std::format("Connection {} degraded, re-enqueuing", i));
+                        reenqueueData(dataVec, i);
+                        continue;
+                    }
+
+                    auto runtimeInfo = connections[i]->getLastRuntimeInfo();
+                    if (runtimeInfo.isInExponentialBackoff)
+                    {
+                        log_warnning(std::format("Connection {} in exponential backoff, marking degraded and re-enqueuing", i));
+                        socketStatuses[i]->markDegraded();
+                        reenqueueData(dataVec, i);
+                        continue;
+                    }
+
                     if (!sendFromConnection(static_cast<int>(i), dataVec))
                     {
-                        sendQueue->enqueue(dataVec);
+                        reenqueueData(dataVec, i);
                         break;
                     }
                 }
@@ -130,9 +172,13 @@ void TcpVCIoThread::run()
                         auto dataVec = sendQueue->tryDequeue();
                         if (!dataVec) break;
 
+                        refreshConnRuntimeInfo(i);
+
                         if (!sendFromConnection(static_cast<int>(i), dataVec))
                         {
                             sendQueue->enqueue(dataVec);
+                            if (i < connSendStats.size() && connSendStats[i])
+                                connSendStats[i]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                             break;
                         }
                     }
@@ -161,16 +207,34 @@ bool TcpVCIoThread::sendFromConnection(int connIndex, std::shared_ptr<std::vecto
 
     const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
     uint64_t messageId = packet->header.messageId;
+    uint16_t payloadLen = packet->dataLength;
+
+    auto sendStart = std::chrono::steady_clock::now();
+    conn->diagMarkSendStart(messageId);
 
     ssize_t sent = SendTcpDataNonBlocking(conn->getSocketFd(), dataVec->data(), dataVec->size(), 0, 0);
+
+    conn->diagMarkSendEnd(messageId);
+    auto sendDur = std::chrono::steady_clock::now() - sendStart;
+
     if (sent <= 0)
     {
+        if (static_cast<size_t>(connIndex) < connSendStats.size() && connSendStats[connIndex])
+            connSendStats[connIndex]->slowSendCount.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
 
     if (messageTracker)
     {
         messageTracker->recordMessage(messageId, connIndex);
+    }
+
+    if (sendDur >= SLOW_SEND_WARN_MS && static_cast<size_t>(connIndex) < connSendStats.size() && connSendStats[connIndex])
+    {
+        connSendStats[connIndex]->slowSendCount.fetch_add(1, std::memory_order_relaxed);
+        auto durMs = std::chrono::duration_cast<std::chrono::milliseconds>(sendDur).count();
+        log_warnning(std::format("Slow TCP send: conn={} messageId={} payload={}B total={}B sendMs={}",
+                                 connIndex, messageId, payloadLen, dataVec->size(), durMs));
     }
 
     auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
