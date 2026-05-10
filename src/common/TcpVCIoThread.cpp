@@ -73,7 +73,8 @@ void TcpVCIoThread::run()
             }
         }
 
-        int ready = SocketPollMany(pollfds.data(), numConns, IO_POLL_TIMEOUT_MS);
+        int pollTimeout = hasDataToSend ? 0 : IO_POLL_TIMEOUT_MS;
+        int ready = SocketPollMany(pollfds.data(), numConns, pollTimeout);
         if (ready < 0)
         {
             log_error("SocketPollMany failed");
@@ -98,7 +99,10 @@ void TcpVCIoThread::run()
             {
                 if (!(pollfds[i].revents & POLLOUT)) continue;
                 if (socketStatuses[i]->isCurrentlyDegraded(std::chrono::milliseconds(500)))
+                {
+                    log_debug(std::format("Connection {} degraded, skipping", i));
                     continue;
+                }
 
                 while (sendQueue->size() > 0)
                 {
