@@ -1,4 +1,5 @@
 #include "Client.h"
+#include "ClientConfiguration.h"
 #include <Log.h>
 #include <chrono>
 #include <iostream>
@@ -22,16 +23,18 @@ void printUsage(const char *programName)
 {
     std::cout << "Usage: " << programName << " [options]" << std::endl;
     std::cout << "Options:" << std::endl;
-    std::cout << "  --log-level=LEVEL   Set log level (DEBUG, INFO, WARNING, ERROR)" << std::endl;
-    std::cout << "  --help              Display this help message" << std::endl;
+    std::cout << "  --log-level=LEVEL       Set log level (DEBUG, INFO, WARNING, ERROR)" << std::endl;
+    std::cout << "  --peer-address=ADDR     Server TCP address (default: from config.json)" << std::endl;
+    std::cout << "  --peer-port=PORT        Server TCP port (default: from config.json)" << std::endl;
+    std::cout << "  --local-udp-port=PORT   Local UDP bind port (default: from config.json)" << std::endl;
+    std::cout << "  --client-id=ID          Client ID (default: from config.json)" << std::endl;
+    std::cout << "  --help                  Display this help message" << std::endl;
 }
 
 int main(int argc, char *argv[])
 {
-    // Default log level
     LogLevel logLevel = LogLevel::LOG_INFO;
 
-    // Parse command line arguments
     for (int i = 1; i < argc; i++)
     {
         std::string arg = argv[i];
@@ -43,8 +46,28 @@ int main(int argc, char *argv[])
         }
         else if (arg.find("--log-level=") == 0)
         {
-            std::string levelStr = arg.substr(12); // Extract level after '='
+            std::string levelStr = arg.substr(12);
             logLevel = Log::stringToLogLevel(levelStr);
+        }
+        else if (arg.find("--peer-address=") == 0)
+        {
+            std::string addr = arg.substr(15);
+            ClientConfiguration::getInstance()->setSocketAddress(addr);
+        }
+        else if (arg.find("--peer-port=") == 0)
+        {
+            int port = std::stoi(arg.substr(12));
+            ClientConfiguration::getInstance()->setPortNumber(static_cast<uint16_t>(port));
+        }
+        else if (arg.find("--local-udp-port=") == 0)
+        {
+            int port = std::stoi(arg.substr(17));
+            ClientConfiguration::getInstance()->setLocalHostUdpPort(static_cast<uint16_t>(port));
+        }
+        else if (arg.find("--client-id=") == 0)
+        {
+            uint32_t id = static_cast<uint32_t>(std::stoul(arg.substr(12)));
+            ClientConfiguration::getInstance()->setClientId(id);
         }
     }
 

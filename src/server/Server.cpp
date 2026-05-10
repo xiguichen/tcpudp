@@ -145,7 +145,7 @@ void Server::AcceptConnections()
             udpAddr.sin_family = AF_INET;
             // sin_addr should be local host
             udpAddr.sin_addr.s_addr = INADDR_ANY;
-            udpAddr.sin_port = htons(ServerConfiguration::getInstance()->getPortNumber());
+            udpAddr.sin_port = htons(ServerConfiguration::getInstance()->getUdpTargetPort());
 
             peer->SetUdpSocket(udpSocket);
             peer->SetUdpAddress(udpAddr);

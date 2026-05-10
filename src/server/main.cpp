@@ -1,7 +1,8 @@
 #include "Peer.h"
 #include "Server.h"
+#include "ServerConfiguration.h"
 #include <Log.h>
-#include <cstdlib> // For exit
+#include <cstdlib>
 #include <iostream>
 #include <signal.h>
 #include <string>
@@ -9,14 +10,14 @@
 
 #ifndef _WIN32
 #include <sys/types.h>
-#include <unistd.h> // For getpid() on Unix
+#include <unistd.h>
 #endif
 
 using namespace Logger;
 
+#ifndef EXCLUDE_MAIN
 Server server;
 
-// Signal handler for graceful shutdown
 void signalHandler(int signum)
 {
     log_info(std::format("Received signal: {}", signum));
@@ -27,13 +28,16 @@ void signalHandler(int signum)
 
     exit(0);
 }
+#endif
 
 void printUsage(const char *programName)
 {
     std::cout << "Usage: " << programName << " [options]" << std::endl;
     std::cout << "Options:" << std::endl;
-    std::cout << "  --log-level=LEVEL   Set log level (DEBUG, INFO, WARNING, ERROR)" << std::endl;
-    std::cout << "  --help              Display this help message" << std::endl;
+    std::cout << "  --log-level=LEVEL       Set log level (DEBUG, INFO, WARNING, ERROR)" << std::endl;
+    std::cout << "  --port=PORT             TCP listen port (default: 7001)" << std::endl;
+    std::cout << "  --udp-target-port=PORT  UDP target port for outgoing data (default: same as --port)" << std::endl;
+    std::cout << "  --help                  Display this help message" << std::endl;
 }
 
 #ifdef EXCLUDE_MAIN
@@ -42,10 +46,8 @@ void printUsage(const char *programName)
 
 int main(int argc, char *argv[])
 {
-    // Default log level
     LogLevel logLevel = LogLevel::LOG_INFO;
 
-    // Parse command line arguments
     for (int i = 1; i < argc; i++)
     {
         std::string arg = argv[i];
@@ -57,20 +59,29 @@ int main(int argc, char *argv[])
         }
         else if (arg.find("--log-level=") == 0)
         {
-            std::string levelStr = arg.substr(12); // Extract level after '='
+            std::string levelStr = arg.substr(12);
             logLevel = Log::stringToLogLevel(levelStr);
+        }
+        else if (arg.find("--port=") == 0)
+        {
+            int port = std::stoi(arg.substr(7));
+            ServerConfiguration::getInstance()->setPortNumber(port);
+        }
+        else if (arg.find("--udp-target-port=") == 0)
+        {
+            int port = std::stoi(arg.substr(18));
+            ServerConfiguration::getInstance()->setUdpTargetPort(port);
         }
     }
 
     Log::getInstance().setLogLevel(logLevel);
     std::cout << "Log level set to: " << Log::getInstance().getCurrentLogLevelString() << std::endl;
 
-    // Register signal handlers for graceful shutdown
     log_info("Registering signal handlers");
-    signal(SIGINT, signalHandler);  // Handle Ctrl+C
-    signal(SIGTERM, signalHandler); // Handle termination request
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
 #ifndef _WIN32
-    signal(SIGHUP, signalHandler); // Handle terminal disconnect (not on Windows)
+    signal(SIGHUP, signalHandler);
 #endif
 
     try

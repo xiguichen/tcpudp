@@ -10,7 +10,17 @@ ServerConfiguration* ServerConfiguration::getInstance() {
 }
 
 int ServerConfiguration::getPortNumber() const {
-    // Placeholder implementation
-    return 7001;
+    return portNumber;
 }
 
+void ServerConfiguration::setPortNumber(int port) {
+    portNumber = port;
+}
+
+int ServerConfiguration::getUdpTargetPort() const {
+    return udpTargetPort;
+}
+
+void ServerConfiguration::setUdpTargetPort(int port) {
+    udpTargetPort = port;
+}
