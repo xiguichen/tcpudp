@@ -41,6 +41,7 @@ void TcpConnection::disconnect()
 
         if (socketFd != -1)
         {
+            SocketShutdown(socketFd, SHUT_RDWR);
             SocketClose(socketFd);
             socketFd = -1;
         }

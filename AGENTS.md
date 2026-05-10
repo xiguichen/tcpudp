@@ -16,16 +16,25 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Testing
 
 ### Test Execution
-- **Full suite**: `python test.py`
-- **Single test**:
+- **Full suite** (unit + integration): `python test.py`
+- **Unit tests only**: `Build/tests/CommonTest`
+- **Integration test only**: `python test/integration_test.py`
+- **Single unit test**:
   - Windows: `Build/tests/CommonTest.exe --gtest_filter=SuiteName.TestName`
   - Linux/macOS: `Build/tests/CommonTest --gtest_filter=SuiteName.TestName`
 - **Wildcards**: `--gtest_filter=SuiteName.*` or `--gtest_filter=*TestName`
 - **List tests**: `Build/tests/CommonTest --gtest_list_tests`
 
 ### Test Location
-- Test binaries: `Build/tests/` (auto-discovered by CMake)
-- Test source: `src/tests/` and `src/tests/client/`
+- Unit test source: `src/tests/` and `src/tests/client/`
+- Integration test: `test/integration_test.py`
+
+### Integration Test
+The integration test validates the full pipeline:
+```
+test → UDP → client → TCP (VC) → server → UDP → echo_server → UDP → server → TCP (VC) → client → UDP → test
+```
+Always run `python test.py` after making changes to verify nothing is broken.
 
 ## Code Architecture
 
@@ -204,19 +213,21 @@ TEST(SuiteName, TestName) {
 - Socket cleanup on termination
 
 ### Configuration
-- Client config: `src/client/config.json`
-- Server config: `src/server/ServerConfiguration.h/cpp`
-- Command-line options: `--log-level=LEVEL`, `--help`
+- Client config: CLI args or `src/client/config.json` (CLI takes priority)
+  - `--peer-address=ADDR`, `--peer-port=PORT`, `--local-udp-port=PORT`, `--client-id=ID`
+- Server config: CLI args or default values
+  - `--port=PORT` (TCP listen, default 7001)
+  - `--udp-target-port=PORT` (UDP target, default same as --port)
+- Common: `--log-level=LEVEL`, `--help`
 
 ## Development Workflow
 
 1. **Before changes**: Ensure tests compile in target environment
-2. **After changes**: `python build.py` → `python test.py` → open PR
+2. **After changes**: `python build.py` → `python test.py` (runs unit + integration) → open PR
 3. **PR content**: Include justification (why, not just what)
 
 ### Quick Verification
 ```bash
 python build.py
-Build/tests/CommonTest --gtest_filter=TestName
 python test.py
 ```

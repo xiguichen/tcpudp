@@ -421,6 +421,14 @@ int SocketClose(SocketFd socketFd) {
 #endif
 }
 
+int SocketShutdown(SocketFd socketFd, int how) {
+#ifdef _WIN32
+    return shutdown(socketFd, how);
+#else
+    return shutdown(socketFd, how);
+#endif
+}
+
 // Specialized receive functions
 ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int bytesToRead) {
     char *bufPtr = static_cast<char *>(buffer);

@@ -87,15 +87,15 @@ TEST_F(PeerManagerTest, RemoveNonExistentPeerIsNoOp)
 
 // ─── AddPeer reconnect: stale socket flush ───────────────────────────────────
 
-// When AddPeer is called for an already-existing peer (client reconnect scenario),
-// any sockets previously accumulated must be closed and the count reset to 0.
+// AddPeer only flushes stale sockets when a virtual channel already exists
+// for that client (true reconnect). During initial connection buildup no VC
+// exists yet, so sockets accumulate across AddPeer calls.
 TEST_F(PeerManagerTest, AddPeerOnReconnectFlushesSocketCount)
 {
     PeerManager::AddPeer(3);
     Peer *peer = PeerManager::GetPeerById(3);
     ASSERT_NE(peer, nullptr);
 
-    // Simulate a partial connection: add sockets before the VC was ever created
     SocketFd fd1 = MakeTestSocket();
     SocketFd fd2 = MakeTestSocket();
     ASSERT_GT(fd1, 0);
@@ -104,14 +104,20 @@ TEST_F(PeerManagerTest, AddPeerOnReconnectFlushesSocketCount)
     peer->AddSocket(fd2);
     EXPECT_EQ(peer->GetSocketCount(), 2U);
 
-    // Client restarts → AddPeer called again with the same ID
+    // Client restarts → AddPeer called again with the same ID.
+    // Since no VC exists yet, sockets are preserved (still building up).
     PeerManager::AddPeer(3);
 
-    // State must be reset: socket count back to 0
+    peer = PeerManager::GetPeerById(3);
+    ASSERT_NE(peer, nullptr);
+    EXPECT_EQ(peer->GetSocketCount(), 2U);
+
+    // Now remove the peer and re-add (simulating full teardown + reconnect)
+    PeerManager::RemovePeer(3);
+    PeerManager::AddPeer(3);
     peer = PeerManager::GetPeerById(3);
     ASSERT_NE(peer, nullptr);
     EXPECT_EQ(peer->GetSocketCount(), 0U);
-    // fd1 and fd2 were closed by RemoveAllSockets inside AddPeer
 }
 
 // AddPeer on a brand-new ID must not affect an existing peer's socket state

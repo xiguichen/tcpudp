@@ -72,6 +72,7 @@ int SocketListen(SocketFd socketFd, int backlog);
 int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen);
 int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen, int timeoutMs);
 int SocketClose(SocketFd socketFd);
+int SocketShutdown(SocketFd socketFd, int how);
 int SocketBind(SocketFd socketFd, const struct sockaddr *addr, socklen_t addrLen);
 
 SocketFd SocketAccept(SocketFd socketFd, struct sockaddr *addr, socklen_t *addrLen);
