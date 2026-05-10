@@ -3,15 +3,15 @@
 #include "BlockingQueue.h"
 #include "Socket.h"
 #include "SpscQueue.h"
-#include "TcpVCReadThread.h"
+#include "TcpVCIoThread.h"
 #include "TcpVCWriteThread.h"
 #include "VirtualChannel.h"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
-#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -101,8 +101,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     void sendMissingNotifications();
 
-    std::vector<TcpVCReadThreadSp> readThreads;
-    std::vector<TcpVCWriteThreadSp> writeThreads;
+    std::shared_ptr<TcpVCIoThread> ioThread;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
 

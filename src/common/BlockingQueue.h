@@ -14,6 +14,7 @@ public:
 
   void enqueue(const std::shared_ptr<std::vector<char>> &data);
   std::shared_ptr<std::vector<char>> dequeue();
+  std::shared_ptr<std::vector<char>> tryDequeue();
   void cancelWait();
   size_t size();
 

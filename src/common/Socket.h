@@ -78,6 +78,7 @@ SocketFd SocketAccept(SocketFd socketFd, struct sockaddr *addr, socklen_t *addrL
 // Socket polling
 int SocketSelect(SocketFd socketFd, int timeoutSec);
 int SocketPoll(SocketFd socketFd, int events, int timeoutMs);
+int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs);
 bool IsSocketReadable(SocketFd socketFd, int timeoutMs);
 bool IsSocketWritable(SocketFd socketFd, int timeoutMs);
 int SocketBytesAvailable(SocketFd socketFd);

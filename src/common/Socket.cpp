@@ -133,6 +133,39 @@ int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
 #endif
 }
 
+int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
+#ifdef _WIN32
+    FD_SET readfds, writefds, exceptfds;
+    FD_ZERO(&readfds);
+    FD_ZERO(&writefds);
+    FD_ZERO(&exceptfds);
+    int maxFd = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (fds[i].fd < 0) continue;
+        if (fds[i].events & POLLIN) FD_SET(fds[i].fd, &readfds);
+        if (fds[i].events & POLLOUT) FD_SET(fds[i].fd, &writefds);
+        FD_SET(fds[i].fd, &exceptfds);
+        if ((int)fds[i].fd > maxFd) maxFd = (int)fds[i].fd;
+    }
+    struct timeval timeout;
+    timeout.tv_sec = timeoutMs / 1000;
+    timeout.tv_usec = (timeoutMs % 1000) * 1000;
+    int result = select(maxFd + 1, &readfds, &writefds, &exceptfds, &timeout);
+    if (result > 0) {
+        for (size_t i = 0; i < count; i++) {
+            fds[i].revents = 0;
+            if (fds[i].fd < 0) continue;
+            if (FD_ISSET(fds[i].fd, &readfds)) fds[i].revents |= POLLIN;
+            if (FD_ISSET(fds[i].fd, &writefds)) fds[i].revents |= POLLOUT;
+            if (FD_ISSET(fds[i].fd, &exceptfds)) fds[i].revents |= POLLERR;
+        }
+    }
+    return result;
+#else
+    return poll(fds, count, timeoutMs);
+#endif
+}
+
 bool IsSocketReadable(SocketFd socketFd, int timeoutMs) {
     return (SocketPoll(socketFd, POLLIN, timeoutMs) & POLLIN) != 0;
 }

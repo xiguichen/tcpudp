@@ -30,6 +30,18 @@ std::shared_ptr<std::vector<char>> BlockingQueue::dequeue()
     return result;
 }
 
+std::shared_ptr<std::vector<char>> BlockingQueue::tryDequeue()
+{
+    std::lock_guard<std::mutex> lock(queueMutex);
+    if (queue.empty() || cancelled)
+    {
+        return nullptr;
+    }
+    auto result = queue.front();
+    queue.pop();
+    return result;
+}
+
 void BlockingQueue::cancelWait()
 {
     {

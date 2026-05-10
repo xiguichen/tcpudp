@@ -79,15 +79,8 @@ void TcpVirtualChannel::open()
                 }
             }
 
-            for (auto &thread : self->readThreads) {
-                if (thread) {
-                    thread->setRunning(false);
-                }
-            }
-            for (auto &thread : self->writeThreads) {
-                if (thread) {
-                    thread->setRunning(false);
-                }
+            if (self->ioThread) {
+                self->ioThread->setRunning(false);
             }
         }
 
@@ -126,29 +119,30 @@ void TcpVirtualChannel::open()
     reorderRunning = true;
     reorderThread = std::thread(&TcpVirtualChannel::reorderThreadFunc, this);
 
-    for (int i = 0; i < this->connections.size(); ++i)
-    {
-        auto readThread = TcpVCReadThreadFactory::createThread(this->connections[i], i);
-        auto dataCallback = [selfGuard, i](const uint64_t messageId, std::shared_ptr<std::vector<char>> data) {
-            selfGuard->processReceivedData(messageId, data, i);
-        };
-        auto resendRequestCallback = [selfGuard](uint64_t messageId) {
-            selfGuard->processResendRequest(messageId);
-        };
-        auto missingNotifyCallback = [selfGuard](const std::vector<uint64_t> &missingIds) {
-            selfGuard->processMissingNotify(missingIds);
-        };
-        readThread->setDataCallback(dataCallback);
-        readThread->setResendRequestCallback(resendRequestCallback);
-        readThread->setMissingNotifyCallback(missingNotifyCallback);
-        readThread->setDisconnectCallback(disconnectCB);
-        readThread->start();
-        readThreads.emplace_back(readThread);
-        auto writeThread = TcpVCWriteThreadFactory::createThread(
-            sendQueue, this->connections[i], i, connSendStats[i], messageTracker, socketStatuses[i]);
-        writeThread->start();
-        writeThreads.emplace_back(writeThread);
-    }
+    auto dataCb = [selfGuard](const uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex) {
+        selfGuard->processReceivedData(messageId, data, sourceConnIndex);
+    };
+    auto resendReqCb = [selfGuard](uint64_t messageId) {
+        selfGuard->processResendRequest(messageId);
+    };
+    auto missingNotifyCb = [selfGuard](const std::vector<uint64_t> &missingIds) {
+        selfGuard->processMissingNotify(missingIds);
+    };
+
+    ioThread = std::make_shared<TcpVCIoThread>(
+        connections,
+        sendQueue,
+        connSendStats,
+        messageTracker,
+        socketStatuses,
+        dataCb,
+        resendReqCb,
+        missingNotifyCb,
+        disconnectCB
+    );
+
+    ioThread->start();
+
     opened = true;
 }
 
@@ -188,7 +182,6 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         packet->dataLength = static_cast<uint16_t>(size);
         std::memcpy(packet->data, data, size);
 
-        // Round-robin cache sharding
         {
             int cacheConn = static_cast<int>(messageId % connections.size());
             sentDataCache.insert(messageId, dataVec, cacheConn);
@@ -225,33 +218,14 @@ void TcpVirtualChannel::close()
             }
         }
 
-        log_debug("Closing TcpVirtualChannel");
-
-        log_debug("Stopping and joining read threads");
-        for (auto &thread : readThreads)
+        if (ioThread)
         {
-            if (thread)
-            {
-                log_debug("Stopping a read thread");
-                thread->stop();
-                log_debug("Joining a read thread");
-                thread->joinThread();
-                log_debug("Read thread stopped and joined");
-            }
+            log_debug("Stopping and joining IO thread");
+            ioThread->stop();
+            ioThread->joinThread();
+            ioThread.reset();
+            log_debug("IO thread stopped and joined");
         }
-
-        log_debug("All read threads stopped and joined");
-
-        log_debug("Stopping and joining write threads");
-        for (auto &thread : writeThreads)
-        {
-            if (thread)
-            {
-                thread->stop();
-                thread->joinThread();
-            }
-        }
-        log_debug("All write threads stopped and joined");
     }
 
     reorderRunning.store(false);
