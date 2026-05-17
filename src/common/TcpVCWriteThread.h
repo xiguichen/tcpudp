@@ -1,13 +1,13 @@
 #pragma once
 
-#include "BlockingQueue.h"
-#include "StopableThread.h"
-#include "TcpConnection.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <memory>
+#include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 struct ConnSendStats
 {
@@ -106,29 +106,4 @@ struct SocketStatus
     }
 };
 
-class TcpVCWriteThread : public StopableThread
-{
-  public:
-    TcpVCWriteThread(BlockingQueueSp writeQueue, TcpConnectionSp connection, int connectionIndex,
-                     std::shared_ptr<ConnSendStats> sendStats,
-                     std::shared_ptr<MessageTracker> messageTracker,
-                     std::shared_ptr<SocketStatus> socketStatus)
-        : writeQueue(writeQueue), connection(connection), connectionIndex(connectionIndex),
-          sendStats(sendStats), messageTracker(messageTracker), socketStatus(socketStatus)
-    {
-    }
-    virtual ~TcpVCWriteThread();
 
-  protected:
-    virtual void run();
-
-  private:
-    BlockingQueueSp writeQueue;
-    TcpConnectionSp connection;
-    int connectionIndex{-1};
-    std::shared_ptr<ConnSendStats> sendStats;
-    std::shared_ptr<MessageTracker> messageTracker;
-    std::shared_ptr<SocketStatus> socketStatus;
-};
-
-typedef std::shared_ptr<TcpVCWriteThread> TcpVCWriteThreadSp;

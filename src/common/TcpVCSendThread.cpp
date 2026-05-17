@@ -2,7 +2,6 @@
 #include "Log.h"
 #include "Socket.h"
 #include <chrono>
-#include <format>
 #include <thread>
 
 using namespace Logger;
@@ -90,82 +89,76 @@ void TcpVCSendThread::run()
             uint64_t messageId = packet->header.messageId;
             uint16_t payloadLen = packet->dataLength;
 
-            bool sent = false;
+            int bestIndex = -1;
+            int bestScore = -1;
 
-            for (size_t trial = 0; trial < 2 && !sent; trial++)
+            for (size_t i = 0; i < connections.size(); i++)
             {
-                int bestIndex = -1;
-                int bestScore = -1;
+                int score = rateConnection(static_cast<int>(i));
+                if (score < 0) continue;
 
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIndex = static_cast<int>(i);
+                }
+            }
+
+            if (bestIndex < 0)
+            {
                 for (size_t i = 0; i < connections.size(); i++)
                 {
-                    if (trial == 0 && socketStatuses[i]->isCurrentlyDegraded(std::chrono::milliseconds(500)))
-                        continue;
-
-                    int score = rateConnection(static_cast<int>(i));
-                    if (score < 0) continue;
-
-                    if (score > bestScore)
+                    if (connections[i] && connections[i]->isConnected())
                     {
-                        bestScore = score;
                         bestIndex = static_cast<int>(i);
+                        break;
                     }
                 }
+            }
 
-                if (bestIndex < 0)
+            if (bestIndex < 0)
+            {
+                sendQueue->enqueue(dataVec);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+
+            auto &conn = connections[bestIndex];
+            conn->diagMarkSendStart(messageId);
+
+            ssize_t n = SendTcpDataNonBlocking(conn->getSocketFd(), dataVec->data(), dataVec->size(), 0, 0);
+
+            conn->diagMarkSendEnd(messageId);
+
+            if (n > 0)
+            {
+                if (messageTracker)
+                    messageTracker->recordMessage(messageId, bestIndex);
+
+                auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+                if (static_cast<size_t>(bestIndex) < connSendStats.size() && connSendStats[bestIndex])
                 {
-                    if (trial == 0)
-                    {
-                        log_debug("No non-degraded connection available, trying degraded");
-                        continue;
-                    }
-                    log_warnning("All connections unavailable for send, re-enqueuing");
-                    sendQueue->enqueue(dataVec);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    break;
+                    auto &stats = connSendStats[bestIndex];
+                    stats->lastTxMessageId.store(messageId);
+                    stats->lastTxTimeMs.store(nowMs);
+                    stats->txCount.fetch_add(1);
+                    stats->valid.store(true);
                 }
 
-                auto &conn = connections[bestIndex];
-                conn->diagMarkSendStart(messageId);
+                if (static_cast<size_t>(bestIndex) < socketStatuses.size())
+                    socketStatuses[bestIndex]->recover();
+            }
+            else
+            {
+                if (static_cast<size_t>(bestIndex) < socketStatuses.size())
+                    socketStatuses[bestIndex]->markDegraded();
+                if (static_cast<size_t>(bestIndex) < connSendStats.size() && connSendStats[bestIndex])
+                    connSendStats[bestIndex]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
 
-                ssize_t n = SendTcpDataNonBlocking(conn->getSocketFd(), dataVec->data(), dataVec->size(), 0, 0);
-
-                conn->diagMarkSendEnd(messageId);
-
-                if (n > 0)
-                {
-                    if (messageTracker)
-                        messageTracker->recordMessage(messageId, bestIndex);
-
-                    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     std::chrono::steady_clock::now().time_since_epoch())
-                                     .count();
-                    if (static_cast<size_t>(bestIndex) < connSendStats.size() && connSendStats[bestIndex])
-                    {
-                        auto &stats = connSendStats[bestIndex];
-                        stats->lastTxMessageId.store(messageId);
-                        stats->lastTxTimeMs.store(nowMs);
-                        stats->txCount.fetch_add(1);
-                        stats->valid.store(true);
-                    }
-
-                    sent = true;
-                }
-                else
-                {
-                    log_debug(std::format("Send blocked on conn={} messageId={}, marking degraded", bestIndex, messageId));
-                    if (static_cast<size_t>(bestIndex) < socketStatuses.size())
-                        socketStatuses[bestIndex]->markDegraded();
-                    if (static_cast<size_t>(bestIndex) < connSendStats.size() && connSendStats[bestIndex])
-                        connSendStats[bestIndex]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
-
-                    if (trial == 1)
-                    {
-                        sendQueue->enqueue(dataVec);
-                        log_warnning(std::format("Send blocked on all connections for messageId={}, re-enqueuing", messageId));
-                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    }
-                }
+                sendQueue->enqueue(dataVec);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         }
     }
