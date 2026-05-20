@@ -83,6 +83,11 @@ bool IsSocketReadable(SocketFd socketFd, int timeoutMs);
 bool IsSocketWritable(SocketFd socketFd, int timeoutMs);
 int SocketBytesAvailable(SocketFd socketFd);
 
+// Direct non-blocking I/O for sockets already set non-blocking.
+// These skip the redundant poll() that SendTcpDataNonBlocking / RecvTcpDataNonBlocking perform.
+ssize_t SendTcpDirect(SocketFd socketFd, const void *data, size_t length, int flags);
+ssize_t RecvTcpDirect(SocketFd socketFd, void *buffer, size_t bufferSize, int flags);
+
 // Error handling
 int SocketLogLastError();
 

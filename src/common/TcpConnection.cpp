@@ -126,6 +126,10 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
     // Windows-specific TCP telemetry
     // TCP_INFO is not reliably available across all Windows SDK versions
     // We'll rely on the fallback values
+    // NOTE: On Windows all metrics remain zero (supported=false), so rateConnection() in
+    // TcpVCSendThread scores every connection equally at 10000.  The only differentiator
+    // is reenqueueCount.  A future improvement could use GetExtendedTcpTable or track
+    // per-connection send timing to produce meaningful scores on Windows.
     info.supported = false;
     info.valid = false;
     info.isInExponentialBackoff = false;
@@ -180,13 +184,13 @@ bool TcpConnection::refreshRuntimeInfoIfStale(std::chrono::milliseconds refreshI
 
     lastRefreshTime = now;
     runtimeInfoStale = false;
-    lastRuntimeInfo = sampleRuntimeInfo();
+
+    auto info = sampleRuntimeInfo();
+
+    // Seqlock write: bump generation (odd = write in progress), store, bump again (even = consistent).
+    runtimeInfoGeneration.fetch_add(1, std::memory_order_release);
+    lastRuntimeInfo = info;
+    runtimeInfoGeneration.fetch_add(1, std::memory_order_release);
 
     return true; // Was stale, now refreshed
-}
-
-TcpConnection::TcpConnectionRuntimeInfo TcpConnection::getLastRuntimeInfo() const
-{
-    std::lock_guard<std::mutex> lock(runtimeInfoMutex);
-    return lastRuntimeInfo;
 }

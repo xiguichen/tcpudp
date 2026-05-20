@@ -35,6 +35,7 @@ class TcpVCSendThread : public StopableThread
     std::shared_ptr<MessageTracker> messageTracker;
     std::vector<std::shared_ptr<SocketStatus>> socketStatuses;
     std::vector<std::chrono::steady_clock::time_point> lastRuntimeRefresh;
+    size_t roundRobinStart{0}; // rotates on each packet for tie-breaking among equal-scored connections
 };
 
 typedef std::shared_ptr<TcpVCSendThread> TcpVCSendThreadSp;

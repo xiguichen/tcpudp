@@ -1,6 +1,7 @@
 #include "TcpVirtualChannel.h"
 #include "Log.h"
 #include "VcProtocol.h"
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <format>
@@ -8,32 +9,27 @@
 
 static constexpr auto RECEIVE_CALLBACK_SLOW_WARN_MS = std::chrono::milliseconds(50);
 
-void SentDataCache::insert(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int connIndex)
+void SentDataCache::insert(uint64_t messageId, std::shared_ptr<std::vector<char>> data)
 {
-    if (connIndex < 0 || static_cast<size_t>(connIndex) >= shards.size())
-        return;
-    auto &shard = shards[connIndex];
+    size_t idx = messageId % shards.size();
+    auto &shard = shards[idx];
     std::lock_guard<std::mutex> lock(shard.mutex);
     shard.items[messageId] = std::move(data);
     shard.insertionOrder.push_back(messageId);
     if (shard.insertionOrder.size() > capacityPerConn)
     {
         uint64_t oldest = shard.insertionOrder.front();
-        shard.insertionOrder.erase(shard.insertionOrder.begin());
+        shard.insertionOrder.pop_front(); // O(1) with deque
         shard.items.erase(oldest);
     }
 }
 
 std::shared_ptr<std::vector<char>> SentDataCache::find(uint64_t messageId)
 {
-    for (auto &shard : shards)
-    {
-        std::lock_guard<std::mutex> lock(shard.mutex);
-        auto it = shard.items.find(messageId);
-        if (it != shard.items.end())
-            return it->second;
-    }
-    return nullptr;
+    size_t idx = messageId % shards.size();
+    std::lock_guard<std::mutex> lock(shards[idx].mutex);
+    auto it = shards[idx].items.find(messageId);
+    return it != shards[idx].items.end() ? it->second : nullptr;
 }
 
 void SentDataCache::clear()
@@ -151,6 +147,52 @@ void TcpVirtualChannel::open()
 
     sendThread->start();
 
+    // Default resendCallback: re-enqueue the original packet with its messageId so the receiver's
+    // reorder buffer can fill the gap.  Callers may override via setResendCallback().
+    if (!resendCallback)
+    {
+        auto weakSelf = std::weak_ptr<TcpVirtualChannel>(shared_from_this());
+        resendCallback = [weakSelf](uint64_t messageId, const char *data, size_t size) {
+            auto self = weakSelf.lock();
+            if (!self || !self->opened.load() || !self->sendQueue) return;
+            auto totalPacketSize = sizeof(VCDataPacket) + size;
+            auto dataVec = std::make_shared<std::vector<char>>(totalPacketSize);
+            VCDataPacket *packet = reinterpret_cast<VCDataPacket *>(dataVec->data());
+            packet->header.type = VcPacketType::DATA;
+            packet->header.messageId = messageId;
+            packet->dataLength = static_cast<uint16_t>(size);
+            std::memcpy(packet->data, data, size);
+            self->sendQueue->enqueue(dataVec);
+        };
+    }
+
+    // Default missingNotifyCallback: serialize a VCMissingNotify and send it back to the peer over
+    // the existing TCP connections so the sender can respond with resends.
+    // Callers may override via setMissingNotifyCallback().
+    if (!missingNotifyCallback)
+    {
+        auto weakSelf = std::weak_ptr<TcpVirtualChannel>(shared_from_this());
+        missingNotifyCallback = [weakSelf](const std::vector<uint64_t> &missingIds) {
+            auto self = weakSelf.lock();
+            if (!self || !self->opened.load() || !self->sendQueue) return;
+            size_t count = std::min(missingIds.size(), VC_MAX_MISSING_IDS_PER_NOTIFY);
+            size_t packetSize = sizeof(VCHeader) + sizeof(uint8_t) + count * sizeof(uint64_t);
+            auto dataVec = std::make_shared<std::vector<char>>(packetSize, 0);
+            char *ptr = dataVec->data();
+            VCHeader hdr{VcPacketType::MISSING_NOTIFY, 0};
+            std::memcpy(ptr, &hdr, sizeof(VCHeader));
+            ptr += sizeof(VCHeader);
+            *reinterpret_cast<uint8_t *>(ptr) = static_cast<uint8_t>(count);
+            ptr += sizeof(uint8_t);
+            for (size_t i = 0; i < count; i++)
+            {
+                std::memcpy(ptr, &missingIds[i], sizeof(uint64_t));
+                ptr += sizeof(uint64_t);
+            }
+            self->sendQueue->enqueue(dataVec);
+        };
+    }
+
     opened = true;
 }
 
@@ -169,7 +211,7 @@ void TcpVirtualChannel::send(const char *data, size_t size)
             return;
         }
 
-        auto quesize = this->sendQueue->size();
+        auto quesize = this->sendQueue->approxSize();
         if (quesize > SEND_QUEUE_DROP_THRESHOLD)
         {
             log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}. "
@@ -191,8 +233,7 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         std::memcpy(packet->data, data, size);
 
         {
-            int cacheConn = static_cast<int>(messageId % connections.size());
-            sentDataCache.insert(messageId, dataVec, cacheConn);
+            sentDataCache.insert(messageId, dataVec);
         }
 
         sendQueue->enqueue(dataVec);
@@ -358,6 +399,11 @@ void TcpVirtualChannel::sendMissingNotifications()
 
     if (!missingIds.empty())
     {
+        // Cap the set to prevent unbounded growth under sustained packet loss.
+        // Cleared IDs are re-notified next interval if still missing.
+        if (notifiedMissingIds.size() > 1000)
+            notifiedMissingIds.clear();
+
         for (auto id : missingIds)
         {
             notifiedMissingIds.insert(id);
@@ -479,6 +525,7 @@ void TcpVirtualChannel::reorderThreadFunc()
                     }
 
                     nextMessageId.store(skipTo);
+                    notifiedMissingIds.clear(); // skipped IDs are no longer relevant
                     gapTimerActive = false;
                     auto moreItems = drainReceivedDataMap();
                     itemsToDeliver.insert(itemsToDeliver.end(), std::make_move_iterator(moreItems.begin()),

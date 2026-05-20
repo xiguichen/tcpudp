@@ -17,6 +17,8 @@ public:
   std::shared_ptr<std::vector<char>> tryDequeue();
   void cancelWait();
   size_t size();
+  /// Lock-free approximate size. Suitable for threshold checks where exact count is not required.
+  size_t approxSize() const { return approxQueueSize.load(std::memory_order_relaxed); }
 
 private:
 
@@ -25,6 +27,7 @@ private:
   std::mutex queueMutex; // Mutex for queue protection
   std::condition_variable queueCondVar; // Condition variable for producer-consumer
   bool cancelled = false;
+  std::atomic<size_t> approxQueueSize{0}; // Lock-free size for threshold checks
 
 };
 

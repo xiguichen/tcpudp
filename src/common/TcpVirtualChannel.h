@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -25,7 +26,7 @@ class SentDataCache
     {
         std::mutex mutex;
         std::unordered_map<uint64_t, std::shared_ptr<std::vector<char>>> items;
-        std::vector<uint64_t> insertionOrder;
+        std::deque<uint64_t> insertionOrder; // deque for O(1) front removal on eviction
     };
 
   public:
@@ -33,7 +34,7 @@ class SentDataCache
     explicit SentDataCache(size_t numConns, size_t capacityPerConn)
         : shards(numConns), capacityPerConn(capacityPerConn) {}
 
-    void insert(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int connIndex);
+    void insert(uint64_t messageId, std::shared_ptr<std::vector<char>> data);
     std::shared_ptr<std::vector<char>> find(uint64_t messageId);
     void clear();
 
@@ -123,7 +124,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     void reorderThreadFunc();
 
     std::atomic<bool> opened{false};
-    std::atomic<long> lastSendMessageId{0};
+    std::atomic<uint64_t> lastSendMessageId{0}; // uint64_t: long is 32-bit on Windows (MSVC)
     std::atomic<uint64_t> nextMessageId{0};
     std::chrono::steady_clock::time_point gapFirstSeen;
     bool gapTimerActive{false};

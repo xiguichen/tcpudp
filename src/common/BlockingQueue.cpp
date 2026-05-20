@@ -12,7 +12,7 @@ void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data)
         std::lock_guard<std::mutex> lock(queueMutex);
         queue.push(data);
     }
-
+    approxQueueSize.fetch_add(1, std::memory_order_relaxed);
     queueCondVar.notify_one();
 }
 
@@ -24,9 +24,10 @@ std::shared_ptr<std::vector<char>> BlockingQueue::dequeue()
     {
         return nullptr;
     }
-    auto result = queue.front();
+    auto result = std::move(queue.front());
     queue.pop();
     lock.unlock();
+    approxQueueSize.fetch_sub(1, std::memory_order_relaxed);
     return result;
 }
 
@@ -37,8 +38,9 @@ std::shared_ptr<std::vector<char>> BlockingQueue::tryDequeue()
     {
         return nullptr;
     }
-    auto result = queue.front();
+    auto result = std::move(queue.front());
     queue.pop();
+    approxQueueSize.fetch_sub(1, std::memory_order_relaxed);
     return result;
 }
 

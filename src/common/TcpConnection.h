@@ -78,7 +78,18 @@ class TcpConnection
 
     TcpConnectionRuntimeInfo sampleRuntimeInfo();
     bool refreshRuntimeInfoIfStale(std::chrono::milliseconds refreshInterval);
-    TcpConnectionRuntimeInfo getLastRuntimeInfo() const;
+    /// Lock-free read of the last cached runtime info. Safe to call from any thread.
+    TcpConnectionRuntimeInfo getLastRuntimeInfo() const
+    {
+        auto gen = runtimeInfoGeneration.load(std::memory_order_acquire);
+        TcpConnectionRuntimeInfo copy;
+        do
+        {
+            gen = runtimeInfoGeneration.load(std::memory_order_acquire);
+            copy = lastRuntimeInfo; // shallow copy of POD
+        } while (gen != runtimeInfoGeneration.load(std::memory_order_acquire));
+        return copy;
+    }
 
   private:
   public:
@@ -109,9 +120,10 @@ class TcpConnection
     std::atomic<int64_t> diagLastSendEndMsVal{0};
 
     // Runtime info state for quality-aware sending
-    mutable std::mutex runtimeInfoMutex;
+    mutable std::mutex runtimeInfoMutex; // only used by the refresh writer
     std::chrono::steady_clock::time_point lastRefreshTime;
-    TcpConnectionRuntimeInfo lastRuntimeInfo;
+    TcpConnectionRuntimeInfo lastRuntimeInfo;  // read via seqlock (runtimeInfoGeneration)
+    mutable std::atomic<uint32_t> runtimeInfoGeneration{0}; // seqlock generation for lock-free reads
     bool runtimeInfoStale = false;
 };
 

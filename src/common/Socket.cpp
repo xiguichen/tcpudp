@@ -377,6 +377,59 @@ ssize_t RecvUdpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSiz
     return bytesReceived;
 }
 
+// Direct non-blocking send/recv — skip the redundant poll() that the NonBlocking variants perform.
+// Callers must ensure the socket is already set to non-blocking mode.
+
+ssize_t SendTcpDirect(SocketFd socketFd, const void *data, size_t length, int flags)
+{
+#if defined(_WIN32)
+    ssize_t bytesSent = send(socketFd, (const char *)data, (int)length, flags);
+#else
+    ssize_t bytesSent = send(socketFd, data, length, flags);
+#endif
+    if (bytesSent < 0)
+    {
+#ifdef _WIN32
+        int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK)
+            return SOCKET_ERROR_WOULD_BLOCK;
+#else
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return SOCKET_ERROR_WOULD_BLOCK;
+        if (errno == EINTR)
+            return SOCKET_ERROR_INTERRUPTED;
+#endif
+    }
+    return bytesSent;
+}
+
+ssize_t RecvTcpDirect(SocketFd socketFd, void *buffer, size_t bufferSize, int flags)
+{
+#if defined(_WIN32)
+    ssize_t bytesReceived = recv(socketFd, (char *)buffer, (int)bufferSize, flags);
+#else
+    ssize_t bytesReceived = recv(socketFd, buffer, bufferSize, flags);
+#endif
+    if (bytesReceived < 0)
+    {
+#ifdef _WIN32
+        int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK)
+            return SOCKET_ERROR_WOULD_BLOCK;
+#else
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return SOCKET_ERROR_WOULD_BLOCK;
+        if (errno == EINTR)
+            return SOCKET_ERROR_INTERRUPTED;
+#endif
+    }
+    else if (bytesReceived == 0)
+    {
+        return SOCKET_ERROR_CLOSED;
+    }
+    return bytesReceived;
+}
+
 // Socket control operations
 int SocketListen(SocketFd socketFd, int backlog) {
     return listen(socketFd, backlog);
