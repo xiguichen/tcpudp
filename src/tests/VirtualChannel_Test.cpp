@@ -422,3 +422,145 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutResetsAfterGapFilled)
 
     ASSERT_EQ(callbackCount.load(), 4);
 }
+
+// Test that send path handles partial TCP writes correctly.
+// With non-blocking sockets and small send buffers, send() can return fewer bytes
+// than requested. If the send thread doesn't retry the remaining bytes, the receiver
+// sees corrupted packet boundaries ("Unknown packet type" errors).
+TEST_F(TcpVirtualChannelTest, PartialSendHandledCorrectly)
+{
+    // Use maximum payload size (2000 bytes) to maximize per-packet wire size (~2011 bytes).
+    // Reduce TCP send buffer on client + receive buffer on server to force backpressure.
+    int sendBufSize = 2048;
+    setsockopt(clientSocket, SOL_SOCKET, SO_SNDBUF, (const char *)&sendBufSize, sizeof(sendBufSize));
+    int recvBufSize = 2048;
+    setsockopt(serverAcceptedSocket, SOL_SOCKET, SO_RCVBUF, (const char *)&recvBufSize, sizeof(recvBufSize));
+
+    const int numPackets = 200;
+    std::atomic<int> callbackCount{0};
+    std::atomic<bool> corrupted{false};
+    std::condition_variable receivedCv;
+    std::mutex receivedMutex;
+
+    auto recvCallback = [&](const char *recvData, size_t recvSize) {
+        // Each packet is 2000 bytes: "packet_XXXX" padded with 'A' to fill 2000 bytes.
+        // Verify first 7 bytes are "packet_" and the number is valid.
+        if (recvSize != 2000)
+        {
+            corrupted.store(true);
+            EXPECT_EQ(recvSize, 2000u) << "Unexpected packet size (corruption likely)";
+        }
+        else if (std::string(recvData, 7) != "packet_")
+        {
+            corrupted.store(true);
+            FAIL() << "Corrupted packet: does not start with 'packet_'";
+        }
+        callbackCount++;
+        receivedCv.notify_all();
+    };
+    serverChannel->setReceiveCallback(recvCallback);
+    serverChannel->open();
+    clientChannel->open();
+
+    // Send max-size packets through the channel rapidly.
+    // With 2048-byte SO_SNDBUF and ~2011-byte wire packets, partial sends are forced
+    // when backpressure builds from the small receive buffer.
+    for (int i = 0; i < numPackets; i++)
+    {
+        std::string header = "packet_" + std::to_string(i);
+        std::vector<char> payload(2000, 'A');
+        std::memcpy(payload.data(), header.c_str(), header.size());
+        clientChannel->send(payload.data(), payload.size());
+    }
+
+    // Wait for all packets or corruption
+    {
+        std::unique_lock<std::mutex> lock(receivedMutex);
+        receivedCv.wait_for(lock, std::chrono::seconds(15),
+                            [&] { return callbackCount.load() >= numPackets || corrupted.load(); });
+    }
+
+    EXPECT_FALSE(corrupted.load()) << "Packet corruption detected — likely partial-send bug";
+    EXPECT_EQ(callbackCount.load(), numPackets)
+        << "Not all packets received. Got " << callbackCount.load() << "/" << numPackets;
+}
+
+// Direct proof that non-blocking TCP send() can return partial writes under backpressure.
+// This verifies the premise that the send thread MUST handle partial sends.
+TEST(PartialSendTest, NonBlockingSendCanReturnPartial)
+{
+#ifdef _WIN32
+    WSAData wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+
+    // Create a connected socket pair via listen/connect/accept
+    SocketFd listenFd = SocketCreate(AF_INET, SOCK_STREAM, 0);
+    ASSERT_NE(listenFd, (SocketFd)-1);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_port = 0;
+    ASSERT_EQ(SocketBind(listenFd, (sockaddr *)&addr, sizeof(addr)), 0);
+
+    socklen_t addrLen = sizeof(addr);
+    getsockname(listenFd, (sockaddr *)&addr, &addrLen);
+    SocketListen(listenFd, 1);
+
+    SocketFd clientFd = SocketCreate(AF_INET, SOCK_STREAM, 0);
+    ASSERT_NE(clientFd, (SocketFd)-1);
+    ASSERT_EQ(SocketConnect(clientFd, (sockaddr *)&addr, sizeof(addr)), 0);
+
+    sockaddr_in acceptAddr{};
+    socklen_t acceptLen = sizeof(acceptAddr);
+    SocketFd serverFd = SocketAccept(listenFd, (sockaddr *)&acceptAddr, &acceptLen);
+    ASSERT_NE(serverFd, (SocketFd)-1);
+    SocketClose(listenFd);
+
+    // Set minimal buffer sizes and non-blocking mode
+    int tiny = 1;
+    setsockopt(clientFd, SOL_SOCKET, SO_SNDBUF, (const char *)&tiny, sizeof(tiny));
+    setsockopt(serverFd, SOL_SOCKET, SO_RCVBUF, (const char *)&tiny, sizeof(tiny));
+    SetSocketNonBlocking(clientFd);
+
+    // Fill the send buffer by writing without reading on server side.
+    // Eventually send() will either return partial or WOULD_BLOCK.
+    std::vector<char> bigBuf(8192, 'X');
+    bool gotPartial = false;
+    bool gotWouldBlock = false;
+
+    for (int attempt = 0; attempt < 1000; attempt++)
+    {
+        ssize_t n = SendTcpDirect(clientFd, bigBuf.data(), bigBuf.size(), 0);
+        if (n == SOCKET_ERROR_WOULD_BLOCK)
+        {
+            gotWouldBlock = true;
+            break;
+        }
+        if (n > 0 && static_cast<size_t>(n) < bigBuf.size())
+        {
+            gotPartial = true;
+            break;
+        }
+    }
+
+    // On non-blocking sockets under backpressure, we expect either a partial write or WOULD_BLOCK.
+    // Either outcome proves that the send thread CANNOT assume send() always returns the full length.
+    EXPECT_TRUE(gotPartial || gotWouldBlock)
+        << "Expected partial send or WOULD_BLOCK under buffer pressure. "
+           "If neither occurred, the test environment doesn't reproduce the condition.";
+
+    // Log which outcome for informational purposes
+    if (gotPartial)
+        std::cout << "[INFO] Got partial send — confirms send thread must handle partial writes." << std::endl;
+    else if (gotWouldBlock)
+        std::cout << "[INFO] Got WOULD_BLOCK — confirms non-blocking send can fail under pressure." << std::endl;
+
+    SocketClose(clientFd);
+    SocketClose(serverFd);
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}

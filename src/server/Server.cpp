@@ -139,12 +139,23 @@ void Server::AcceptConnections()
                 break;
             }
 
+            // Bind the UDP socket to an ephemeral port so recv() works immediately.
+            // Without bind, recv() on Windows returns WSAEINVAL on unbound sockets.
+            struct sockaddr_in bindAddr{};
+            bindAddr.sin_family = AF_INET;
+            bindAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+            bindAddr.sin_port = 0; // Let OS assign a port
+            if (SocketBind(udpSocket, (struct sockaddr *)&bindAddr, sizeof(bindAddr)) < 0)
+            {
+                log_error("Failed to bind UDP socket");
+                SocketClose(udpSocket);
+                break;
+            }
+
             // Create a socket address for the UDP socket to send data to
-            // It's something like 127.0.0.1: port
             struct sockaddr_in udpAddr{};
             udpAddr.sin_family = AF_INET;
-            // sin_addr should be local host
-            udpAddr.sin_addr.s_addr = INADDR_ANY;
+            udpAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
             udpAddr.sin_port = htons(ServerConfiguration::getInstance()->getUdpTargetPort());
 
             peer->SetUdpSocket(udpSocket);

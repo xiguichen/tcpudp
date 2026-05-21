@@ -158,6 +158,45 @@ void TcpVCSendThread::run()
 
             if (n > 0)
             {
+                // Handle partial send: on non-blocking sockets, send() may return
+                // fewer bytes than requested when the kernel buffer is nearly full.
+                // Once we've written ANY bytes to this connection we MUST complete
+                // the packet here — switching connections mid-packet corrupts both
+                // TCP streams (the receiver expects contiguous protocol bytes).
+                size_t totalSent = static_cast<size_t>(n);
+                while (totalSent < dataVec->size())
+                {
+                    if (!conn->isConnected() || !this->isRunning())
+                        break;
+                    // Wait up to 100ms for socket to become writable again.
+                    if (!IsSocketWritable(conn->getSocketFd(), 100))
+                        continue;
+                    ssize_t r = SendTcpDirect(
+                        conn->getSocketFd(),
+                        dataVec->data() + totalSent,
+                        dataVec->size() - totalSent, 0);
+                    if (r > 0)
+                        totalSent += static_cast<size_t>(r);
+                    else if (r == SOCKET_ERROR_WOULD_BLOCK)
+                        continue;
+                    else
+                        break; // connection error
+                }
+
+                if (totalSent < dataVec->size())
+                {
+                    // Connection died mid-packet. The partial bytes already in the
+                    // stream make this packet unrecoverable on this connection.
+                    // The VC reliability layer (resend on missing) handles recovery.
+                    if (idx < socketStatuses.size())
+                        socketStatuses[idx]->markDegraded();
+                    if (idx < connSendStats.size() && connSendStats[idx])
+                        connSendStats[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+                    log_warnning("Partial send failed: connection died mid-packet on connection " +
+                                std::to_string(idx) + " for msgId " + std::to_string(messageId));
+                    continue; // try next connection for next packet (this one is lost)
+                }
+
                 if (messageTracker)
                     messageTracker->recordMessage(messageId, static_cast<int>(idx));
 
