@@ -9,11 +9,13 @@ using namespace Logger;
 
 TcpVCSendThread::TcpVCSendThread(std::vector<TcpConnectionSp> connections_,
                                  BlockingQueueSp sendQueue_,
+                                 BlockingQueueSp resendQueue_,
                                  std::vector<std::shared_ptr<ConnSendStats>> connSendStats_,
                                  std::shared_ptr<MessageTracker> messageTracker_,
                                  std::vector<std::shared_ptr<SocketStatus>> socketStatuses_)
     : connections(std::move(connections_)),
       sendQueue(std::move(sendQueue_)),
+      resendQueue(std::move(resendQueue_)),
       connSendStats(std::move(connSendStats_)),
       messageTracker(std::move(messageTracker_)),
       socketStatuses(std::move(socketStatuses_))
@@ -88,30 +90,48 @@ void TcpVCSendThread::run()
     log_info("TcpVCSendThread started");
 
     const size_t numConns = connections.size();
+    // Only reserve VC_RESEND_CONN_INDEX for resend traffic when the channel
+    // actually has that many connections.  Test channels with fewer connections
+    // use all slots for normal data (sendOnResendConn handles the absent-conn case).
+    const bool hasResendConn = (numConns > VC_RESEND_CONN_INDEX);
+    const size_t numDataConns = hasResendConn ? static_cast<size_t>(VC_RESEND_CONN_INDEX) : numConns;
 
     // Scores are recomputed per packet but the storage is reused.
-    std::vector<int> scores(numConns);
+    std::vector<int> scores(numDataConns);
     // Indices sorted by score, reused across iterations.
-    std::vector<size_t> order(numConns);
+    std::vector<size_t> order(numDataConns);
 
     while (this->isRunning())
     {
-        auto dataVec = sendQueue->dequeue();
-        if (!dataVec)
+        // Priority: drain resend queue first (non-blocking).
+        if (resendQueue)
         {
-            log_debug("Send thread exiting on null data (queue cancelled)");
-            break;
+            auto resendData = resendQueue->tryDequeue();
+            if (resendData)
+            {
+                sendOnResendConn(std::move(resendData));
+                continue; // immediately re-check resend queue
+            }
         }
-        if (!this->isRunning()) break;
 
-        if (numConns == 0 || !connections[0]) continue;
+        // Block for normal data with a short timeout so the resend queue is
+        // checked again even when no normal traffic is flowing.
+        auto dataVec = sendQueue->dequeueWithTimeout(5);
+        if (!dataVec)
+            continue; // timeout — loop back to check resend queue
+        if (!this->isRunning())
+            break;
+
+        if (numDataConns == 0 || !connections[0])
+            continue;
 
         const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
         uint64_t messageId = packet->header.messageId;
 
-        // Rate all connections.
+        // Rate data connections only (indices 0..numDataConns-1).
+        // VC_RESEND_CONN_INDEX is never included in the candidate pool.
         int bestScore = -1;
-        for (size_t i = 0; i < numConns; i++)
+        for (size_t i = 0; i < numDataConns; i++)
         {
             scores[i] = rateConnection(i);
             if (scores[i] > bestScore)
@@ -121,12 +141,12 @@ void TcpVCSendThread::run()
         // Build an order of indices to try. Start from roundRobinStart so that
         // equal-scored connections (the common case on Windows where TCP_INFO is
         // unavailable) are used in rotation rather than always hitting index 0.
-        for (size_t i = 0; i < numConns; i++)
-            order[i] = (roundRobinStart + i) % numConns;
-        roundRobinStart = (roundRobinStart + 1) % numConns;
+        for (size_t i = 0; i < numDataConns; i++)
+            order[i] = (roundRobinStart + i) % numDataConns;
+        roundRobinStart = (roundRobinStart + 1) % numDataConns;
 
         // Stable-ish descending sort by score. Only the first few matter, so
-        // partial_sort would save work, but with N=32 full sort is ~160 comparisons
+        // partial_sort would save work, but with N=31 full sort is ~155 comparisons
         // which is fine and the code is clearer.
         std::stable_sort(order.begin(), order.end(),
                          [&](size_t a, size_t b) { return scores[a] > scores[b]; });
@@ -135,7 +155,7 @@ void TcpVCSendThread::run()
         bool anyEligible = (bestScore >= 0);
 
         bool sent = false;
-        for (size_t rank = 0; rank < numConns; rank++)
+        for (size_t rank = 0; rank < numDataConns; rank++)
         {
             size_t idx = order[rank];
             if (!anyEligible)
@@ -238,4 +258,70 @@ void TcpVCSendThread::run()
     }
 
     log_info("TcpVCSendThread stopped");
+}
+
+void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data)
+{
+    if (connections.size() <= VC_RESEND_CONN_INDEX)
+    {
+        log_warnning("[RESEND] No resend connection available (connections.size()=" +
+                     std::to_string(connections.size()) + ")");
+        return;
+    }
+
+    auto &conn = connections[VC_RESEND_CONN_INDEX];
+    const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(data->data());
+    uint64_t messageId = packet->header.messageId;
+
+    if (!conn || !conn->isConnected())
+    {
+        log_warnning("[RESEND] Resend connection (conn " + std::to_string(VC_RESEND_CONN_INDEX) +
+                     ") unavailable, dropping msgId=" + std::to_string(messageId));
+        return;
+    }
+
+    ssize_t n = SendTcpDirect(conn->getSocketFd(), data->data(), data->size(), 0);
+
+    if (n > 0)
+    {
+        size_t totalSent = static_cast<size_t>(n);
+        while (totalSent < data->size())
+        {
+            if (!conn->isConnected() || !this->isRunning())
+                break;
+            if (!IsSocketWritable(conn->getSocketFd(), 100))
+                continue;
+            ssize_t r = SendTcpDirect(conn->getSocketFd(),
+                                      data->data() + totalSent,
+                                      data->size() - totalSent, 0);
+            if (r > 0)
+                totalSent += static_cast<size_t>(r);
+            else if (r == SOCKET_ERROR_WOULD_BLOCK)
+                continue;
+            else
+                break; // connection error
+        }
+
+        if (totalSent < data->size())
+        {
+            if (VC_RESEND_CONN_INDEX < socketStatuses.size())
+                socketStatuses[VC_RESEND_CONN_INDEX]->markDegraded();
+            log_warnning("[RESEND] Resend connection died mid-packet for msgId=" +
+                         std::to_string(messageId));
+        }
+        else
+        {
+            if (VC_RESEND_CONN_INDEX < socketStatuses.size())
+                socketStatuses[VC_RESEND_CONN_INDEX]->recover();
+            log_info("[RESEND] Sent resend msgId=" + std::to_string(messageId) +
+                     " on conn " + std::to_string(VC_RESEND_CONN_INDEX));
+        }
+    }
+    else
+    {
+        if (VC_RESEND_CONN_INDEX < socketStatuses.size())
+            socketStatuses[VC_RESEND_CONN_INDEX]->markDegraded();
+        log_warnning("[RESEND] Failed to send resend msgId=" + std::to_string(messageId) +
+                     " on conn " + std::to_string(VC_RESEND_CONN_INDEX));
+    }
 }

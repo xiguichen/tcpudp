@@ -67,6 +67,10 @@ void TcpVirtualChannel::open()
                 self->sendQueue->cancelWait();
             }
 
+            if (self->resendQueue) {
+                self->resendQueue->cancelWait();
+            }
+
             for (auto &conn : self->connections) {
                 if (conn && conn->isConnected()) {
                     conn->disconnect();
@@ -140,6 +144,7 @@ void TcpVirtualChannel::open()
     sendThread = std::make_shared<TcpVCSendThread>(
         connections,
         sendQueue,
+        resendQueue,
         connSendStats,
         messageTracker,
         socketStatuses
@@ -147,14 +152,15 @@ void TcpVirtualChannel::open()
 
     sendThread->start();
 
-    // Default resendCallback: re-enqueue the original packet with its messageId so the receiver's
-    // reorder buffer can fill the gap.  Callers may override via setResendCallback().
+    // Default resendCallback: re-enqueue the original packet with its messageId onto the dedicated
+    // resend queue so it is sent exclusively over the resend connection (VC_RESEND_CONN_INDEX).
+    // Callers may override via setResendCallback().
     if (!resendCallback)
     {
         auto weakSelf = std::weak_ptr<TcpVirtualChannel>(shared_from_this());
         resendCallback = [weakSelf](uint64_t messageId, const char *data, size_t size) {
             auto self = weakSelf.lock();
-            if (!self || !self->opened.load() || !self->sendQueue) return;
+            if (!self || !self->opened.load() || !self->resendQueue) return;
             auto totalPacketSize = sizeof(VCDataPacket) + size;
             auto dataVec = std::make_shared<std::vector<char>>(totalPacketSize);
             VCDataPacket *packet = reinterpret_cast<VCDataPacket *>(dataVec->data());
@@ -162,7 +168,7 @@ void TcpVirtualChannel::open()
             packet->header.messageId = messageId;
             packet->dataLength = static_cast<uint16_t>(size);
             std::memcpy(packet->data, data, size);
-            self->sendQueue->enqueue(dataVec);
+            self->resendQueue->enqueue(dataVec);
         };
     }
 
@@ -252,6 +258,8 @@ void TcpVirtualChannel::close()
     if (wasOpen)
     {
         this->sendQueue->cancelWait();
+        if (this->resendQueue)
+            this->resendQueue->cancelWait();
 
         log_debug("Closing TcpVirtualChannel connections");
         for (auto &conn : connections)
@@ -330,6 +338,7 @@ void TcpVirtualChannel::processResendRequest(uint64_t messageId)
     if (dataVec && resendCallback)
     {
         const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
+        log_info(std::format("[RESEND] Resending messageId={}", messageId));
         resendCallback(messageId, reinterpret_cast<const char *>(packet->data), packet->dataLength);
     }
     else if (!dataVec)
@@ -342,6 +351,8 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
 {
     log_info(std::format("[MISSING] Received missing notify for {} messageIds", missingIds.size()));
 
+    int resent = 0;
+    int cacheMiss = 0;
     for (uint64_t messageId : missingIds)
     {
         if (messageTracker)
@@ -359,8 +370,18 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
         {
             const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
             resendCallback(messageId, reinterpret_cast<const char *>(packet->data), packet->dataLength);
+            resent++;
+        }
+        else if (!dataVec)
+        {
+            cacheMiss++;
         }
     }
+
+    if (cacheMiss > 0)
+        log_warnning(std::format("[MISSING] {} of {} missing messageIds not found in cache (evicted), cannot resend",
+                                 cacheMiss, missingIds.size()));
+    log_info(std::format("[MISSING] Resent {}/{} missing messages", resent, missingIds.size()));
 }
 
 void TcpVirtualChannel::sendMissingNotifications()
@@ -746,5 +767,6 @@ TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
         connections.emplace_back(std::make_shared<TcpConnection>(fd));
     }
     sendQueue = std::make_shared<BlockingQueue>();
+    resendQueue = std::make_shared<BlockingQueue>();
     lastNotifyTime = std::chrono::steady_clock::now();
 }

@@ -107,6 +107,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::shared_ptr<TcpVCSendThread> sendThread;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
+    BlockingQueueSp resendQueue; // dedicated queue for resend traffic (conn VC_RESEND_CONN_INDEX)
 
     std::vector<std::shared_ptr<ConnSendStats>> connSendStats;
 

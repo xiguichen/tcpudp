@@ -14,6 +14,7 @@ class TcpVCSendThread : public StopableThread
   public:
     TcpVCSendThread(std::vector<TcpConnectionSp> connections,
                     BlockingQueueSp sendQueue,
+                    BlockingQueueSp resendQueue,
                     std::vector<std::shared_ptr<ConnSendStats>> connSendStats,
                     std::shared_ptr<MessageTracker> messageTracker,
                     std::vector<std::shared_ptr<SocketStatus>> socketStatuses);
@@ -26,11 +27,13 @@ class TcpVCSendThread : public StopableThread
   private:
     void refreshConnRuntimeInfo(size_t connIndex);
     int rateConnection(size_t connIndex);
+    void sendOnResendConn(std::shared_ptr<std::vector<char>> data);
 
     static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
 
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
+    BlockingQueueSp resendQueue;
     std::vector<std::shared_ptr<ConnSendStats>> connSendStats;
     std::shared_ptr<MessageTracker> messageTracker;
     std::vector<std::shared_ptr<SocketStatus>> socketStatuses;
