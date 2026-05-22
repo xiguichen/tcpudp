@@ -144,6 +144,10 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::chrono::steady_clock::time_point lastNotifyTime;
     std::chrono::milliseconds missingNotifyIntervalMs{200};
 
+    // IDs enqueued for resend but not yet confirmed received by the peer.
+    // Prevents re-enqueuing the same ID on every successive MISSING_NOTIFY.
+    std::unordered_set<uint64_t> pendingResendIds;
+
     SentDataCache sentDataCache;
 
     std::function<void(uint64_t messageId, const char *data, size_t size)> resendCallback;

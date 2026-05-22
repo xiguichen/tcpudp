@@ -351,8 +351,20 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
 {
     log_info(std::format("[MISSING] Received missing notify for {} messageIds", missingIds.size()));
 
+    // IDs absent from the new notify have been received by the peer — clear them
+    // from the pending set so they can be re-resent if they go missing again.
+    std::unordered_set<uint64_t> newMissingSet(missingIds.begin(), missingIds.end());
+    for (auto it = pendingResendIds.begin(); it != pendingResendIds.end(); )
+    {
+        if (newMissingSet.find(*it) == newMissingSet.end())
+            it = pendingResendIds.erase(it);
+        else
+            ++it;
+    }
+
     int resent = 0;
     int cacheMiss = 0;
+    int skipped = 0;
     for (uint64_t messageId : missingIds)
     {
         if (messageTracker)
@@ -364,12 +376,22 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
             }
         }
 
+        // Skip IDs already enqueued for resend — they are still in-flight on the resend
+        // connection.  They will be cleared from pendingResendIds when the peer stops
+        // including them in MISSING_NOTIFY (i.e., confirms receipt).
+        if (pendingResendIds.count(messageId))
+        {
+            skipped++;
+            continue;
+        }
+
         auto dataVec = sentDataCache.find(messageId);
 
         if (dataVec && resendCallback)
         {
             const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
             resendCallback(messageId, reinterpret_cast<const char *>(packet->data), packet->dataLength);
+            pendingResendIds.insert(messageId);
             resent++;
         }
         else if (!dataVec)
@@ -381,7 +403,8 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
     if (cacheMiss > 0)
         log_warnning(std::format("[MISSING] {} of {} missing messageIds not found in cache (evicted), cannot resend",
                                  cacheMiss, missingIds.size()));
-    log_info(std::format("[MISSING] Resent {}/{} missing messages", resent, missingIds.size()));
+    log_info(std::format("[MISSING] Resent {}/{} missing messages ({} already pending, skipped)",
+                         resent, missingIds.size(), skipped));
 }
 
 void TcpVirtualChannel::sendMissingNotifications()
