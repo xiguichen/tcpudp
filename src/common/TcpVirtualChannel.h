@@ -81,6 +81,14 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
         missingNotifyCallback = std::move(callback);
     }
 
+    // Returns indices of connections that are no longer connected.
+    // Used by the client watchdog to enumerate slots needing reconnection.
+    std::vector<int> getDeadSlots() const;
+
+    // Hot-swaps the connection at slotIndex with a new socket fd.
+    // The IO and send threads pick up the new connection on their next iteration.
+    void replaceConnection(int slotIndex, SocketFd newFd);
+
     std::shared_ptr<MessageTracker> getMessageTracker() const { return messageTracker; }
 
     std::vector<std::shared_ptr<SocketStatus>> getSocketStatuses() const { return socketStatuses; }

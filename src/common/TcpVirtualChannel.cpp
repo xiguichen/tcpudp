@@ -58,7 +58,23 @@ void TcpVirtualChannel::open()
                 return;
             }
 
-            log_debug("Disconnect detected, closing the entire virtual channel.");
+            // Count connections that are still alive.
+            // A single-connection drop must not tear down the whole VC.
+            int aliveCount = 0;
+            for (auto &conn : self->connections)
+            {
+                if (conn && conn->isConnected())
+                    aliveCount++;
+            }
+
+            if (aliveCount > 0)
+            {
+                log_info(std::format("[VC] A connection dropped, {} still alive — VC continues.", aliveCount));
+                return;
+            }
+
+            // All connections are dead — proceed with full teardown.
+            log_warnning("[VC] All TCP connections dead, closing virtual channel.");
 
             self->opened = false;
             shouldNotify = (self->disconnectCallback != nullptr);
@@ -781,6 +797,37 @@ void TcpVirtualChannel::reorderThreadFunc()
     }
 
     log_info("Reorder thread stopped");
+}
+
+std::vector<int> TcpVirtualChannel::getDeadSlots() const
+{
+    std::vector<int> dead;
+    for (size_t i = 0; i < connections.size(); ++i)
+    {
+        if (!connections[i] || !connections[i]->isConnected())
+            dead.push_back(static_cast<int>(i));
+    }
+    return dead;
+}
+
+void TcpVirtualChannel::replaceConnection(int slotIndex, SocketFd newFd)
+{
+    if (slotIndex < 0 || static_cast<size_t>(slotIndex) >= connections.size())
+    {
+        log_error(std::format("[VC] replaceConnection: invalid slotIndex {}", slotIndex));
+        return;
+    }
+
+    auto newConn = std::make_shared<TcpConnection>(newFd);
+    SetSocketNonBlocking(newFd);
+
+    if (static_cast<size_t>(slotIndex) < socketStatuses.size())
+        socketStatuses[slotIndex] = std::make_shared<SocketStatus>();
+    if (static_cast<size_t>(slotIndex) < connSendStats.size())
+        connSendStats[slotIndex] = std::make_shared<ConnSendStats>();
+
+    connections[slotIndex] = newConn;
+    log_info(std::format("[VC] Replaced connection at slot {}", slotIndex));
 }
 
 TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)

@@ -25,6 +25,9 @@ public:
     // Check if a VC exists for the given client
     bool Exists(uint32_t clientId);
 
+    // Returns the VC for the given client, or nullptr if not found.
+    VirtualChannelSp Get(uint32_t clientId);
+
 private:
     VcManager() = default;
     ~VcManager() = default;

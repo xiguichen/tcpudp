@@ -103,6 +103,29 @@ void Server::AcceptConnections()
         // Add peer to peer manager using client ID instead of IP
         PeerManager::AddPeer(clientId);
 
+        // If a VC already exists for this clientId, the incoming socket is a replacement
+        // for a dead slot in the existing channel — hot-swap it and skip peer accumulation.
+        if (VcManager::getInstance().Exists(clientId))
+        {
+            auto existingVc = VcManager::getInstance().Get(clientId);
+            auto *tcpVc = dynamic_cast<TcpVirtualChannel *>(existingVc.get());
+            if (tcpVc)
+            {
+                auto deadSlots = tcpVc->getDeadSlots();
+                if (deadSlots.empty())
+                {
+                    log_warnning(std::format("[Server] Extra socket for clientId {} but no dead slots — closing", clientId));
+                    SocketClose(clientSocket);
+                }
+                else
+                {
+                    tcpVc->replaceConnection(deadSlots[0], clientSocket);
+                    log_info(std::format("[Server] Replaced slot {} for clientId {}", deadSlots[0], clientId));
+                }
+            }
+            continue;
+        }
+
         // Get the peer and add the socket
         Peer *peer = PeerManager::GetPeerById(clientId);
         if (peer)

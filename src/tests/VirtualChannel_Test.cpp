@@ -1,6 +1,7 @@
 #include "Log.h"
 #include "Socket.h"
 #include "TcpVirtualChannel.h"
+#include <algorithm>
 #include <condition_variable>
 #include <gtest/gtest.h>
 #include <cerrno>
@@ -559,6 +560,161 @@ TEST(PartialSendTest, NonBlockingSendCanReturnPartial)
 
     SocketClose(clientFd);
     SocketClose(serverFd);
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Partial-disconnect tests: one connection drops, VC continues; replace works
+// ---------------------------------------------------------------------------
+
+// Helper: create a connected loopback socket pair.
+// Returns {clientFd, serverFd}. Caller owns and must close both.
+static std::pair<SocketFd, SocketFd> MakeSocketPair(int &portOut)
+{
+    SocketFd listenFd = SocketCreate(AF_INET, SOCK_STREAM, 0);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_port = 0;
+    SocketBind(listenFd, (sockaddr *)&addr, sizeof(addr));
+
+    socklen_t addrLen = sizeof(addr);
+    getsockname(listenFd, (sockaddr *)&addr, &addrLen);
+    portOut = ntohs(addr.sin_port);
+
+    SocketListen(listenFd, 1);
+
+    SocketFd clientFd = SocketCreate(AF_INET, SOCK_STREAM, 0);
+    SocketConnect(clientFd, (sockaddr *)&addr, sizeof(addr));
+
+    sockaddr_in acceptAddr{};
+    socklen_t acceptLen = sizeof(acceptAddr);
+    SocketFd serverFd = SocketAccept(listenFd, (sockaddr *)&acceptAddr, &acceptLen);
+    SocketClose(listenFd);
+
+    return {clientFd, serverFd};
+}
+
+TEST(PartialDisconnectTest, VcStaysOpenWhenOneConnectionDrops)
+{
+#ifdef _WIN32
+    WSAData wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+
+    int port0 = 0, port1 = 0;
+    auto [c0, s0] = MakeSocketPair(port0);
+    auto [c1, s1] = MakeSocketPair(port1);
+
+    // VC with 2 connections: c0 and c1 on the "client" side.
+    auto vc = std::make_shared<TcpVirtualChannel>(std::vector<SocketFd>{c0, c1});
+
+    std::atomic<bool> disconnectFired{false};
+    vc->setDisconnectCallback([&] { disconnectFired = true; });
+    vc->open();
+
+    // Kill connection 1 by closing the server-side fd — the IO thread will see POLLIN/error.
+    SocketClose(s1);
+    // Give IO thread time to detect the disconnect (poll timeout is 50ms).
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // VC must still be open — connection 0 is alive.
+    EXPECT_TRUE(vc->isOpen()) << "VC must stay open when only one of two connections drops";
+
+    // disconnectCallback must NOT have fired.
+    EXPECT_FALSE(disconnectFired.load()) << "disconnectCallback must not fire while connections remain";
+
+    // Dead slot 1 must be reported.
+    auto dead = vc->getDeadSlots();
+    bool slot1Dead = std::find(dead.begin(), dead.end(), 1) != dead.end();
+    EXPECT_TRUE(slot1Dead) << "Slot 1 must appear in getDeadSlots() after its peer closed";
+
+    vc->close();
+    SocketClose(c0);
+    SocketClose(s0);
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+
+TEST(PartialDisconnectTest, AllDeadTriggersDisconnectCallback)
+{
+#ifdef _WIN32
+    WSAData wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+
+    int port0 = 0;
+    auto [c0, s0] = MakeSocketPair(port0);
+
+    auto vc = std::make_shared<TcpVirtualChannel>(std::vector<SocketFd>{c0});
+
+    std::atomic<bool> disconnectFired{false};
+    std::mutex mu;
+    std::condition_variable cv;
+
+    vc->setDisconnectCallback([&] {
+        disconnectFired = true;
+        cv.notify_all();
+    });
+    vc->open();
+
+    // Close the only connection's peer — IO thread will detect the drop.
+    SocketClose(s0);
+
+    std::unique_lock<std::mutex> lock(mu);
+    cv.wait_for(lock, std::chrono::seconds(5), [&] { return disconnectFired.load(); });
+
+    EXPECT_TRUE(disconnectFired.load()) << "disconnectCallback must fire when all connections die";
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+
+TEST(PartialDisconnectTest, ReplaceConnectionRestoresSlot)
+{
+#ifdef _WIN32
+    WSAData wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+
+    int port0 = 0, port1 = 0;
+    auto [c0, s0] = MakeSocketPair(port0);
+    auto [c1, s1] = MakeSocketPair(port1);
+
+    auto vc = std::make_shared<TcpVirtualChannel>(std::vector<SocketFd>{c0, c1});
+    vc->open();
+
+    // Kill slot 1.
+    SocketClose(s1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    auto deadBefore = vc->getDeadSlots();
+    bool slot1Dead = std::find(deadBefore.begin(), deadBefore.end(), 1) != deadBefore.end();
+    ASSERT_TRUE(slot1Dead) << "Slot 1 must be dead before replacement";
+
+    // Create a replacement socket pair.
+    int portR = 0;
+    auto [newC, newS] = MakeSocketPair(portR);
+
+    // Replace slot 1 with the new connection.
+    vc->replaceConnection(1, newC);
+
+    // Slot 1 should no longer appear in dead slots.
+    auto deadAfter = vc->getDeadSlots();
+    bool slot1StillDead = std::find(deadAfter.begin(), deadAfter.end(), 1) != deadAfter.end();
+    EXPECT_FALSE(slot1StillDead) << "Slot 1 must not be in dead slots after replaceConnection";
+
+    vc->close();
+    SocketClose(s0);
+    SocketClose(c0);
+    SocketClose(newS);
 
 #ifdef _WIN32
     WSACleanup();

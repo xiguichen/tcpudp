@@ -107,6 +107,7 @@ void TcpVCIoThread::readFromConnection(int connIndex)
         else if (n == SOCKET_ERROR_CLOSED)
         {
             log_info("Connection closed");
+            conn->disconnect();  // marks connected=false before VC-level callback counts alive conns
             if (disconnectCallback)
                 disconnectCallback(conn);
             return;
@@ -118,6 +119,7 @@ void TcpVCIoThread::readFromConnection(int connIndex)
         else
         {
             log_error("Read error on connection");
+            conn->disconnect();  // same: mark dead before callback
             if (disconnectCallback)
                 disconnectCallback(conn);
             return;

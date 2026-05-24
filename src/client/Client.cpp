@@ -3,6 +3,7 @@
 #include "ClientConfiguration.h"
 #include "VcProtocol.h"
 #include "VirtualChannelFactory.h"
+#include "TcpVirtualChannel.h"
 #include "Protocol.h"
 #include <thread>
 #include <format>
@@ -107,6 +108,8 @@ bool Client::PrepareVC()
 
     vc->open();
 
+    StartWatchdog();
+
     return true;
 }
 
@@ -185,6 +188,11 @@ void Client::Stop()
 {
     log_info("Client stopping...");
     running = false;
+
+    watchdogRunning = false;
+    if (watchdogThread.joinable())
+        watchdogThread.join();
+
     if(vc != nullptr)
     {
         vc->close();
@@ -219,6 +227,11 @@ void Client::Start()
 
 bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
 {
+    // Stop the watchdog before tearing down the VC so it doesn't race with us.
+    watchdogRunning = false;
+    if (watchdogThread.joinable())
+        watchdogThread.join();
+
     int retryCount = 0;
     int delayMs = 3000;
 
@@ -262,3 +275,91 @@ bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
     return false;
 }
 
+void Client::StartWatchdog()
+{
+    watchdogRunning = true;
+    watchdogThread = std::thread([this]() {
+        while (watchdogRunning.load())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (!watchdogRunning.load())
+                break;
+
+            // Read dead slots under a brief lock — don't hold the lock during connect.
+            std::vector<int> deadSlots;
+            {
+                std::lock_guard<std::mutex> lock(vcMutex);
+                if (!vc || !vc->isOpen())
+                    continue;
+                deadSlots = static_cast<TcpVirtualChannel *>(vc.get())->getDeadSlots();
+            }
+
+            for (int slot : deadSlots)
+            {
+                if (!watchdogRunning.load())
+                    break;
+                ReconnectSingleSlot(slot);
+            }
+        }
+        log_info("Watchdog thread stopped.");
+    });
+}
+
+bool Client::ReconnectSingleSlot(int slotIndex)
+{
+    log_info(std::format("Watchdog: reconnecting slot {}", slotIndex));
+
+    SocketFd tcpSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
+    if (tcpSocket == -1)
+    {
+        log_error(std::format("Watchdog: failed to create socket for slot {}", slotIndex));
+        return false;
+    }
+
+    auto ip = ClientConfiguration::getInstance()->getSocketAddress();
+    auto port = ClientConfiguration::getInstance()->getPortNumber();
+
+    struct sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
+    serverAddr.sin_port = htons(port);
+
+    // Non-blocking connect with 5s timeout so the watchdog can be stopped promptly.
+    if (SocketConnectNonBlocking(tcpSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr), 5000) < 0)
+    {
+        log_error(std::format("Watchdog: failed to connect for slot {}", slotIndex));
+        SocketClose(tcpSocket);
+        return false;
+    }
+
+    SocketSetTcpNoDelay(tcpSocket, true);
+    SocketSetReceiveBufferSize(tcpSocket, 512 * 1024);
+    SocketSetSendBufferSize(tcpSocket, 128 * 1024);
+
+    MsgBind bindMsg;
+    bindMsg.clientId = ClientConfiguration::getInstance()->getClientId();
+    std::vector<char> bindBuffer;
+    UvtUtils::AppendMsgBind(bindMsg, bindBuffer);
+
+    if (SendTcpData(tcpSocket, bindBuffer.data(), bindBuffer.size(), 0) <= 0)
+    {
+        log_error(std::format("Watchdog: failed to send MsgBind for slot {}", slotIndex));
+        SocketClose(tcpSocket);
+        return false;
+    }
+
+    // Acquire lock only briefly to hot-swap the connection.
+    std::lock_guard<std::mutex> lock(vcMutex);
+    if (!vc || !vc->isOpen())
+    {
+        SocketClose(tcpSocket);
+        return false;
+    }
+
+    if (static_cast<size_t>(slotIndex) < tcpSockets.size())
+        tcpSockets[slotIndex] = tcpSocket;
+
+    static_cast<TcpVirtualChannel *>(vc.get())->replaceConnection(slotIndex, tcpSocket);
+    log_info(std::format("Watchdog: slot {} reconnected successfully.", slotIndex));
+    return true;
+}

@@ -3,6 +3,7 @@
 #include "Socket.h"
 #include <atomic>
 #include <mutex>
+#include <thread>
 #include "VirtualChannel.h"
 
 class Client
@@ -41,5 +42,10 @@ class Client
     VirtualChannelSp vc = nullptr;
     std::mutex vcMutex;
 
+    std::thread watchdogThread;
+    std::atomic<bool> watchdogRunning{false};
+
     bool ReconnectVC(int maxRetries = 5, int initialBackoffMs = 1000);
+    void StartWatchdog();
+    bool ReconnectSingleSlot(int slotIndex);
 };

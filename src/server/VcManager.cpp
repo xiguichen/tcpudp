@@ -20,3 +20,12 @@ bool VcManager::Exists(uint32_t clientId)
     return vcs.find(clientId) != vcs.end();
 }
 
+VirtualChannelSp VcManager::Get(uint32_t clientId)
+{
+    std::lock_guard<std::mutex> lock(vcsMutex);
+    auto it = vcs.find(clientId);
+    if (it != vcs.end())
+        return it->second;
+    return nullptr;
+}
+
