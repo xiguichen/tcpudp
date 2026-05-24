@@ -33,20 +33,49 @@ TcpVCIoThread::TcpVCIoThread(std::vector<TcpConnectionSp> connections_,
 
 TcpVCIoThread::~TcpVCIoThread() = default;
 
+void TcpVCIoThread::replaceConnection(int slot, TcpConnectionSp conn)
+{
+    if (slot < 0 || static_cast<size_t>(slot) >= connections.size())
+        return;
+    SetSocketNonBlocking(conn->getSocketFd());
+    std::lock_guard<std::mutex> lock(connectionsMutex);
+    connections[slot] = conn;
+    // readBuffers[slot] is reset on the next run() iteration when the fd change is detected.
+}
+
 void TcpVCIoThread::run()
 {
     log_info("TcpVCIoThread started");
 
-    size_t numConns = connections.size();
+    const size_t numConns = connections.size();
     std::vector<struct pollfd> pollfds(numConns);
+    // Track per-slot fd values so we can detect when a connection is replaced
+    // and clear the stale read buffer before the new connection's data arrives.
+    std::vector<SocketFd> prevFds(numConns, -1);
 
     while (this->isRunning())
     {
+        // Take a per-iteration snapshot so replaceConnection() writes are picked
+        // up on the next poll cycle without holding the mutex during blocking I/O.
+        std::vector<TcpConnectionSp> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(connectionsMutex);
+            snapshot = connections;
+        }
+
         for (size_t i = 0; i < numConns; i++)
         {
-            if (connections[i] && connections[i]->isConnected())
+            SocketFd currFd = (snapshot[i] && snapshot[i]->isConnected()) ? snapshot[i]->getSocketFd() : -1;
+            // If the fd changed (connection replaced), discard buffered data from the old stream.
+            if (currFd != prevFds[i])
             {
-                pollfds[i].fd = connections[i]->getSocketFd();
+                readBuffers[i] = ReadBuffer{};
+                prevFds[i] = currFd;
+            }
+
+            if (currFd != -1)
+            {
+                pollfds[i].fd = currFd;
                 pollfds[i].events = POLLIN;
                 pollfds[i].revents = 0;
             }
@@ -72,7 +101,7 @@ void TcpVCIoThread::run()
 
             if (pollfds[i].revents & (POLLIN | POLLERR | POLLHUP))
             {
-                readFromConnection(static_cast<int>(i));
+                readFromConnection(static_cast<int>(i), snapshot[i]);
                 if (!this->isRunning()) return;
             }
         }
@@ -84,12 +113,8 @@ void TcpVCIoThread::run()
     log_info("TcpVCIoThread stopped");
 }
 
-void TcpVCIoThread::readFromConnection(int connIndex)
+void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
 {
-    if (connIndex < 0 || static_cast<size_t>(connIndex) >= connections.size())
-        return;
-
-    auto &conn = connections[connIndex];
     if (!conn || !conn->isConnected()) return;
 
     auto &buf = readBuffers[connIndex];

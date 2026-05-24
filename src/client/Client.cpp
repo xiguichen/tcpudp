@@ -277,6 +277,9 @@ bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
 
 void Client::StartWatchdog()
 {
+    // Guard against double-start. Caller must stop the previous thread before calling again.
+    assert(!watchdogThread.joinable() && "StartWatchdog called with a running watchdog thread");
+
     watchdogRunning = true;
     watchdogThread = std::thread([this]() {
         while (watchdogRunning.load())

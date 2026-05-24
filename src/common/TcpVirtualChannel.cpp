@@ -802,6 +802,7 @@ void TcpVirtualChannel::reorderThreadFunc()
 std::vector<int> TcpVirtualChannel::getDeadSlots() const
 {
     std::vector<int> dead;
+    std::lock_guard<std::mutex> lock(disconnectMutex);
     for (size_t i = 0; i < connections.size(); ++i)
     {
         if (!connections[i] || !connections[i]->isConnected())
@@ -819,14 +820,28 @@ void TcpVirtualChannel::replaceConnection(int slotIndex, SocketFd newFd)
     }
 
     auto newConn = std::make_shared<TcpConnection>(newFd);
-    SetSocketNonBlocking(newFd);
+    auto newStats = std::make_shared<ConnSendStats>();
+    auto newStatus = std::make_shared<SocketStatus>();
 
-    if (static_cast<size_t>(slotIndex) < socketStatuses.size())
-        socketStatuses[slotIndex] = std::make_shared<SocketStatus>();
-    if (static_cast<size_t>(slotIndex) < connSendStats.size())
-        connSendStats[slotIndex] = std::make_shared<ConnSendStats>();
+    // Update VC's own connections vector under disconnectMutex so getDeadSlots() and
+    // disconnectCB see a consistent view of which connections are alive.
+    {
+        std::lock_guard<std::mutex> lock(disconnectMutex);
+        if (static_cast<size_t>(slotIndex) < socketStatuses.size())
+            socketStatuses[slotIndex] = newStatus;
+        if (static_cast<size_t>(slotIndex) < connSendStats.size())
+            connSendStats[slotIndex] = newStats;
+        connections[slotIndex] = newConn;
+    }
 
-    connections[slotIndex] = newConn;
+    // Propagate the new connection to the IO and send threads so they actually
+    // use it. Each thread's replaceConnection() holds its own internal mutex,
+    // keeping the snapshot safe for concurrent access during scoring/polling.
+    if (ioThread)
+        ioThread->replaceConnection(slotIndex, newConn);
+    if (sendThread)
+        sendThread->replaceConnection(slotIndex, newConn, newStats, newStatus);
+
     log_info(std::format("[VC] Replaced connection at slot {}", slotIndex));
 }
 

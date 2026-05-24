@@ -126,7 +126,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     std::map<uint64_t, ReceivedItem> receivedDataMap;
 
-    std::mutex disconnectMutex;
+    mutable std::mutex disconnectMutex;
 
     std::thread reorderThread;
     std::atomic<bool> reorderRunning{false};

@@ -7,6 +7,7 @@
 #include "VcProtocol.h"
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 class TcpVCIoThread : public StopableThread
@@ -19,6 +20,10 @@ class TcpVCIoThread : public StopableThread
                   std::function<void(TcpConnectionSp)> disconnectCallback);
 
     virtual ~TcpVCIoThread();
+
+    // Hot-swap the connection at the given slot. The IO thread picks up the
+    // new socket on its next poll iteration (within IO_POLL_TIMEOUT_MS).
+    void replaceConnection(int slot, TcpConnectionSp conn);
 
   protected:
     virtual void run() override;
@@ -45,8 +50,9 @@ class TcpVCIoThread : public StopableThread
         }
     };
 
-    void readFromConnection(int connIndex);
+    void readFromConnection(int connIndex, TcpConnectionSp conn);
 
+    std::mutex connectionsMutex;
     std::vector<TcpConnectionSp> connections;
     std::vector<ReadBuffer> readBuffers;
 

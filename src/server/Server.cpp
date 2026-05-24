@@ -100,14 +100,12 @@ void Server::AcceptConnections()
         uint32_t clientId = bindMsg.clientId;
         log_info(std::format("Received client ID {} from client {}", clientId, clientIP));
 
-        // Add peer to peer manager using client ID instead of IP
-        PeerManager::AddPeer(clientId);
-
         // If a VC already exists for this clientId, the incoming socket is a replacement
         // for a dead slot in the existing channel — hot-swap it and skip peer accumulation.
-        if (VcManager::getInstance().Exists(clientId))
+        // Use a single Get() call to avoid a TOCTOU race between Exists() and Get().
+        auto existingVc = VcManager::getInstance().Get(clientId);
+        if (existingVc)
         {
-            auto existingVc = VcManager::getInstance().Get(clientId);
             auto *tcpVc = dynamic_cast<TcpVirtualChannel *>(existingVc.get());
             if (tcpVc)
             {
@@ -123,8 +121,16 @@ void Server::AcceptConnections()
                     log_info(std::format("[Server] Replaced slot {} for clientId {}", deadSlots[0], clientId));
                 }
             }
+            else
+            {
+                log_error(std::format("[Server] Unexpected VC type for clientId {} — closing socket", clientId));
+                SocketClose(clientSocket);
+            }
             continue;
         }
+
+        // New client — register peer and accumulate sockets until we have enough for a full VC.
+        PeerManager::AddPeer(clientId);
 
         // Get the peer and add the socket
         Peer *peer = PeerManager::GetPeerById(clientId);

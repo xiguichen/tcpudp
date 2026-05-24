@@ -33,10 +33,28 @@ TcpVCSendThread::TcpVCSendThread(std::vector<TcpConnectionSp> connections_,
 
 TcpVCSendThread::~TcpVCSendThread() = default;
 
-void TcpVCSendThread::refreshConnRuntimeInfo(size_t connIndex)
+void TcpVCSendThread::replaceConnection(int slot, TcpConnectionSp conn,
+                                        std::shared_ptr<ConnSendStats> stats,
+                                        std::shared_ptr<SocketStatus> status)
 {
-    if (connIndex >= connections.size()) return;
-    auto &conn = connections[connIndex];
+    if (slot < 0 || static_cast<size_t>(slot) >= connections.size())
+        return;
+    SetSocketNonBlocking(conn->getSocketFd());
+    std::lock_guard<std::mutex> lock(connectionsMutex);
+    connections[slot] = conn;
+    if (static_cast<size_t>(slot) < connSendStats.size())
+        connSendStats[slot] = stats;
+    if (static_cast<size_t>(slot) < socketStatuses.size())
+        socketStatuses[slot] = status;
+    if (static_cast<size_t>(slot) < lastRuntimeRefresh.size())
+        lastRuntimeRefresh[slot] = std::chrono::steady_clock::now();
+}
+
+void TcpVCSendThread::refreshConnRuntimeInfo(size_t connIndex,
+                                              const std::vector<TcpConnectionSp>& conns)
+{
+    if (connIndex >= conns.size()) return;
+    const auto &conn = conns[connIndex];
     if (!conn || !conn->isConnected()) return;
 
     auto now = std::chrono::steady_clock::now();
@@ -47,15 +65,18 @@ void TcpVCSendThread::refreshConnRuntimeInfo(size_t connIndex)
     conn->refreshRuntimeInfoIfStale(std::chrono::milliseconds(TCP_RUNTIME_REFRESH_MS));
 }
 
-int TcpVCSendThread::rateConnection(size_t connIndex)
+int TcpVCSendThread::rateConnection(size_t connIndex,
+                                    const std::vector<TcpConnectionSp>& conns,
+                                    const std::vector<std::shared_ptr<ConnSendStats>>& stats,
+                                    const std::vector<std::shared_ptr<SocketStatus>>& statuses)
 {
-    if (connIndex >= connections.size())
+    if (connIndex >= conns.size())
         return -1;
-    auto &conn = connections[connIndex];
+    const auto &conn = conns[connIndex];
     if (!conn || !conn->isConnected())
         return -1;
 
-    refreshConnRuntimeInfo(connIndex);
+    refreshConnRuntimeInfo(connIndex, conns);
     auto info = conn->getLastRuntimeInfo();
 
     if (info.isInExponentialBackoff)
@@ -67,17 +88,14 @@ int TcpVCSendThread::rateConnection(size_t connIndex)
     score -= static_cast<int>(info.bytesInFlight / 500);
     score -= info.timeoutEpisodes * 200;
 
-    if (connIndex < connSendStats.size() && connSendStats[connIndex])
+    if (connIndex < stats.size() && stats[connIndex])
     {
-        auto &stats = connSendStats[connIndex];
-        uint64_t failCount = stats->reenqueueCount.load(std::memory_order_relaxed);
+        uint64_t failCount = stats[connIndex]->reenqueueCount.load(std::memory_order_relaxed);
         score -= static_cast<int>(failCount) * 200;
     }
 
-    // Exclude connections that are still within their degradation backoff window.
-    // isCurrentlyDegraded() uses atomic reads and is safe to call from any thread.
-    if (connIndex < socketStatuses.size() && socketStatuses[connIndex] &&
-        socketStatuses[connIndex]->isCurrentlyDegraded(std::chrono::milliseconds(5000)))
+    if (connIndex < statuses.size() && statuses[connIndex] &&
+        statuses[connIndex]->isCurrentlyDegraded(std::chrono::milliseconds(5000)))
     {
         return -1;
     }
@@ -109,7 +127,15 @@ void TcpVCSendThread::run()
             auto resendData = resendQueue->tryDequeue();
             if (resendData)
             {
-                sendOnResendConn(std::move(resendData));
+                // Take snapshot for the resend path too.
+                std::vector<TcpConnectionSp> connSnap;
+                std::vector<std::shared_ptr<SocketStatus>> statusSnap;
+                {
+                    std::lock_guard<std::mutex> lock(connectionsMutex);
+                    connSnap = connections;
+                    statusSnap = socketStatuses;
+                }
+                sendOnResendConn(std::move(resendData), connSnap);
                 continue; // immediately re-check resend queue
             }
         }
@@ -122,7 +148,20 @@ void TcpVCSendThread::run()
         if (!this->isRunning())
             break;
 
-        if (numDataConns == 0 || !connections[0])
+        // Take a consistent snapshot of connections + stats + statuses under the mutex.
+        // This ensures replaceConnection() writes are visible immediately after the
+        // current dequeueWithTimeout unblocks — no stale pointers during scoring/sending.
+        std::vector<TcpConnectionSp> connSnap;
+        std::vector<std::shared_ptr<ConnSendStats>> statsSnap;
+        std::vector<std::shared_ptr<SocketStatus>> statusSnap;
+        {
+            std::lock_guard<std::mutex> lock(connectionsMutex);
+            connSnap = connections;
+            statsSnap = connSendStats;
+            statusSnap = socketStatuses;
+        }
+
+        if (numDataConns == 0 || !connSnap[0])
             continue;
 
         const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
@@ -133,7 +172,7 @@ void TcpVCSendThread::run()
         int bestScore = -1;
         for (size_t i = 0; i < numDataConns; i++)
         {
-            scores[i] = rateConnection(i);
+            scores[i] = rateConnection(i, connSnap, statsSnap, statusSnap);
             if (scores[i] > bestScore)
                 bestScore = scores[i];
         }
@@ -160,7 +199,7 @@ void TcpVCSendThread::run()
             size_t idx = order[rank];
             if (!anyEligible)
             {
-                if (!connections[idx] || !connections[idx]->isConnected())
+                if (!connSnap[idx] || !connSnap[idx]->isConnected())
                     continue;
             }
             else if (scores[idx] < 0)
@@ -168,7 +207,7 @@ void TcpVCSendThread::run()
                 continue;
             }
 
-            auto &conn = connections[idx];
+            auto &conn = connSnap[idx];
             conn->diagMarkSendStart(messageId);
 
             // Use direct send (no redundant poll) — socket is already non-blocking.
@@ -205,13 +244,10 @@ void TcpVCSendThread::run()
 
                 if (totalSent < dataVec->size())
                 {
-                    // Connection died mid-packet. The partial bytes already in the
-                    // stream make this packet unrecoverable on this connection.
-                    // The VC reliability layer (resend on missing) handles recovery.
-                    if (idx < socketStatuses.size())
-                        socketStatuses[idx]->markDegraded();
-                    if (idx < connSendStats.size() && connSendStats[idx])
-                        connSendStats[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+                    if (idx < statusSnap.size())
+                        statusSnap[idx]->markDegraded();
+                    if (idx < statsSnap.size() && statsSnap[idx])
+                        statsSnap[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                     log_warnning("Partial send failed: connection died mid-packet on connection " +
                                 std::to_string(idx) + " for msgId " + std::to_string(messageId));
                     continue; // try next connection for next packet (this one is lost)
@@ -223,30 +259,28 @@ void TcpVCSendThread::run()
                 auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now().time_since_epoch())
                                  .count();
-                if (idx < connSendStats.size() && connSendStats[idx])
+                if (idx < statsSnap.size() && statsSnap[idx])
                 {
-                    auto &stats = connSendStats[idx];
+                    auto &stats = statsSnap[idx];
                     stats->lastTxMessageId.store(messageId);
                     stats->lastTxTimeMs.store(nowMs);
                     stats->txCount.fetch_add(1);
                     stats->valid.store(true);
-                    // Reset failure counter on success so a recovered connection
-                    // regains a fair score over time.
                     stats->reenqueueCount.store(0, std::memory_order_relaxed);
                 }
 
-                if (idx < socketStatuses.size())
-                    socketStatuses[idx]->recover();
+                if (idx < statusSnap.size())
+                    statusSnap[idx]->recover();
 
                 sent = true;
                 break;
             }
             else
             {
-                if (idx < socketStatuses.size())
-                    socketStatuses[idx]->markDegraded();
-                if (idx < connSendStats.size() && connSendStats[idx])
-                    connSendStats[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+                if (idx < statusSnap.size())
+                    statusSnap[idx]->markDegraded();
+                if (idx < statsSnap.size() && statsSnap[idx])
+                    statsSnap[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
             }
         }
 
@@ -260,16 +294,17 @@ void TcpVCSendThread::run()
     log_info("TcpVCSendThread stopped");
 }
 
-void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data)
+void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
+                                       const std::vector<TcpConnectionSp>& conns)
 {
-    if (connections.size() <= VC_RESEND_CONN_INDEX)
+    if (conns.size() <= VC_RESEND_CONN_INDEX)
     {
         log_warnning("[RESEND] No resend connection available (connections.size()=" +
-                     std::to_string(connections.size()) + ")");
+                     std::to_string(conns.size()) + ")");
         return;
     }
 
-    auto &conn = connections[VC_RESEND_CONN_INDEX];
+    const auto &conn = conns[VC_RESEND_CONN_INDEX];
     const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(data->data());
     uint64_t messageId = packet->header.messageId;
 
@@ -304,6 +339,7 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data)
 
         if (totalSent < data->size())
         {
+            // statusSnap not available here; use the member directly via index
             if (VC_RESEND_CONN_INDEX < socketStatuses.size())
                 socketStatuses[VC_RESEND_CONN_INDEX]->markDegraded();
             log_warnning("[RESEND] Resend connection died mid-packet for msgId=" +
