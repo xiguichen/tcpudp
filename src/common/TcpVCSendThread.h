@@ -35,8 +35,7 @@ class TcpVCSendThread : public StopableThread
     void refreshConnRuntimeInfo(size_t connIndex, const std::vector<TcpConnectionSp>& conns);
     int rateConnection(size_t connIndex,
                        const std::vector<TcpConnectionSp>& conns,
-                       const std::vector<std::shared_ptr<ConnSendStats>>& stats,
-                       const std::vector<std::shared_ptr<SocketStatus>>& statuses);
+                       const std::vector<std::shared_ptr<ConnSendStats>>& stats);
     void sendOnResendConn(std::shared_ptr<std::vector<char>> data,
                           const std::vector<TcpConnectionSp>& conns);
 
