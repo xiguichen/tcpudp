@@ -169,7 +169,7 @@ void TcpVirtualChannel::open()
     sendThread->start();
 
     // Default resendCallback: re-enqueue the original packet with its messageId onto the dedicated
-    // resend queue so it is sent exclusively over the resend connection (VC_RESEND_CONN_INDEX).
+    // resend queue so it is sent over the resend connections (VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1).
     // Callers may override via setResendCallback().
     if (!resendCallback)
     {
@@ -367,12 +367,14 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
 {
     log_info(std::format("[MISSING] Received missing notify for {} messageIds", missingIds.size()));
 
-    // IDs absent from the new notify have been received by the peer — clear them
-    // from the pending set so they can be re-resent if they go missing again.
+    // IDs absent from the new notify have been received by the peer — clear them.
+    // Also expire entries older than pendingResendTtl so dropped resends can be retried.
+    auto now = std::chrono::steady_clock::now();
     std::unordered_set<uint64_t> newMissingSet(missingIds.begin(), missingIds.end());
     for (auto it = pendingResendIds.begin(); it != pendingResendIds.end(); )
     {
-        if (newMissingSet.find(*it) == newMissingSet.end())
+        if (newMissingSet.find(it->first) == newMissingSet.end() ||
+            (now - it->second) >= pendingResendTtl)
             it = pendingResendIds.erase(it);
         else
             ++it;
@@ -392,9 +394,7 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
             }
         }
 
-        // Skip IDs already enqueued for resend — they are still in-flight on the resend
-        // connection.  They will be cleared from pendingResendIds when the peer stops
-        // including them in MISSING_NOTIFY (i.e., confirms receipt).
+        // Skip IDs that were recently enqueued for resend and haven't expired yet.
         if (pendingResendIds.count(messageId))
         {
             skipped++;
@@ -407,7 +407,7 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
         {
             const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
             resendCallback(messageId, reinterpret_cast<const char *>(packet->data), packet->dataLength);
-            pendingResendIds.insert(messageId);
+            pendingResendIds[messageId] = now;
             resent++;
         }
         else if (!dataVec)

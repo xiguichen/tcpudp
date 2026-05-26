@@ -115,7 +115,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::shared_ptr<TcpVCSendThread> sendThread;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
-    BlockingQueueSp resendQueue; // dedicated queue for resend traffic (conn VC_RESEND_CONN_INDEX)
+    BlockingQueueSp resendQueue; // dedicated queue for resend traffic (conns VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1)
 
     std::vector<std::shared_ptr<ConnSendStats>> connSendStats;
 
@@ -154,7 +154,9 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     // IDs enqueued for resend but not yet confirmed received by the peer.
     // Prevents re-enqueuing the same ID on every successive MISSING_NOTIFY.
-    std::unordered_set<uint64_t> pendingResendIds;
+    // Entries expire after pendingResendTtl so dropped resends can be retried.
+    std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> pendingResendIds;
+    static constexpr std::chrono::milliseconds pendingResendTtl{2000};
 
     SentDataCache sentDataCache;
 

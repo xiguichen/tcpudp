@@ -101,11 +101,11 @@ void TcpVCSendThread::run()
     log_info("TcpVCSendThread started");
 
     const size_t numConns = connections.size();
-    // Only reserve VC_RESEND_CONN_INDEX for resend traffic when the channel
-    // actually has that many connections.  Test channels with fewer connections
-    // use all slots for normal data (sendOnResendConn handles the absent-conn case).
-    const bool hasResendConn = (numConns > VC_RESEND_CONN_INDEX);
-    const size_t numDataConns = hasResendConn ? static_cast<size_t>(VC_RESEND_CONN_INDEX) : numConns;
+    // Reserve resend slots only when the channel has enough connections.
+    // Test channels with fewer connections use all slots for normal data
+    // (sendOnResendConn handles the absent-conn case).
+    const bool hasResendConns = (numConns > VC_FIRST_RESEND_CONN_INDEX);
+    const size_t numDataConns = hasResendConns ? static_cast<size_t>(VC_FIRST_RESEND_CONN_INDEX) : numConns;
 
     // Scores are recomputed per packet but the storage is reused.
     std::vector<int> scores(numDataConns);
@@ -168,7 +168,7 @@ void TcpVCSendThread::run()
         uint64_t messageId = packet->header.messageId;
 
         // Rate data connections only (indices 0..numDataConns-1).
-        // VC_RESEND_CONN_INDEX is never included in the candidate pool.
+        // Resend connections (VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1) are excluded.
         int bestScore = -1;
         for (size_t i = 0; i < numDataConns; i++)
         {
@@ -185,7 +185,7 @@ void TcpVCSendThread::run()
         roundRobinStart = (roundRobinStart + 1) % numDataConns;
 
         // Stable-ish descending sort by score. Only the first few matter, so
-        // partial_sort would save work, but with N=31 full sort is ~155 comparisons
+        // partial_sort would save work, but with N=28 full sort is ~130 comparisons
         // which is fine and the code is clearer.
         std::stable_sort(order.begin(), order.end(),
                          [&](size_t a, size_t b) { return scores[a] > scores[b]; });
@@ -312,61 +312,65 @@ void TcpVCSendThread::run()
 void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
                                        const std::vector<TcpConnectionSp>& conns)
 {
-    if (conns.size() <= VC_RESEND_CONN_INDEX)
+    if (conns.size() <= VC_FIRST_RESEND_CONN_INDEX)
     {
-        log_warnning("[RESEND] No resend connection available (connections.size()=" +
+        log_warnning("[RESEND] No resend connections available (connections.size()=" +
                      std::to_string(conns.size()) + ")");
         return;
     }
 
-    const auto &conn = conns[VC_RESEND_CONN_INDEX];
     const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(data->data());
     uint64_t messageId = packet->header.messageId;
 
-    if (!conn || !conn->isConnected())
+    const size_t resendCount = conns.size() - VC_FIRST_RESEND_CONN_INDEX;
+
+    for (size_t attempt = 0; attempt < resendCount; attempt++)
     {
-        log_warnning("[RESEND] Resend connection (conn " + std::to_string(VC_RESEND_CONN_INDEX) +
-                     ") unavailable, dropping msgId=" + std::to_string(messageId));
-        return;
-    }
+        size_t idx = VC_FIRST_RESEND_CONN_INDEX +
+                     (resendRoundRobin + attempt) % resendCount;
+        const auto &conn = conns[idx];
 
-    ssize_t n = SendTcpDirect(conn->getSocketFd(), data->data(), data->size(), 0);
+        if (!conn || !conn->isConnected())
+            continue;
 
-    if (n > 0)
-    {
-        size_t totalSent = static_cast<size_t>(n);
-        while (totalSent < data->size())
-        {
-            if (!conn->isConnected() || !this->isRunning())
-                break;
-            if (!IsSocketWritable(conn->getSocketFd(), 10))
-                break;
-            ssize_t r = SendTcpDirect(conn->getSocketFd(),
-                                      data->data() + totalSent,
-                                      data->size() - totalSent, 0);
-            if (r > 0)
-                totalSent += static_cast<size_t>(r);
-            else if (r == SOCKET_ERROR_WOULD_BLOCK)
-                break;
-            else
-                break; // connection error
-        }
+        ssize_t n = SendTcpDirect(conn->getSocketFd(), data->data(), data->size(), 0);
 
-        if (totalSent < data->size())
+        if (n > 0)
         {
-            conn->disconnect();
-            log_warnning("[RESEND] Partial send on resend conn for msgId=" +
-                         std::to_string(messageId) + "; disconnecting");
-        }
-        else
-        {
+            size_t totalSent = static_cast<size_t>(n);
+            while (totalSent < data->size())
+            {
+                if (!conn->isConnected() || !this->isRunning())
+                    break;
+                if (!IsSocketWritable(conn->getSocketFd(), 10))
+                    break;
+                ssize_t r = SendTcpDirect(conn->getSocketFd(),
+                                          data->data() + totalSent,
+                                          data->size() - totalSent, 0);
+                if (r > 0)
+                    totalSent += static_cast<size_t>(r);
+                else if (r == SOCKET_ERROR_WOULD_BLOCK)
+                    break;
+                else
+                    break;
+            }
+
+            if (totalSent < data->size())
+            {
+                conn->disconnect();
+                log_warnning("[RESEND] Partial send on resend conn " + std::to_string(idx) +
+                             " for msgId=" + std::to_string(messageId) + "; disconnecting");
+                continue;
+            }
+
+            resendRoundRobin = (resendRoundRobin + 1) % resendCount;
             log_info("[RESEND] Sent resend msgId=" + std::to_string(messageId) +
-                     " on conn " + std::to_string(VC_RESEND_CONN_INDEX));
+                     " on conn " + std::to_string(idx));
+            return;
         }
     }
-    else
-    {
-        log_warnning("[RESEND] Failed to send resend msgId=" + std::to_string(messageId) +
-                     " on conn " + std::to_string(VC_RESEND_CONN_INDEX));
-    }
+
+    resendRoundRobin = (resendRoundRobin + 1) % resendCount;
+    log_warnning("[RESEND] All resend connections failed for msgId=" +
+                 std::to_string(messageId) + ", dropping");
 }

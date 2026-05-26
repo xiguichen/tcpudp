@@ -140,12 +140,18 @@ int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
     FD_ZERO(&writefds);
     FD_ZERO(&exceptfds);
     int maxFd = 0;
+    int validCount = 0;
     for (size_t i = 0; i < count; i++) {
-        if (fds[i].fd < 0) continue;
+        if (fds[i].fd == INVALID_SOCKET) continue;
         if (fds[i].events & POLLIN) FD_SET(fds[i].fd, &readfds);
         if (fds[i].events & POLLOUT) FD_SET(fds[i].fd, &writefds);
         FD_SET(fds[i].fd, &exceptfds);
         if ((int)fds[i].fd > maxFd) maxFd = (int)fds[i].fd;
+        validCount++;
+    }
+    if (validCount == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+        return 0;
     }
     struct timeval timeout;
     timeout.tv_sec = timeoutMs / 1000;
@@ -154,7 +160,7 @@ int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
     if (result > 0) {
         for (size_t i = 0; i < count; i++) {
             fds[i].revents = 0;
-            if (fds[i].fd < 0) continue;
+            if (fds[i].fd == INVALID_SOCKET) continue;
             if (FD_ISSET(fds[i].fd, &readfds)) fds[i].revents |= POLLIN;
             if (FD_ISSET(fds[i].fd, &writefds)) fds[i].revents |= POLLOUT;
             if (FD_ISSET(fds[i].fd, &exceptfds)) fds[i].revents |= POLLERR;

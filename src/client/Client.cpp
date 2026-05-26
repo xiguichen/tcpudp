@@ -327,8 +327,9 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
     serverAddr.sin_port = htons(port);
 
-    // Non-blocking connect with 5s timeout so the watchdog can be stopped promptly.
-    if (SocketConnectNonBlocking(tcpSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr), 5000) < 0)
+    // Non-blocking connect with 2s timeout — short enough that 4 dead resend
+    // slots don't block the watchdog for more than ~8s total.
+    if (SocketConnectNonBlocking(tcpSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr), 2000) < 0)
     {
         log_error(std::format("Watchdog: failed to connect for slot {}", slotIndex));
         SocketClose(tcpSocket);
@@ -341,6 +342,7 @@ bool Client::ReconnectSingleSlot(int slotIndex)
 
     MsgBind bindMsg;
     bindMsg.clientId = ClientConfiguration::getInstance()->getClientId();
+    bindMsg.slotIndex = static_cast<int8_t>(slotIndex);
     std::vector<char> bindBuffer;
     UvtUtils::AppendMsgBind(bindMsg, bindBuffer);
 

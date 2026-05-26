@@ -22,6 +22,7 @@ struct UvtHeader {
 
 typedef struct _MsgBind {
   uint32_t clientId;
+  int8_t slotIndex{-1}; // -1 = initial connection (server assigns), >= 0 = reconnect target slot
 } MsgBind, *pMsgBind;
 
 typedef struct _MsgBindResponse {

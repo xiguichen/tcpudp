@@ -50,6 +50,7 @@ class TcpVCSendThread : public StopableThread
     std::vector<std::shared_ptr<SocketStatus>> socketStatuses;
     std::vector<std::chrono::steady_clock::time_point> lastRuntimeRefresh;
     size_t roundRobinStart{0}; // rotates on each packet for tie-breaking among equal-scored connections
+    size_t resendRoundRobin{0}; // rotates across resend connections for load distribution
 };
 
 typedef std::shared_ptr<TcpVCSendThread> TcpVCSendThreadSp;

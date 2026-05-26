@@ -30,6 +30,7 @@ TEST(UvtUtilsTest, AppendMsgBind) {
   MsgBind receivedBind;
   std::memcpy(&receivedBind, outputBuffer.data(), sizeof(MsgBind));
   EXPECT_EQ(receivedBind.clientId, bind.clientId);
+  EXPECT_EQ(receivedBind.slotIndex, bind.slotIndex);
 }
 
 // Test for UvtUtils::ExtractMsgBind
@@ -43,6 +44,7 @@ TEST(UvtUtilsTest, ExtractMsgBind) {
 
   EXPECT_TRUE(result);
   EXPECT_EQ(extractedBind.clientId, originalBind.clientId);
+  EXPECT_EQ(extractedBind.slotIndex, originalBind.slotIndex);
 }
 
 // Test for UvtUtils::AppendMsgBindResponse

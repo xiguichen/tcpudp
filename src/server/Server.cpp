@@ -10,6 +10,7 @@
 #include "VirtualChannel.h"
 #include "VirtualChannelFactory.h"
 #include <Log.h>
+#include <algorithm>
 #include <cstring>
 #include <format>
 #include <thread>
@@ -117,8 +118,18 @@ void Server::AcceptConnections()
                 }
                 else
                 {
-                    tcpVc->replaceConnection(deadSlots[0], clientSocket);
-                    log_info(std::format("[Server] Replaced slot {} for clientId {}", deadSlots[0], clientId));
+                    int targetSlot = -1;
+                    if (bindMsg.slotIndex >= 0 &&
+                        std::find(deadSlots.begin(), deadSlots.end(), bindMsg.slotIndex) != deadSlots.end())
+                    {
+                        targetSlot = bindMsg.slotIndex;
+                    }
+                    else
+                    {
+                        targetSlot = deadSlots[0];
+                    }
+                    tcpVc->replaceConnection(targetSlot, clientSocket);
+                    log_info(std::format("[Server] Replaced slot {} for clientId {}", targetSlot, clientId));
                 }
             }
             else

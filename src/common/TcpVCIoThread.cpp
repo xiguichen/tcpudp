@@ -97,7 +97,7 @@ void TcpVCIoThread::run()
 
         for (size_t i = 0; i < numConns; i++)
         {
-            if (pollfds[i].fd < 0) continue;
+            if (pollfds[i].fd == (SocketFd)-1) continue;
 
             if (pollfds[i].revents & (POLLIN | POLLERR | POLLHUP))
             {
