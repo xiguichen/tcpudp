@@ -132,19 +132,47 @@ void TcpVCSendThread::run()
         // to avoid starving normal sends when the resend queue is busy.
         if (resendQueue)
         {
-            size_t resendBatch = 0;
-            while (resendBatch < MAX_RESEND_BATCH)
+            // Quick check: are ANY resend connections alive? If none are,
+            // skip draining to avoid a hot re-enqueue loop while the
+            // watchdog reconnects.
+            bool anyResendAlive = false;
             {
-                auto resendData = resendQueue->tryDequeue();
-                if (!resendData)
-                    break;
-                std::vector<TcpConnectionSp> connSnap;
+                std::lock_guard<std::mutex> lock(connectionsMutex);
+                for (size_t i = VC_FIRST_RESEND_CONN_INDEX; i < connections.size(); i++)
                 {
-                    std::lock_guard<std::mutex> lock(connectionsMutex);
-                    connSnap = connections;
+                    if (connections[i] && connections[i]->isConnected())
+                    {
+                        anyResendAlive = true;
+                        break;
+                    }
                 }
-                sendOnResendConn(std::move(resendData), connSnap);
-                resendBatch++;
+            }
+
+            if (anyResendAlive)
+            {
+                size_t resendBatch = 0;
+                while (resendBatch < MAX_RESEND_BATCH)
+                {
+                    auto resendData = resendQueue->tryDequeue();
+                    if (!resendData)
+                        break;
+                    std::vector<TcpConnectionSp> connSnap;
+                    {
+                        std::lock_guard<std::mutex> lock(connectionsMutex);
+                        connSnap = connections;
+                    }
+                    sendOnResendConn(std::move(resendData), connSnap);
+                    resendBatch++;
+                }
+            }
+
+            // Prevent unbounded growth of the retry tracker map.
+            if (resendRetryCount.size() > MAX_RESEND_TRACKED)
+            {
+                log_warnning("[RESEND] Retry tracker has " +
+                             std::to_string(resendRetryCount.size()) +
+                             " entries, clearing stale entries");
+                resendRetryCount.clear();
             }
         }
 
@@ -349,14 +377,29 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
 
     const size_t resendCount = conns.size() - VC_FIRST_RESEND_CONN_INDEX;
 
+    int aliveCount = 0;
+    int nullCount = 0;
+    int disconnectedCount = 0;
+    int sendFailCount = 0;
+
     for (size_t attempt = 0; attempt < resendCount; attempt++)
     {
         size_t idx = VC_FIRST_RESEND_CONN_INDEX +
                      (resendRoundRobin + attempt) % resendCount;
         const auto &conn = conns[idx];
 
-        if (!conn || !conn->isConnected())
+        if (!conn)
+        {
+            nullCount++;
             continue;
+        }
+        if (!conn->isConnected())
+        {
+            disconnectedCount++;
+            continue;
+        }
+
+        aliveCount++;
 
         ssize_t n = SendTcpDirect(conn->getSocketFd(), data->data(), data->size(), 0);
 
@@ -394,25 +437,44 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
                      " on conn " + std::to_string(idx));
             return;
         }
+        else
+        {
+            sendFailCount++;
+            log_debug("[RESEND] SendTcpDirect failed on conn " + std::to_string(idx) +
+                      " for msgId=" + std::to_string(messageId) +
+                      " rc=" + std::to_string(n));
+        }
     }
 
     resendRoundRobin = (resendRoundRobin + 1) % resendCount;
 
-    // Re-enqueue so the watchdog has time to reconnect resend slots.
+    // Only count a retry when at least one connection was alive but the send
+    // still failed. When ALL connections are down, re-enqueue without burning
+    // a retry — the watchdog needs time (~500ms) to reconnect slots.
     uint8_t retryCount = resendRetryCount[messageId];
+    bool countThisRetry = (aliveCount > 0);
 
-    if (retryCount < MAX_RESEND_RETRIES && resendQueue)
+    if ((!countThisRetry || retryCount < MAX_RESEND_RETRIES) && resendQueue)
     {
-        resendRetryCount[messageId] = retryCount + 1;
+        if (countThisRetry)
+            resendRetryCount[messageId] = retryCount + 1;
         resendQueue->enqueue(data);
         log_debug("[RESEND] Re-enqueued msgId=" + std::to_string(messageId) +
-                  " retry=" + std::to_string(retryCount + 1));
+                  " retry=" + std::to_string(countThisRetry ? retryCount + 1 : retryCount) +
+                  " (alive=" + std::to_string(aliveCount) +
+                  " null=" + std::to_string(nullCount) +
+                  " disconn=" + std::to_string(disconnectedCount) +
+                  " sendFail=" + std::to_string(sendFailCount) + ")");
     }
     else
     {
         resendRetryCount.erase(messageId);
         log_warnning("[RESEND] All resend connections failed for msgId=" +
                      std::to_string(messageId) + " after " +
-                     std::to_string(retryCount) + " retries, dropping");
+                     std::to_string(retryCount) + " retries, dropping" +
+                     " (alive=" + std::to_string(aliveCount) +
+                     " null=" + std::to_string(nullCount) +
+                     " disconn=" + std::to_string(disconnectedCount) +
+                     " sendFail=" + std::to_string(sendFailCount) + ")");
     }
 }

@@ -46,6 +46,7 @@ class TcpVCSendThread : public StopableThread
     static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
     static constexpr int MAX_RESEND_RETRIES = 6;
     static constexpr size_t MAX_RESEND_BATCH = 8;
+    static constexpr size_t MAX_RESEND_TRACKED = 2000;
 
     std::mutex connectionsMutex;
     std::condition_variable connAvailableCv;
