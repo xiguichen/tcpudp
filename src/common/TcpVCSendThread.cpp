@@ -40,14 +40,24 @@ void TcpVCSendThread::replaceConnection(int slot, TcpConnectionSp conn,
     if (slot < 0 || static_cast<size_t>(slot) >= connections.size())
         return;
     SetSocketNonBlocking(conn->getSocketFd());
-    std::lock_guard<std::mutex> lock(connectionsMutex);
-    connections[slot] = conn;
-    if (static_cast<size_t>(slot) < connSendStats.size())
-        connSendStats[slot] = stats;
-    if (static_cast<size_t>(slot) < socketStatuses.size())
-        socketStatuses[slot] = status;
-    if (static_cast<size_t>(slot) < lastRuntimeRefresh.size())
-        lastRuntimeRefresh[slot] = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(connectionsMutex);
+        connections[slot] = conn;
+        if (static_cast<size_t>(slot) < connSendStats.size())
+            connSendStats[slot] = stats;
+        if (static_cast<size_t>(slot) < socketStatuses.size())
+            socketStatuses[slot] = status;
+        if (static_cast<size_t>(slot) < lastRuntimeRefresh.size())
+            lastRuntimeRefresh[slot] = std::chrono::steady_clock::now();
+    }
+    connAvailableCv.notify_one();
+}
+
+void TcpVCSendThread::setRunning(bool running)
+{
+    StopableThread::setRunning(running);
+    if (!running)
+        connAvailableCv.notify_one();
 }
 
 void TcpVCSendThread::refreshConnRuntimeInfo(size_t connIndex,
@@ -118,20 +128,23 @@ void TcpVCSendThread::run()
 
     while (this->isRunning())
     {
-        // Priority: drain resend queue first (non-blocking).
+        // Priority: drain resend queue first (non-blocking), but batch-limit
+        // to avoid starving normal sends when the resend queue is busy.
         if (resendQueue)
         {
-            auto resendData = resendQueue->tryDequeue();
-            if (resendData)
+            size_t resendBatch = 0;
+            while (resendBatch < MAX_RESEND_BATCH)
             {
-                // Take snapshot for the resend path too.
+                auto resendData = resendQueue->tryDequeue();
+                if (!resendData)
+                    break;
                 std::vector<TcpConnectionSp> connSnap;
                 {
                     std::lock_guard<std::mutex> lock(connectionsMutex);
                     connSnap = connections;
                 }
                 sendOnResendConn(std::move(resendData), connSnap);
-                continue; // immediately re-check resend queue
+                resendBatch++;
             }
         }
 
@@ -299,10 +312,22 @@ void TcpVCSendThread::run()
         if (!sent)
         {
             // Retain the packet for the next iteration instead of re-enqueuing.
-            // Re-enqueuing inflates approxSize (causing spurious drops) and the
-            // old 10ms sleep stalled the thread while UDP kept arriving.
+            // Block until the watchdog reconnects a slot (signalled via
+            // connAvailableCv) or until the send/resend queues receive new
+            // work. This avoids burning CPU while no connections are available
+            // yet wakes instantly when one becomes usable.
             pendingDataVec = std::move(dataVec);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::unique_lock<std::mutex> lock(connectionsMutex);
+            connAvailableCv.wait_for(lock, std::chrono::milliseconds(50), [&] {
+                if (!this->isRunning())
+                    return true;
+                for (size_t i = 0; i < numDataConns; i++)
+                {
+                    if (connections[i] && connections[i]->isConnected())
+                        return true;
+                }
+                return false;
+            });
         }
     }
 
@@ -364,6 +389,7 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
             }
 
             resendRoundRobin = (resendRoundRobin + 1) % resendCount;
+            resendRetryCount.erase(messageId);
             log_info("[RESEND] Sent resend msgId=" + std::to_string(messageId) +
                      " on conn " + std::to_string(idx));
             return;
@@ -371,6 +397,22 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
     }
 
     resendRoundRobin = (resendRoundRobin + 1) % resendCount;
-    log_warnning("[RESEND] All resend connections failed for msgId=" +
-                 std::to_string(messageId) + ", dropping");
+
+    // Re-enqueue so the watchdog has time to reconnect resend slots.
+    uint8_t retryCount = resendRetryCount[messageId];
+
+    if (retryCount < MAX_RESEND_RETRIES && resendQueue)
+    {
+        resendRetryCount[messageId] = retryCount + 1;
+        resendQueue->enqueue(data);
+        log_debug("[RESEND] Re-enqueued msgId=" + std::to_string(messageId) +
+                  " retry=" + std::to_string(retryCount + 1));
+    }
+    else
+    {
+        resendRetryCount.erase(messageId);
+        log_warnning("[RESEND] All resend connections failed for msgId=" +
+                     std::to_string(messageId) + " after " +
+                     std::to_string(retryCount) + " retries, dropping");
+    }
 }

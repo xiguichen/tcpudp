@@ -773,7 +773,7 @@ void TcpVirtualChannel::reorderThreadFunc()
             }
         }
 
-        if (!gotAny && itemsToDeliver.empty())
+        if (!gotAny)
         {
             std::unique_lock<std::mutex> lock(reorderMutex);
             if (gapTimerActive)

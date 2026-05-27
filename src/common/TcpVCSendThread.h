@@ -6,8 +6,10 @@
 #include "TcpVCWriteThread.h"
 #include "VcProtocol.h"
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 class TcpVCSendThread : public StopableThread
@@ -28,6 +30,8 @@ class TcpVCSendThread : public StopableThread
                            std::shared_ptr<ConnSendStats> stats,
                            std::shared_ptr<SocketStatus> status);
 
+    void setRunning(bool running) override;
+
   protected:
     virtual void run() override;
 
@@ -40,8 +44,11 @@ class TcpVCSendThread : public StopableThread
                           const std::vector<TcpConnectionSp>& conns);
 
     static constexpr int TCP_RUNTIME_REFRESH_MS = 250;
+    static constexpr int MAX_RESEND_RETRIES = 6;
+    static constexpr size_t MAX_RESEND_BATCH = 8;
 
     std::mutex connectionsMutex;
+    std::condition_variable connAvailableCv;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
     BlockingQueueSp resendQueue;
@@ -49,8 +56,9 @@ class TcpVCSendThread : public StopableThread
     std::shared_ptr<MessageTracker> messageTracker;
     std::vector<std::shared_ptr<SocketStatus>> socketStatuses;
     std::vector<std::chrono::steady_clock::time_point> lastRuntimeRefresh;
-    size_t roundRobinStart{0}; // rotates on each packet for tie-breaking among equal-scored connections
-    size_t resendRoundRobin{0}; // rotates across resend connections for load distribution
+    size_t roundRobinStart{0};
+    size_t resendRoundRobin{0};
+    std::unordered_map<uint64_t, uint8_t> resendRetryCount;
 };
 
 typedef std::shared_ptr<TcpVCSendThread> TcpVCSendThreadSp;
