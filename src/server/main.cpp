@@ -82,6 +82,7 @@ int main(int argc, char *argv[])
     signal(SIGTERM, signalHandler);
 #ifndef _WIN32
     signal(SIGHUP, signalHandler);
+    signal(SIGPIPE, SIG_IGN);
 #endif
 
     try

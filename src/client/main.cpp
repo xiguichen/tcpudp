@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <signal.h>
 
 using namespace Logger;
 
@@ -75,6 +76,10 @@ int main(int argc, char *argv[])
     std::cout << "Log level set to: " << Log::getInstance().getCurrentLogLevelString() << std::endl;
 
     SocketInit();
+
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     while (true)
     {
