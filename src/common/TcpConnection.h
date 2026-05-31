@@ -25,7 +25,7 @@ class TcpConnection
 #endif
     };
 
-    ~TcpConnection() = default;
+    ~TcpConnection();
 
     // Method to send data over the TCP connection
     void send(const char *data, size_t size);

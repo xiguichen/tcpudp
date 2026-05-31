@@ -7,6 +7,15 @@
 #include <cstring>
 #include <mutex>
 
+TcpConnection::~TcpConnection()
+{
+    if (socketFd != -1)
+    {
+        SocketClose(socketFd);
+        socketFd = -1;
+    }
+}
+
 static int64_t NowSteadyMs()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())

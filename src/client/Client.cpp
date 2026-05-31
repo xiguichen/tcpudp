@@ -383,7 +383,10 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     }
 
     if (static_cast<size_t>(slotIndex) < tcpSockets.size())
+    {
+        SocketClose(tcpSockets[slotIndex]);
         tcpSockets[slotIndex] = tcpSocket;
+    }
 
     static_cast<TcpVirtualChannel *>(vc.get())->replaceConnection(slotIndex, tcpSocket);
     log_info(std::format("Watchdog: slot {} reconnected successfully.", slotIndex));

@@ -113,8 +113,14 @@ void Server::AcceptConnections()
                 auto deadSlots = tcpVc->getDeadSlots();
                 if (deadSlots.empty())
                 {
-                    log_warnning(std::format("[Server] Extra socket for clientId {} but no dead slots — closing", clientId));
-                    SocketClose(clientSocket);
+                    // No dead slots — the client is reconnecting faster than our TCP
+                    // disconnection detection. Tear down the old VC and treat this
+                    // socket as the start of a fresh connection sequence.
+                    log_warnning(std::format("[Server] Extra socket for clientId {} with no dead slots — "
+                                             "closing old VC and starting fresh", clientId));
+                    VcManager::getInstance().Remove(clientId);
+                    tcpVc->close(); // disconnect callback removes peer + UDP socket
+                    // Fall through to new-client path below
                 }
                 else
                 {
@@ -130,14 +136,15 @@ void Server::AcceptConnections()
                     }
                     tcpVc->replaceConnection(targetSlot, clientSocket);
                     log_info(std::format("[Server] Replaced slot {} for clientId {}", targetSlot, clientId));
+                    continue;
                 }
             }
             else
             {
                 log_error(std::format("[Server] Unexpected VC type for clientId {} — closing socket", clientId));
                 SocketClose(clientSocket);
+                continue;
             }
-            continue;
         }
 
         // New client — register peer and accumulate sockets until we have enough for a full VC.
