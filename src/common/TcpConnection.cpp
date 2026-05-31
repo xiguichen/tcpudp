@@ -140,9 +140,25 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
     info.retransmissionIndicator = 0;
     info.retransmissionIndicatorIsBytes = false;
     info.timeoutEpisodes = 0;
+#elif defined(__APPLE__)
+    // macOS: use TCP_CONNECTION_INFO instead of TCP_INFO
+    struct tcp_connection_info tcpInfo = {};
+    socklen_t tcpInfoLen = sizeof(tcpInfo);
+
+    if (getsockopt(socketFd, IPPROTO_TCP, TCP_CONNECTION_INFO, &tcpInfo, &tcpInfoLen) == 0)
+    {
+        info.supported = true;
+        info.valid = true;
+
+        info.congestionWindowBytes = tcpInfo.tcpi_snd_cwnd;
+        info.smoothedRttUs = tcpInfo.tcpi_srtt * 1000; // ms to us
+        info.rtoUs = tcpInfo.tcpi_rto * 1000;          // ms to us
+        info.bytesInFlight = tcpInfo.tcpi_snd_cwnd > 0 ? tcpInfo.tcpi_snd_cwnd : 0;
+        info.timeoutEpisodes = tcpInfo.tcpi_txretransmitpackets;
+        info.isInExponentialBackoff = false; // not directly available on macOS
+    }
 #else
-    // Linux/macOS: use getsockopt with TCP_INFO
-    // Note: This requires CAP_NET_ADMIN or running as root on some systems
+    // Linux: use getsockopt with TCP_INFO
     tcp_info tcpInfo = {};
     socklen_t tcpInfoLen = sizeof(tcpInfo);
 
@@ -151,7 +167,6 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         info.supported = true;
         info.valid = true;
 
-        // Map Linux TCP_INFO to our runtime info structure
         // Note: tcpi_snd_cwnd is in MSS units (packets), not bytes
         info.congestionWindowBytes = tcpInfo.tcpi_snd_cwnd * tcpInfo.tcpi_snd_mss;
         info.smoothedRttUs = tcpInfo.tcpi_rtt;
