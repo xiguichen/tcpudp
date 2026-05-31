@@ -87,18 +87,18 @@ void TcpVirtualChannel::open()
                 self->resendQueue->cancelWait();
             }
 
-            for (auto &conn : self->connections) {
-                if (conn && conn->isConnected()) {
-                    conn->disconnect();
-                }
-            }
-
             if (self->ioThread) {
                 self->ioThread->setRunning(false);
             }
 
             if (self->sendThread) {
                 self->sendThread->setRunning(false);
+            }
+
+            for (auto &conn : self->connections) {
+                if (conn && conn->isConnected()) {
+                    conn->disconnect();
+                }
             }
         }
 
@@ -278,11 +278,6 @@ void TcpVirtualChannel::close()
             this->resendQueue->cancelWait();
 
         log_debug("Closing TcpVirtualChannel connections");
-        for (auto &conn : connections)
-        {
-            if (conn && conn->isConnected())
-                conn->disconnect();
-        }
 
         if (sendThread)
         {
@@ -300,6 +295,12 @@ void TcpVirtualChannel::close()
             ioThread->joinThread();
             ioThread.reset();
             log_debug("IO thread stopped and joined");
+        }
+
+        for (auto &conn : connections)
+        {
+            if (conn && conn->isConnected())
+                conn->disconnect();
         }
     }
 

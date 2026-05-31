@@ -119,7 +119,23 @@ void Server::AcceptConnections()
                     log_warnning(std::format("[Server] Extra socket for clientId {} with no dead slots — "
                                              "closing old VC and starting fresh", clientId));
                     VcManager::getInstance().Remove(clientId);
-                    tcpVc->close(); // disconnect callback removes peer + UDP socket
+                    tcpVc->close();
+
+                    // close() sets opened=false before disconnecting, so the per-connection
+                    // disconnect callback returns early and never fires the VC-level
+                    // disconnectCallback (which would clean up the Peer and UDP socket).
+                    // Clean them up explicitly here.
+                    {
+                        Peer *oldPeer = PeerManager::GetPeerById(clientId);
+                        if (oldPeer)
+                        {
+                            SocketFd udpFd = oldPeer->GetUdpSocket();
+                            if (udpFd != -1)
+                                SocketClose(udpFd);
+                        }
+                    }
+                    PeerManager::RemovePeer(clientId);
+
                     // Fall through to new-client path below
                 }
                 else
