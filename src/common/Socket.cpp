@@ -146,6 +146,10 @@ int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
             revents |= POLLERR;
         return revents;
     }
+    // EBADF: another thread closed the FD between setup and select().
+    // EINTR: signal interrupted the call. Treat both as transient.
+    if (result < 0 && (errno == EBADF || errno == EINTR))
+        return 0;
     return result;
 #else
     // POSIX implementation using poll
@@ -228,6 +232,10 @@ int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
             if (FD_ISSET(fds[i].fd, &exceptfds)) fds[i].revents |= POLLERR;
         }
     }
+    // EBADF: another thread closed an FD between snapshot and select().
+    // EINTR: signal interrupted. Treat both as transient — caller will retry.
+    if (result < 0 && (errno == EBADF || errno == EINTR))
+        result = 0;
     return result;
 #else
     return poll(fds, count, timeoutMs);
