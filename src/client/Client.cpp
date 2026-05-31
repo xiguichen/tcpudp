@@ -98,6 +98,10 @@ bool Client::PrepareVC()
     // proceeds independently.
     vc->setDisconnectCallback([this]() {
         log_warnning("Virtual channel disconnected. Attempting reconnection...");
+        // Stop the watchdog immediately so its per-slot reconnects don't race
+        // with the full ReconnectVC. If we delay this, the watchdog may already
+        // be sending MsgBind requests that confuse the server.
+        watchdogRunning = false;
         std::thread([this]() {
             if (!this->ReconnectVC()) {
                 log_error("Reconnection failed, stopping client");
@@ -310,6 +314,14 @@ void Client::StartWatchdog()
 
 bool Client::ReconnectSingleSlot(int slotIndex)
 {
+    // If the watchdog was stopped (e.g. by disconnect callback), abort immediately.
+    // The disconnect callback may already have triggered a full ReconnectVC.
+    if (!watchdogRunning.load())
+    {
+        log_info(std::format("Watchdog: aborting reconnect for slot {} (watchdog stopped)", slotIndex));
+        return false;
+    }
+
     log_info(std::format("Watchdog: reconnecting slot {}", slotIndex));
 
     SocketFd tcpSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
@@ -332,6 +344,15 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     if (SocketConnectNonBlocking(tcpSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr), 2000) < 0)
     {
         log_error(std::format("Watchdog: failed to connect for slot {}", slotIndex));
+        SocketClose(tcpSocket);
+        return false;
+    }
+
+    // Watchdog may have been stopped while connect was in-flight.
+    // Don't send a stale MsgBind to the server.
+    if (!watchdogRunning.load())
+    {
+        log_info(std::format("Watchdog: aborting reconnect for slot {} (watchdog stopped after connect)", slotIndex));
         SocketClose(tcpSocket);
         return false;
     }
