@@ -118,6 +118,35 @@ int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
         return revents;
     }
     return result; // 0 for timeout, -1 for error
+#elif defined(__APPLE__)
+    // macOS: select() is more reliable than poll() for TCP sockets.
+    // macOS poll() has known issues with socket fds.
+    fd_set readfds, writefds, exceptfds;
+    FD_ZERO(&readfds);
+    FD_ZERO(&writefds);
+    FD_ZERO(&exceptfds);
+    if (events & POLLIN)
+        FD_SET(socketFd, &readfds);
+    if (events & POLLOUT)
+        FD_SET(socketFd, &writefds);
+    FD_SET(socketFd, &exceptfds);
+
+    struct timeval timeout;
+    timeout.tv_sec = timeoutMs / 1000;
+    timeout.tv_usec = (timeoutMs % 1000) * 1000;
+
+    int result = select(socketFd + 1, &readfds, &writefds, &exceptfds, &timeout);
+    if (result > 0) {
+        int revents = 0;
+        if (FD_ISSET(socketFd, &readfds))
+            revents |= POLLIN;
+        if (FD_ISSET(socketFd, &writefds))
+            revents |= POLLOUT;
+        if (FD_ISSET(socketFd, &exceptfds))
+            revents |= POLLERR;
+        return revents;
+    }
+    return result;
 #else
     // POSIX implementation using poll
     struct pollfd pfd;
@@ -161,6 +190,39 @@ int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
         for (size_t i = 0; i < count; i++) {
             fds[i].revents = 0;
             if (fds[i].fd == INVALID_SOCKET) continue;
+            if (FD_ISSET(fds[i].fd, &readfds)) fds[i].revents |= POLLIN;
+            if (FD_ISSET(fds[i].fd, &writefds)) fds[i].revents |= POLLOUT;
+            if (FD_ISSET(fds[i].fd, &exceptfds)) fds[i].revents |= POLLERR;
+        }
+    }
+    return result;
+#elif defined(__APPLE__)
+    fd_set readfds, writefds, exceptfds;
+    FD_ZERO(&readfds);
+    FD_ZERO(&writefds);
+    FD_ZERO(&exceptfds);
+    int maxFd = 0;
+    int validCount = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (fds[i].fd == -1) continue;
+        if (fds[i].events & POLLIN) FD_SET(fds[i].fd, &readfds);
+        if (fds[i].events & POLLOUT) FD_SET(fds[i].fd, &writefds);
+        FD_SET(fds[i].fd, &exceptfds);
+        if (fds[i].fd > maxFd) maxFd = fds[i].fd;
+        validCount++;
+    }
+    if (validCount == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+        return 0;
+    }
+    struct timeval timeout;
+    timeout.tv_sec = timeoutMs / 1000;
+    timeout.tv_usec = (timeoutMs % 1000) * 1000;
+    int result = select(maxFd + 1, &readfds, &writefds, &exceptfds, &timeout);
+    if (result > 0) {
+        for (size_t i = 0; i < count; i++) {
+            fds[i].revents = 0;
+            if (fds[i].fd == -1) continue;
             if (FD_ISSET(fds[i].fd, &readfds)) fds[i].revents |= POLLIN;
             if (FD_ISSET(fds[i].fd, &writefds)) fds[i].revents |= POLLOUT;
             if (FD_ISSET(fds[i].fd, &exceptfds)) fds[i].revents |= POLLERR;
