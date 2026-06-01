@@ -385,6 +385,18 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     std::vector<char> bindBuffer;
     UvtUtils::AppendMsgBind(bindMsg, bindBuffer);
 
+    // Check epoch immediately before sending — ReconnectVC may have started since
+    // the earlier check (line 371). If we send a stale MsgBind the server will
+    // hot-swap a slot into the old VC, keeping it alive on the server side even
+    // after ReconnectVC tears it down.  Then PrepareVC's new connections get
+    // rejected as "excess sockets" and we loop forever.
+    if (reconnectEpoch.load(std::memory_order_acquire) != epochAtStart)
+    {
+        log_info(std::format("Watchdog: aborting reconnect for slot {} (epoch changed before MsgBind)", slotIndex));
+        SocketClose(tcpSocket);
+        return false;
+    }
+
     if (SendTcpData(tcpSocket, bindBuffer.data(), bindBuffer.size(), 0) <= 0)
     {
         log_error(std::format("Watchdog: failed to send MsgBind for slot {}", slotIndex));

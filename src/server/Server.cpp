@@ -118,8 +118,49 @@ void Server::AcceptConnections()
                     // the healthy VC; just close the excess socket.  The sender's
                     // watchdog will retry, and by then any genuine dead slots will
                     // have been detected via select() + recv() = 0.
-                    log_info(std::format("[Server] Excess socket for clientId {} with no dead slots — "
-                                         "closing stray connection, VC continues", clientId));
+                    //
+                    // However, guard against infinite loops: if the old VC is a
+                    // zombie (the client disconnected but the server hasn't detected
+                    // it yet), the watchdog's ReconnectSingleSlot sends MsgBind for
+                    // a slot it thinks is dead, but the server sees all slots alive.
+                    // The socket is rejected, the watchdog retries with a new socket,
+                    // and we get an infinite flood of excess sockets.
+                    //
+                    // After EXCESS_LIMIT excess sockets within EXCESS_WINDOW from the
+                    // same client, proactively tear down the old VC so the new one
+                    // can be established. This resolves the race between the watchdog
+                    // sending MsgBind and ReconnectVC tearing down the old VC.
+                    auto now = std::chrono::steady_clock::now();
+                    auto &tracker = excessByClient[clientId];
+                    if (now - tracker.firstSeen > EXCESS_WINDOW)
+                    {
+                        tracker.count = 0;
+                        tracker.firstSeen = now;
+                    }
+                    tracker.count++;
+
+                    if (tracker.count >= EXCESS_LIMIT)
+                    {
+                        log_warnning(std::format(
+                            "[Server] Client {} sent {} excess sockets in {}s — "
+                            "old VC is likely a zombie, removing it",
+                            clientId, tracker.count,
+                            std::chrono::duration_cast<std::chrono::seconds>(EXCESS_WINDOW).count()));
+                        excessByClient.erase(clientId);
+                        // Remove the old VC — the next connection from this client
+                        // will start a fresh peer accumulation.
+                        if (VcManager::getInstance().Exists(clientId)) {
+                            VcManager::getInstance().Remove(clientId);
+                        }
+                        PeerManager::RemovePeer(clientId);
+                        // Close this socket too; PrepareVC will retry.
+                        SocketClose(clientSocket);
+                        continue;
+                    }
+
+                    log_info(std::format("[Server] Excess socket ({}/{}) for clientId {} with no dead slots — "
+                                         "closing stray connection, VC continues",
+                                         tracker.count, EXCESS_LIMIT, clientId));
                     SocketClose(clientSocket);
                     continue;
                 }
@@ -222,7 +263,7 @@ void Server::AcceptConnections()
                 }
             });
 
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([clientId, udpSocket]() {
+            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([this, clientId, udpSocket]() {
                 // Remove VC from manager only if it exists to avoid double-removal
                 if (VcManager::getInstance().Exists(clientId)) {
                     VcManager::getInstance().Remove(clientId);
@@ -236,6 +277,8 @@ void Server::AcceptConnections()
                 // Close the UDP socket to unblock recv() in the UDP receive thread,
                 // allowing it to exit. The thread must not close it again after this.
                 SocketClose(udpSocket);
+                // Clear the excess tracker — the VC is legitimately gone now.
+                excessByClient.erase(clientId);
             });
 
             // start a new thread to receive data from the UDP socket
