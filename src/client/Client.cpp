@@ -194,8 +194,13 @@ void Client::Stop()
     running = false;
 
     watchdogRunning = false;
-    if (watchdogThread.joinable())
-        watchdogThread.join();
+    {
+        // Serialize with ReconnectVC — both may try to join the watchdog thread.
+        // Double-join is undefined behaviour (crash on most implementations).
+        std::lock_guard<std::mutex> lock(watchdogMutex);
+        if (watchdogThread.joinable())
+            watchdogThread.join();
+    }
 
     if(vc != nullptr)
     {
@@ -231,10 +236,18 @@ void Client::Start()
 
 bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
 {
+    // Increment the reconnect epoch so any in-flight per-slot reconnect aborts
+    // before it can call replaceConnection on the (soon-to-be-destroyed) VC.
+    reconnectEpoch.fetch_add(1, std::memory_order_release);
+
     // Stop the watchdog before tearing down the VC so it doesn't race with us.
     watchdogRunning = false;
-    if (watchdogThread.joinable())
-        watchdogThread.join();
+    {
+        // Serialize with Stop() — both may try to join the watchdog thread.
+        std::lock_guard<std::mutex> lock(watchdogMutex);
+        if (watchdogThread.joinable())
+            watchdogThread.join();
+    }
 
     int retryCount = 0;
     int delayMs = 3000;
@@ -249,10 +262,9 @@ bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
             }
         }
 
-        // Close all TCP sockets
-        for (auto sock : tcpSockets) {
-            SocketClose(sock);
-        }
+        // Clear TCP sockets — they were already closed by vc->close() →
+        // TcpConnection::disconnect().  SocketClose again would be a double-close:
+        // the OS may have reassigned the FD numbers, silently killing new sockets.
         tcpSockets.clear();
 
         // Wait before reconnect (gives server time to clean up)
@@ -314,6 +326,12 @@ void Client::StartWatchdog()
 
 bool Client::ReconnectSingleSlot(int slotIndex)
 {
+    // Capture the epoch at the start. If ReconnectVC increments it while we're
+    // working, we must abort — our MsgBind targets the old VC which is about to
+    // be destroyed, and calling replaceConnection afterwards could corrupt the
+    // brand new VC.
+    int epochAtStart = reconnectEpoch.load(std::memory_order_acquire);
+
     // If the watchdog was stopped (e.g. by disconnect callback), abort immediately.
     // The disconnect callback may already have triggered a full ReconnectVC.
     if (!watchdogRunning.load())
@@ -350,7 +368,7 @@ bool Client::ReconnectSingleSlot(int slotIndex)
 
     // Watchdog may have been stopped while connect was in-flight.
     // Don't send a stale MsgBind to the server.
-    if (!watchdogRunning.load())
+    if (!watchdogRunning.load() || reconnectEpoch.load(std::memory_order_acquire) != epochAtStart)
     {
         log_info(std::format("Watchdog: aborting reconnect for slot {} (watchdog stopped after connect)", slotIndex));
         SocketClose(tcpSocket);
@@ -382,9 +400,23 @@ bool Client::ReconnectSingleSlot(int slotIndex)
         return false;
     }
 
+    // ReconnectVC may have started while we were connecting. If the epoch changed,
+    // the old VC is being torn down — don't splice a fresh socket into a dying VC.
+    if (reconnectEpoch.load(std::memory_order_acquire) != epochAtStart)
+    {
+        log_info(std::format("Watchdog: aborting reconnect for slot {} (epoch changed, ReconnectVC in progress)", slotIndex));
+        SocketClose(tcpSocket);
+        return false;
+    }
+
     if (static_cast<size_t>(slotIndex) < tcpSockets.size())
     {
-        SocketClose(tcpSockets[slotIndex]);
+        // Don't close tcpSockets[slotIndex] here — TcpConnection::disconnect() (called by
+        // the IO thread when it detected the dead connection) already closed the FD via
+        // SocketClose(). Calling SocketClose again on the same FD number is a double-close:
+        // the OS may have reassigned this FD number to a *different* connection's socket,
+        // and we'd silently kill that connection instead. This cascades a single TCP failure
+        // into many, eventually killing all 32 connections.
         tcpSockets[slotIndex] = tcpSocket;
     }
 

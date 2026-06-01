@@ -44,6 +44,9 @@ class Client
 
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning{false};
+    std::mutex watchdogMutex;                 // serializes join() between ReconnectVC and Stop()
+    std::atomic<int> reconnectEpoch{0};       // incremented by ReconnectVC; per-slot reconnects
+                                              // abort if the epoch changed mid-operation
 
     bool ReconnectVC(int maxRetries = 5, int initialBackoffMs = 1000);
     void StartWatchdog();

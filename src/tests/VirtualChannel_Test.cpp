@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <gtest/gtest.h>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 // Test fixture for TcpVirtualChannel
@@ -719,4 +720,243 @@ TEST(PartialDisconnectTest, ReplaceConnectionRestoresSlot)
 #ifdef _WIN32
     WSACleanup();
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// Replace-connection cascade tests: verify that replacing a dead connection
+// does NOT corrupt other connections (the double-close regression).
+//
+// The critical bug: when TcpConnection::disconnect() closes the socket FD,
+// and then the code calls SocketClose() again on the same (now-stale) FD
+// number, the OS may have reassigned that FD to a *different* connection's
+// socket.  That connection gets silently killed, which triggers another
+// watchdog cycle — cascading until all 32 connections die.
+// ---------------------------------------------------------------------------
+
+// Fixture: creates a VC with N connections and provides helpers to kill,
+// replace, and verify alive connections.
+class ReplaceConnectionCascadeTest : public ::testing::Test
+{
+  protected:
+    static constexpr int VC_CONN_COUNT = 8; // 8 connections is enough to detect cascading
+
+    std::vector<SocketFd> clientFds;
+    std::vector<SocketFd> serverFds;
+    std::shared_ptr<TcpVirtualChannel> vc;
+
+    void SetUp() override
+    {
+#ifdef _WIN32
+        WSAData wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+        for (int i = 0; i < VC_CONN_COUNT; i++)
+        {
+            int port = 0;
+            auto [c, s] = MakeSocketPair(port);
+            clientFds.push_back(c);
+            serverFds.push_back(s);
+        }
+        vc = std::make_shared<TcpVirtualChannel>(clientFds);
+    }
+
+    void TearDown() override
+    {
+        if (vc && vc->isOpen())
+            vc->close();
+        vc.reset();
+        for (auto fd : serverFds)
+        {
+            if (fd != -1)
+                SocketClose(fd);
+        }
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    }
+
+    // Kill slot by closing its server-side peer and waiting for detection.
+    void KillSlot(int slot)
+    {
+        ASSERT_GE(slot, 0);
+        ASSERT_LT(static_cast<size_t>(slot), serverFds.size());
+        ASSERT_NE(serverFds[slot], (SocketFd)-1) << "Slot " << slot << " already dead";
+        SocketClose(serverFds[slot]);
+        serverFds[slot] = -1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(300)); // IO thread poll interval
+    }
+
+    // Create a replacement socket pair, replace slot, and track server FD.
+    void ReplaceSlot(int slot)
+    {
+        int port = 0;
+        auto [newC, newS] = MakeSocketPair(port);
+        vc->replaceConnection(slot, newC);
+        // Update serverFds so KillSlot can kill the replacement connection later.
+        if (serverFds[slot] != -1)
+            SocketClose(serverFds[slot]); // old server peer is dead, close it
+        serverFds[slot] = newS;
+    }
+
+    // Return indices of dead slots.
+    std::vector<int> DeadSlots()
+    {
+        return vc->getDeadSlots();
+    }
+
+    // Check that exactly the given slots (and only those) are dead.
+    bool ExpectOnlyTheseSlotsDead(std::vector<int> expectedDead)
+    {
+        auto dead = DeadSlots();
+        if (dead.size() != expectedDead.size())
+            return false;
+        for (int d : expectedDead)
+        {
+            if (std::find(dead.begin(), dead.end(), d) == dead.end())
+                return false;
+        }
+        return true;
+    }
+
+    // Return a description string of dead slots (for logging).
+    std::string DeadSlotsDesc()
+    {
+        auto dead = DeadSlots();
+        if (dead.empty()) return "(none)";
+        std::string s;
+        for (int x : dead) s += std::to_string(x) + " ";
+        return s;
+    }
+};
+
+// Test: replace one dead slot — no other slot becomes dead as a side effect.
+TEST_F(ReplaceConnectionCascadeTest, ReplaceOneSlotNoCascade)
+{
+    vc->open();
+    ASSERT_TRUE(vc->isOpen());
+
+    // Kill slot 2.
+    KillSlot(2);
+    ASSERT_TRUE(ExpectOnlyTheseSlotsDead({2}))
+        << "Only slot 2 should be dead after killing it";
+
+    // Replace slot 2.
+    ReplaceSlot(2);
+
+    // Verify: no slots are dead (the replaced slot is alive again).
+    EXPECT_TRUE(ExpectOnlyTheseSlotsDead({}))
+        << "After replacing slot 2, no slots should be dead. "
+        << "If another slot appears dead, the double-close bug "
+        << "corrupted a different connection's FD. Dead slots: "
+        << DeadSlotsDesc();
+
+    EXPECT_TRUE(vc->isOpen()) << "VC must remain open after replacement";
+}
+
+// Test: replace the same slot multiple times — other connections survive.
+TEST_F(ReplaceConnectionCascadeTest, RepeatedReplaceSameSlotNoCascade)
+{
+    vc->open();
+    ASSERT_TRUE(vc->isOpen());
+
+    for (int round = 0; round < 5; round++)
+    {
+        // Kill slot 3.
+        KillSlot(3);
+        ASSERT_TRUE(ExpectOnlyTheseSlotsDead({3}))
+            << "Round " << round << ": only slot 3 should be dead";
+
+        // Replace it.
+        ReplaceSlot(3);
+
+        // Verify no other slots got corrupted.
+        EXPECT_TRUE(ExpectOnlyTheseSlotsDead({}))
+            << "Round " << round << ": all slots should be alive after replacement. "
+            << "Dead: " << DeadSlotsDesc();
+
+        EXPECT_TRUE(vc->isOpen()) << "Round " << round << ": VC must stay open";
+    }
+}
+
+// Test: replace multiple different slots — no cascade between them.
+TEST_F(ReplaceConnectionCascadeTest, ReplaceDifferentSlotsSequentially)
+{
+    vc->open();
+    ASSERT_TRUE(vc->isOpen());
+
+    for (int slot = 0; slot < VC_CONN_COUNT; slot++)
+    {
+        KillSlot(slot);
+        // Only this slot should be dead (others might have been replaced and are alive)
+        ASSERT_TRUE(ExpectOnlyTheseSlotsDead({slot}))
+            << "After killing slot " << slot << ", only slot " << slot << " should be dead. "
+            << "Dead: " << DeadSlotsDesc();
+
+        ReplaceSlot(slot);
+
+        EXPECT_TRUE(vc->isOpen()) << "After replacing slot " << slot << ", VC must stay open";
+    }
+
+    // After replacing all slots, everything should be alive.
+    EXPECT_TRUE(ExpectOnlyTheseSlotsDead({})) << "All slots should be alive after replacing each one";
+}
+
+// Test: stress — kill and replace random slots 20 times.
+TEST_F(ReplaceConnectionCascadeTest, StressReplaceRandomSlots)
+{
+    vc->open();
+    ASSERT_TRUE(vc->isOpen());
+
+    std::srand(42);
+    for (int round = 0; round < 20; round++)
+    {
+        int slot = std::rand() % VC_CONN_COUNT;
+
+        KillSlot(slot);
+
+        // Verify only this slot is dead — no cascading corruption.
+        auto dead = DeadSlots();
+        bool onlyExpectedDead = (dead.size() == 1 && dead[0] == slot);
+        EXPECT_TRUE(onlyExpectedDead)
+            << "Round " << round << " slot " << slot << ": expected only slot " << slot
+            << " dead but got: " << DeadSlotsDesc();
+
+        ReplaceSlot(slot);
+
+        EXPECT_TRUE(vc->isOpen()) << "Round " << round << ": VC must stay open";
+    }
+}
+
+// Test: replace multiple slots and verify data still flows.
+TEST_F(ReplaceConnectionCascadeTest, DataFlowSurvivesReplace)
+{
+    vc->open();
+    ASSERT_TRUE(vc->isOpen());
+
+    // Send some data to populate the send path.
+    for (int i = 0; i < 5; i++)
+    {
+        std::string msg = "pre_replace_" + std::to_string(i);
+        vc->send(msg.c_str(), msg.size() + 1);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Kill and replace 3 different slots.
+    for (int slot : {1, 3, 5})
+    {
+        KillSlot(slot);
+        ReplaceSlot(slot);
+        EXPECT_TRUE(vc->isOpen()) << "VC must stay open after replacing slot " << slot;
+    }
+
+    // Send more data after replacements.
+    for (int i = 0; i < 5; i++)
+    {
+        std::string msg = "post_replace_" + std::to_string(i);
+        vc->send(msg.c_str(), msg.size() + 1);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    EXPECT_TRUE(vc->isOpen()) << "VC must still be open after data flow test";
+    EXPECT_TRUE(ExpectOnlyTheseSlotsDead({})) << "No slots should be dead after replacements and data flow";
 }
