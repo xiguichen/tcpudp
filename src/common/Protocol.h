@@ -23,6 +23,8 @@ struct UvtHeader {
 typedef struct _MsgBind {
   uint32_t clientId;
   int8_t slotIndex{-1}; // -1 = initial connection (server assigns), >= 0 = reconnect target slot
+  uint32_t connectionId{0}; // Initial (slotIndex==-1): register this connection's ID
+                            // Reconnect (slotIndex>=0): close the old connection with this ID
 } MsgBind, *pMsgBind;
 
 typedef struct _MsgBindResponse {

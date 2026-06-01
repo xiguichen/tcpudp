@@ -43,9 +43,15 @@ bool Client::PrepareVC()
         SocketSetReceiveBufferSize(tcpSocket, 512 * 1024);
         SocketSetSendBufferSize(tcpSocket, 128 * 1024);
 
-        // Send client ID to server immediately after connecting
+        // Assign a unique connection ID for this socket and register it with the server.
+        // The server records clientId→connectionId→slotIndex so that when the watchdog
+        // reconnects a dead slot, it can tell the server "close connectionId=X" instead
+        // of relying on the server having independently detected the disconnection.
+        uint32_t connId = nextConnectionId++;
+
         MsgBind bindMsg;
         bindMsg.clientId = ClientConfiguration::getInstance()->getClientId();
+        bindMsg.connectionId = connId;
 
         std::vector<char> bindBuffer;
         UvtUtils::AppendMsgBind(bindMsg, bindBuffer);
@@ -57,10 +63,12 @@ bool Client::PrepareVC()
             return false;
         }
 
-        log_info(std::format("Sent client ID {} to server", bindMsg.clientId));
+        log_info(std::format("Sent client ID {} to server with connectionId {}",
+                             bindMsg.clientId, connId));
 
         log_info("Connected to server successfully.");
         tcpSockets.push_back(tcpSocket);
+        tcpConnectionIds.push_back(connId);
 
         // Add delay between connections to give server time to process
         if (i == 0) {
@@ -266,6 +274,7 @@ bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
         // TcpConnection::disconnect().  SocketClose again would be a double-close:
         // the OS may have reassigned the FD numbers, silently killing new sockets.
         tcpSockets.clear();
+        tcpConnectionIds.clear();
 
         // Wait before reconnect (gives server time to clean up)
         if (!running) break;
@@ -379,9 +388,18 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     SocketSetReceiveBufferSize(tcpSocket, 512 * 1024);
     SocketSetSendBufferSize(tcpSocket, 128 * 1024);
 
+    // Include the old connection's ID so the server can close it by identity
+    // instead of relying on getDeadSlots() timing (which may not have detected
+    // the disconnection yet due to half-open TCP or poll latency).
+    uint32_t oldConnId = (static_cast<size_t>(slotIndex) < tcpConnectionIds.size())
+                             ? tcpConnectionIds[slotIndex]
+                             : 0;
+    uint32_t newConnId = nextConnectionId++;
+
     MsgBind bindMsg;
     bindMsg.clientId = ClientConfiguration::getInstance()->getClientId();
     bindMsg.slotIndex = static_cast<int8_t>(slotIndex);
+    bindMsg.connectionId = oldConnId;
     std::vector<char> bindBuffer;
     UvtUtils::AppendMsgBind(bindMsg, bindBuffer);
 
@@ -430,6 +448,11 @@ bool Client::ReconnectSingleSlot(int slotIndex)
         // and we'd silently kill that connection instead. This cascades a single TCP failure
         // into many, eventually killing all 32 connections.
         tcpSockets[slotIndex] = tcpSocket;
+    }
+
+    if (static_cast<size_t>(slotIndex) < tcpConnectionIds.size())
+    {
+        tcpConnectionIds[slotIndex] = newConnId;
     }
 
     static_cast<TcpVirtualChannel *>(vc.get())->replaceConnection(slotIndex, tcpSocket);

@@ -35,6 +35,8 @@ class Client
   private:
     bool running = false;
     std::vector<SocketFd> tcpSockets;
+    std::vector<uint32_t> tcpConnectionIds; // maps slotIndex → unique connectionId
+    uint32_t nextConnectionId = 1;          // incrementing counter for unique IDs
     SocketFd udpSocket = -1;
     struct sockaddr_in udpAddr{};
     struct sockaddr_in remoteUdpAddr{};

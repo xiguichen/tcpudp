@@ -103,70 +103,47 @@ void Server::AcceptConnections()
 
         // If a VC already exists for this clientId, the incoming socket is a replacement
         // for a dead slot in the existing channel — hot-swap it and skip peer accumulation.
-        // Use a single Get() call to avoid a TOCTOU race between Exists() and Get().
         auto existingVc = VcManager::getInstance().Get(clientId);
         if (existingVc)
         {
             auto *tcpVc = dynamic_cast<TcpVirtualChannel *>(existingVc.get());
             if (tcpVc)
             {
-                auto deadSlots = tcpVc->getDeadSlots();
-                if (deadSlots.empty())
+                // If the client provided a connectionId, use it to force-close the
+                // matching connection directly — no deadSlots check needed.
+                // The client KNOWS this connection is dead (it detected the TCP
+                // disconnection), but the server's IO thread may not have polled
+                // the dead socket yet.  Trust the client's connectionId.
+                int targetSlot = -1;
+                if (bindMsg.connectionId != 0)
                 {
-                    // All 32 slots are alive — this is a stray connection from a
-                    // stale watchdog or an earlier PrepareVC.  No need to disrupt
-                    // the healthy VC; just close the excess socket.  The sender's
-                    // watchdog will retry, and by then any genuine dead slots will
-                    // have been detected via select() + recv() = 0.
-                    //
-                    // However, guard against infinite loops: if the old VC is a
-                    // zombie (the client disconnected but the server hasn't detected
-                    // it yet), the watchdog's ReconnectSingleSlot sends MsgBind for
-                    // a slot it thinks is dead, but the server sees all slots alive.
-                    // The socket is rejected, the watchdog retries with a new socket,
-                    // and we get an infinite flood of excess sockets.
-                    //
-                    // After EXCESS_LIMIT excess sockets within EXCESS_WINDOW from the
-                    // same client, proactively tear down the old VC so the new one
-                    // can be established. This resolves the race between the watchdog
-                    // sending MsgBind and ReconnectVC tearing down the old VC.
-                    auto now = std::chrono::steady_clock::now();
-                    auto &tracker = excessByClient[clientId];
-                    if (now - tracker.firstSeen > EXCESS_WINDOW)
+                    auto clientIt = clientConnSlots.find(clientId);
+                    if (clientIt != clientConnSlots.end())
                     {
-                        tracker.count = 0;
-                        tracker.firstSeen = now;
-                    }
-                    tracker.count++;
-
-                    if (tracker.count >= EXCESS_LIMIT)
-                    {
-                        log_warnning(std::format(
-                            "[Server] Client {} sent {} excess sockets in {}s — "
-                            "old VC is likely a zombie, removing it",
-                            clientId, tracker.count,
-                            std::chrono::duration_cast<std::chrono::seconds>(EXCESS_WINDOW).count()));
-                        excessByClient.erase(clientId);
-                        // Remove the old VC — the next connection from this client
-                        // will start a fresh peer accumulation.
-                        if (VcManager::getInstance().Exists(clientId)) {
-                            VcManager::getInstance().Remove(clientId);
+                        auto slotIt = clientIt->second.find(bindMsg.connectionId);
+                        if (slotIt != clientIt->second.end())
+                        {
+                            targetSlot = slotIt->second;
+                            log_info(std::format(
+                                "[Server] Client {} requests force-replace of connectionId {} at slot {}",
+                                clientId, bindMsg.connectionId, targetSlot));
                         }
-                        PeerManager::RemovePeer(clientId);
-                        // Close this socket too; PrepareVC will retry.
+                    }
+                }
+
+                if (targetSlot < 0)
+                {
+                    // Fallback: no connectionId or unknown — use the old deadSlots logic.
+                    auto deadSlots = tcpVc->getDeadSlots();
+                    if (deadSlots.empty())
+                    {
+                        log_info(std::format(
+                            "[Server] Excess socket for clientId {} with no dead slots and no connectionId — "
+                            "closing stray connection",
+                            clientId));
                         SocketClose(clientSocket);
                         continue;
                     }
-
-                    log_info(std::format("[Server] Excess socket ({}/{}) for clientId {} with no dead slots — "
-                                         "closing stray connection, VC continues",
-                                         tracker.count, EXCESS_LIMIT, clientId));
-                    SocketClose(clientSocket);
-                    continue;
-                }
-                else
-                {
-                    int targetSlot = -1;
                     if (bindMsg.slotIndex >= 0 &&
                         std::find(deadSlots.begin(), deadSlots.end(), bindMsg.slotIndex) != deadSlots.end())
                     {
@@ -176,10 +153,11 @@ void Server::AcceptConnections()
                     {
                         targetSlot = deadSlots[0];
                     }
-                    tcpVc->replaceConnection(targetSlot, clientSocket);
-                    log_info(std::format("[Server] Replaced slot {} for clientId {}", targetSlot, clientId));
-                    continue;
                 }
+
+                tcpVc->replaceConnection(targetSlot, clientSocket);
+                log_info(std::format("[Server] Replaced slot {} for clientId {}", targetSlot, clientId));
+                continue;
             }
             else
             {
@@ -187,6 +165,14 @@ void Server::AcceptConnections()
                 SocketClose(clientSocket);
                 continue;
             }
+        }
+
+        // Record the client-assigned connectionId for this socket so that after VC
+        // creation we can build the connectionId→slotIndex map.  This map allows
+        // the watchdog to force-close a specific connection by ID during reconnect.
+        if (bindMsg.connectionId != 0)
+        {
+            socketToConnId[clientSocket] = bindMsg.connectionId;
         }
 
         // New client — register peer and accumulate sockets until we have enough for a full VC.
@@ -219,6 +205,22 @@ void Server::AcceptConnections()
             // Add the virtual channel to the manager using client ID
             VcManager::getInstance().Add(clientId, vc);
             log_info(std::format("Created virtual channel for peer with client ID {}", clientId));
+
+            // Build connectionId→slotIndex map for force-reconnect.
+            // The order of fds matches the VC's internal connections vector, so
+            // fds[i] corresponds to slot i.
+            {
+                auto &slotMap = clientConnSlots[clientId];
+                for (size_t i = 0; i < fds.size(); i++)
+                {
+                    auto it = socketToConnId.find(fds[i]);
+                    if (it != socketToConnId.end())
+                    {
+                        slotMap[it->second] = static_cast<int>(i);
+                        socketToConnId.erase(it);
+                    }
+                }
+            }
 
             // Create a UDP socket for this peer
             SocketFd udpSocket = SocketCreate(AF_INET, SOCK_DGRAM, 0);
@@ -277,8 +279,8 @@ void Server::AcceptConnections()
                 // Close the UDP socket to unblock recv() in the UDP receive thread,
                 // allowing it to exit. The thread must not close it again after this.
                 SocketClose(udpSocket);
-                // Clear the excess tracker — the VC is legitimately gone now.
-                excessByClient.erase(clientId);
+                // Clear the connectionId→slot map — the VC is gone.
+                clientConnSlots.erase(clientId);
             });
 
             // start a new thread to receive data from the UDP socket
