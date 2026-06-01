@@ -79,11 +79,16 @@ void Server::AcceptConnections()
         log_info(std::string(clientIP));
         log_info(std::format("Accepted connection from {}:{}", clientIP, ntohs(clientAddr.sin_port)));
 
-        // Receive client ID from the client immediately after connection
+        // Receive client ID from the client immediately after connection.
+        // Use RecvTcpDataWithSize to guarantee we read the full MsgBind — TCP is a
+        // stream protocol and recv() may return fewer bytes than requested if the
+        // message is split across segments.  Partial reads leave leftover bytes in
+        // the kernel buffer that the VC IO thread later misinterprets as VC packet
+        // headers (producing "Unknown packet type: N" errors where N is slotIndex).
         MsgBind bindMsg;
         std::vector<char> bindBuffer(sizeof(MsgBind));
 
-        ssize_t received = RecvTcpData(clientSocket, bindBuffer.data(), bindBuffer.size(), 0);
+        ssize_t received = RecvTcpDataWithSize(clientSocket, bindBuffer.data(), bindBuffer.size(), 0, sizeof(MsgBind));
         if (received <= 0)
         {
             log_error("Failed to receive client ID from client");
