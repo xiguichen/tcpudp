@@ -4,7 +4,9 @@
 #include <chrono>
 #include <thread>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <mstcpip.h> // For tcp_keepalive / SIO_KEEPALIVE_VALS
+#else
 #include <unistd.h>
 #include <cstring> // For strerror
 #include <errno.h> // For errno
@@ -748,6 +750,51 @@ int SocketSetReceiveBufferSize(SocketFd socketFd, int size)
     return setsockopt(socketFd, SOL_SOCKET, SO_RCVBUF, (const char*)&size, sizeof(size));
 #else
     return setsockopt(socketFd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+#endif
+}
+
+int SocketSetKeepAlive(SocketFd socketFd, bool enable, int idleSec, int intervalSec, int count)
+{
+#ifdef _WIN32
+    BOOL on = enable ? TRUE : FALSE;
+    if (setsockopt(socketFd, SOL_SOCKET, SO_KEEPALIVE, (const char *)&on, sizeof(on)) != 0)
+        return -1;
+    if (enable && idleSec > 0 && intervalSec > 0)
+    {
+        // Windows configures idle/interval (in ms) via SIO_KEEPALIVE_VALS; probe
+        // count is fixed by the OS and not settable here.
+        struct tcp_keepalive ka;
+        ka.onoff = 1;
+        ka.keepalivetime = static_cast<ULONG>(idleSec) * 1000;
+        ka.keepaliveinterval = static_cast<ULONG>(intervalSec) * 1000;
+        DWORD bytesReturned = 0;
+        WSAIoctl(socketFd, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0, &bytesReturned, nullptr, nullptr);
+    }
+    (void)count;
+    return 0;
+#else
+    int on = enable ? 1 : 0;
+    if (setsockopt(socketFd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)) != 0)
+        return -1;
+    if (enable)
+    {
+#if defined(__APPLE__)
+        if (idleSec > 0)
+            setsockopt(socketFd, IPPROTO_TCP, TCP_KEEPALIVE, &idleSec, sizeof(idleSec));
+#elif defined(TCP_KEEPIDLE)
+        if (idleSec > 0)
+            setsockopt(socketFd, IPPROTO_TCP, TCP_KEEPIDLE, &idleSec, sizeof(idleSec));
+#endif
+#ifdef TCP_KEEPINTVL
+        if (intervalSec > 0)
+            setsockopt(socketFd, IPPROTO_TCP, TCP_KEEPINTVL, &intervalSec, sizeof(intervalSec));
+#endif
+#ifdef TCP_KEEPCNT
+        if (count > 0)
+            setsockopt(socketFd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+#endif
+    }
+    return 0;
 #endif
 }
 

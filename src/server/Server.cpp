@@ -1,6 +1,7 @@
 #include "Server.h"
 #include "Peer.h"
 #include "Protocol.h"
+#include "ReplaceSlotPolicy.h"
 #include "ServerConfiguration.h"
 #include "Socket.h"
 #include "TcpConnection.h"
@@ -71,6 +72,9 @@ void Server::AcceptConnections()
         SocketSetTcpNoDelay(clientSocket, true);
         SocketSetReceiveBufferSize(clientSocket, 512 * 1024);
         SocketSetSendBufferSize(clientSocket, 128 * 1024);
+        // Proactively detect half-open client connections so the server reaps a dead
+        // socket via keepalive probes instead of leaving it lingering until recv fails.
+        SocketSetKeepAlive(clientSocket, true, 10, 5, 3);
 
         // Log client connection
         char clientIP[INET_ADDRSTRLEN + 1];
@@ -119,7 +123,11 @@ void Server::AcceptConnections()
                 // The client KNOWS this connection is dead (it detected the TCP
                 // disconnection), but the server's IO thread may not have polled
                 // the dead socket yet.  Trust the client's connectionId.
-                int targetSlot = -1;
+                // Resolve the slot from the connectionId map (fast path). The client
+                // rotates its connectionId after each reconnect but only transmits the
+                // PREVIOUS id, so this map goes stale by one step — hence the slotIndex
+                // fallback in DecideReplaceSlot.
+                int connIdSlot = -1;
                 if (bindMsg.connectionId != 0)
                 {
                     auto clientIt = clientConnSlots.find(clientId);
@@ -127,41 +135,43 @@ void Server::AcceptConnections()
                     {
                         auto slotIt = clientIt->second.find(bindMsg.connectionId);
                         if (slotIt != clientIt->second.end())
-                        {
-                            targetSlot = slotIt->second;
-                            log_info(std::format(
-                                "[Server] Client {} requests force-replace of connectionId {} at slot {}",
-                                clientId, bindMsg.connectionId, targetSlot));
-                        }
+                            connIdSlot = slotIt->second;
                     }
                 }
+
+                auto deadSlots = tcpVc->getDeadSlots();
+                int targetSlot = DecideReplaceSlot(connIdSlot, bindMsg.slotIndex, VC_TCP_CONNECTIONS, deadSlots);
 
                 if (targetSlot < 0)
                 {
-                    // Fallback: no connectionId or unknown — use the old deadSlots logic.
-                    auto deadSlots = tcpVc->getDeadSlots();
-                    if (deadSlots.empty())
-                    {
-                        log_info(std::format(
-                            "[Server] Excess socket for clientId {} with no dead slots and no connectionId — "
-                            "closing stray connection",
-                            clientId));
-                        SocketClose(clientSocket);
-                        continue;
-                    }
-                    if (bindMsg.slotIndex >= 0 &&
-                        std::find(deadSlots.begin(), deadSlots.end(), bindMsg.slotIndex) != deadSlots.end())
-                    {
-                        targetSlot = bindMsg.slotIndex;
-                    }
-                    else
-                    {
-                        targetSlot = deadSlots[0];
-                    }
+                    log_info(std::format(
+                        "[Server] Excess socket for clientId {} — no connectionId match, no valid slotIndex, "
+                        "and no dead slot; closing stray connection",
+                        clientId));
+                    SocketClose(clientSocket);
+                    continue;
                 }
 
                 tcpVc->replaceConnection(targetSlot, clientSocket);
-                log_info(std::format("[Server] Replaced slot {} for clientId {}", targetSlot, clientId));
+
+                // Keep clientConnSlots consistent and bounded: drop any entries pointing
+                // at this slot, then register the id the client just sent for it.
+                if (bindMsg.connectionId != 0)
+                {
+                    auto &slotMap = clientConnSlots[clientId];
+                    for (auto it = slotMap.begin(); it != slotMap.end();)
+                    {
+                        if (it->second == targetSlot)
+                            it = slotMap.erase(it);
+                        else
+                            ++it;
+                    }
+                    slotMap[bindMsg.connectionId] = targetSlot;
+                }
+
+                log_info(std::format(
+                    "[Server] Replaced slot {} for clientId {} (connIdSlot={}, sentConnId={}, slotIndex={})",
+                    targetSlot, clientId, connIdSlot, bindMsg.connectionId, (int)bindMsg.slotIndex));
                 continue;
             }
             else

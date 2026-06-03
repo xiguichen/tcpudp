@@ -42,6 +42,9 @@ bool Client::PrepareVC()
         SocketSetTcpNoDelay(tcpSocket, true);
         SocketSetReceiveBufferSize(tcpSocket, 512 * 1024);
         SocketSetSendBufferSize(tcpSocket, 128 * 1024);
+        // Proactively detect half-open connections (common on macOS) so a silently
+        // dead slot is surfaced via keepalive probes instead of only when data flows.
+        SocketSetKeepAlive(tcpSocket, true, 10, 5, 3);
 
         // Assign a unique connection ID for this socket and register it with the server.
         // The server records clientId→connectionId→slotIndex so that when the watchdog

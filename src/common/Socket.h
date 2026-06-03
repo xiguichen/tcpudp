@@ -112,4 +112,10 @@ int SocketSetSendBufferSize(SocketFd socketFd, int size);
 
 int SocketSetReceiveBufferSize(SocketFd socketFd, int size);
 
+// Enable/disable TCP keepalive and configure its timing. idleSec is the idle time
+// before the first keepalive probe; intervalSec is the gap between probes; count is
+// the number of unacked probes before the connection is declared dead. Timing args
+// are best-effort per platform. Returns 0 on success, non-zero on failure.
+int SocketSetKeepAlive(SocketFd socketFd, bool enable, int idleSec, int intervalSec, int count);
+
 void SocketReuseAddress(SocketFd socketFd);
