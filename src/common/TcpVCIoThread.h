@@ -5,6 +5,7 @@
 #include "TcpConnection.h"
 #include "TcpVCWriteThread.h"
 #include "VcProtocol.h"
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -54,6 +55,10 @@ class TcpVCIoThread : public StopableThread
 
     std::mutex connectionsMutex;
     std::vector<TcpConnectionSp> connections;
+    // Bumped under connectionsMutex whenever a slot is replaced. The run() loop
+    // re-copies its connection snapshot only when this changes, avoiding a 32-element
+    // shared_ptr copy on every poll cycle under active traffic.
+    std::atomic<uint64_t> connGeneration{0};
     std::vector<ReadBuffer> readBuffers;
 
     std::function<void(uint64_t, std::shared_ptr<std::vector<char>>, int)> dataCallback;

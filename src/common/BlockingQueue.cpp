@@ -8,12 +8,18 @@ using namespace Logger;
 
 void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data)
 {
+    std::function<void()> notifier;
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         queue.push(data);
+        notifier = enqueueNotifier; // copy under lock so it can't be torn by setEnqueueNotifier
     }
     approxQueueSize.fetch_add(1, std::memory_order_relaxed);
     queueCondVar.notify_one();
+    // Invoke the external notifier outside the queue lock to avoid lock-order
+    // coupling between this queue's mutex and the consumer's wait mutex.
+    if (notifier)
+        notifier();
 }
 
 std::shared_ptr<std::vector<char>> BlockingQueue::dequeue()
@@ -71,4 +77,10 @@ size_t BlockingQueue::size()
 {
     std::lock_guard<std::mutex> lock(queueMutex);
     return queue.size();
+}
+
+void BlockingQueue::setEnqueueNotifier(std::function<void()> notifier)
+{
+    std::lock_guard<std::mutex> lock(queueMutex);
+    enqueueNotifier = std::move(notifier);
 }

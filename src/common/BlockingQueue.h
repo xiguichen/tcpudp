@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <condition_variable>
+#include <functional>
 #include <vector>
 #include <queue>
 #include <mutex>
@@ -21,6 +22,12 @@ public:
   /// Lock-free approximate size. Suitable for threshold checks where exact count is not required.
   size_t approxSize() const { return approxQueueSize.load(std::memory_order_relaxed); }
 
+  /// Register an extra callback invoked (without holding the queue mutex) after each
+  /// enqueue, in addition to the internal condition variable. Lets a consumer that
+  /// waits on its own CV (e.g. one thread draining several queues) be woken on enqueue
+  /// without polling. Pass nullptr to clear. Thread-safe.
+  void setEnqueueNotifier(std::function<void()> notifier);
+
 private:
 
   // Standard queue for UDP data
@@ -29,6 +36,7 @@ private:
   std::condition_variable queueCondVar; // Condition variable for producer-consumer
   bool cancelled = false;
   std::atomic<size_t> approxQueueSize{0}; // Lock-free size for threshold checks
+  std::function<void()> enqueueNotifier;  // optional external wake, guarded by queueMutex
 
 };
 

@@ -40,6 +40,8 @@ void TcpVCIoThread::replaceConnection(int slot, TcpConnectionSp conn)
     SetSocketNonBlocking(conn->getSocketFd());
     std::lock_guard<std::mutex> lock(connectionsMutex);
     connections[slot] = conn;
+    // Signal run() to refresh its cached snapshot on the next iteration.
+    connGeneration.fetch_add(1, std::memory_order_release);
     // readBuffers[slot] is reset on the next run() iteration when the fd change is detected.
 }
 
@@ -53,14 +55,23 @@ void TcpVCIoThread::run()
     // and clear the stale read buffer before the new connection's data arrives.
     std::vector<SocketFd> prevFds(numConns, -1);
 
+    // Cached connection snapshot, refreshed only when replaceConnection() bumps
+    // connGeneration. Copying 32 shared_ptrs (plus the mutex lock) every poll cycle
+    // was pure overhead on the hot receive path; replacements are rare (reconnects).
+    std::vector<TcpConnectionSp> snapshot;
+    uint64_t cachedGen = static_cast<uint64_t>(-1);
+
     while (this->isRunning())
     {
-        // Take a per-iteration snapshot so replaceConnection() writes are picked
-        // up on the next poll cycle without holding the mutex during blocking I/O.
-        std::vector<TcpConnectionSp> snapshot;
+        // Refresh the snapshot only on change. Disconnections are still detected every
+        // iteration because the per-slot fd is re-read from the cached shared_ptrs
+        // (getSocketFd()/isConnected()) when building pollfds below.
+        uint64_t gen = connGeneration.load(std::memory_order_acquire);
+        if (gen != cachedGen)
         {
             std::lock_guard<std::mutex> lock(connectionsMutex);
             snapshot = connections;
+            cachedGen = gen;
         }
 
         for (size_t i = 0; i < numConns; i++)
@@ -105,9 +116,8 @@ void TcpVCIoThread::run()
                 if (!this->isRunning()) return;
             }
         }
-
-        if (ready == 0)
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // No sleep on ready==0: SocketPollMany already blocked up to
+        // IO_POLL_TIMEOUT_MS, so the timeout path needs no extra back-off.
     }
 
     log_info("TcpVCIoThread stopped");

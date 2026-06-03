@@ -25,7 +25,7 @@ class TcpVCSendThread : public StopableThread
     virtual ~TcpVCSendThread();
 
     // Hot-swap the connection at the given slot. The send thread picks it up
-    // on the next packet (after the current dequeueWithTimeout returns).
+    // on the next packet (it re-snapshots connections under the mutex per send).
     void replaceConnection(int slot, TcpConnectionSp conn,
                            std::shared_ptr<ConnSendStats> stats,
                            std::shared_ptr<SocketStatus> status);
@@ -47,6 +47,20 @@ class TcpVCSendThread : public StopableThread
     static constexpr int MAX_RESEND_RETRIES = 6;
     static constexpr size_t MAX_RESEND_BATCH = 8;
     static constexpr size_t MAX_RESEND_TRACKED = 2000;
+    // Idle backstop: with the queue enqueue-notifier wiring, the thread is woken
+    // immediately on new send/resend work, so this timeout is only a lost-wakeup
+    // safety net (and lets the loop re-check isRunning() periodically).
+    static constexpr int IDLE_WAIT_MS = 100;
+
+    // Shared wake primitive for the idle wait. Held by both this thread and the
+    // queues' enqueue notifiers via shared_ptr, so a queue can safely wake the
+    // thread even if the thread object is being torn down (the Waker outlives it).
+    struct Waker
+    {
+        std::mutex mtx;
+        std::condition_variable cv;
+    };
+    std::shared_ptr<Waker> waker;
 
     std::mutex connectionsMutex;
     std::condition_variable connAvailableCv;

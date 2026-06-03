@@ -29,9 +29,35 @@ TcpVCSendThread::TcpVCSendThread(std::vector<TcpConnectionSp> connections_,
         if (connections[i] && connections[i]->isConnected())
             SetSocketNonBlocking(connections[i]->getSocketFd());
     }
+
+    // Wake the run() idle wait whenever either queue receives work, so the thread
+    // no longer has to poll the resend queue on a short timer. The notifier captures
+    // only the shared Waker (not this), so it stays safe if the thread is destroyed
+    // while a queue still references it. The brief lock on waker->mtx closes the
+    // lost-wakeup window against run()'s wait_for predicate.
+    waker = std::make_shared<Waker>();
+    auto wake = [w = waker]() {
+        {
+            std::lock_guard<std::mutex> lk(w->mtx);
+        }
+        w->cv.notify_one();
+    };
+    if (sendQueue)
+        sendQueue->setEnqueueNotifier(wake);
+    if (resendQueue)
+        resendQueue->setEnqueueNotifier(wake);
 }
 
-TcpVCSendThread::~TcpVCSendThread() = default;
+TcpVCSendThread::~TcpVCSendThread()
+{
+    // Stop the queues from calling into our Waker once we're gone. Safe to call
+    // concurrently with enqueue() (guarded by the queue mutex); any in-flight
+    // notifier already holds its own shared_ptr to the Waker.
+    if (sendQueue)
+        sendQueue->setEnqueueNotifier(nullptr);
+    if (resendQueue)
+        resendQueue->setEnqueueNotifier(nullptr);
+}
 
 void TcpVCSendThread::replaceConnection(int slot, TcpConnectionSp conn,
                                         std::shared_ptr<ConnSendStats> stats,
@@ -57,7 +83,17 @@ void TcpVCSendThread::setRunning(bool running)
 {
     StopableThread::setRunning(running);
     if (!running)
+    {
         connAvailableCv.notify_one();
+        // Also wake the idle work-wait so shutdown is observed promptly.
+        if (waker)
+        {
+            {
+                std::lock_guard<std::mutex> lk(waker->mtx);
+            }
+            waker->cv.notify_one();
+        }
+    }
 }
 
 void TcpVCSendThread::refreshConnRuntimeInfo(size_t connIndex,
@@ -130,12 +166,14 @@ void TcpVCSendThread::run()
     {
         // Priority: drain resend queue first (non-blocking), but batch-limit
         // to avoid starving normal sends when the resend queue is busy.
+        // anyResendAlive is reused by the idle wait below to decide whether
+        // pending resend work is actually drainable right now.
+        bool anyResendAlive = false;
         if (resendQueue)
         {
             // Quick check: are ANY resend connections alive? If none are,
             // skip draining to avoid a hot re-enqueue loop while the
             // watchdog reconnects.
-            bool anyResendAlive = false;
             {
                 std::lock_guard<std::mutex> lock(connectionsMutex);
                 for (size_t i = VC_FIRST_RESEND_CONN_INDEX; i < connections.size(); i++)
@@ -176,7 +214,7 @@ void TcpVCSendThread::run()
             }
         }
 
-        // Use retained pending packet or dequeue a new one.
+        // Use retained pending packet or dequeue a new one (non-blocking).
         std::shared_ptr<std::vector<char>> dataVec;
         if (pendingDataVec)
         {
@@ -184,16 +222,35 @@ void TcpVCSendThread::run()
         }
         else
         {
-            dataVec = sendQueue->dequeueWithTimeout(5);
+            dataVec = sendQueue->tryDequeue();
         }
         if (!dataVec)
-            continue; // timeout — loop back to check resend queue
+        {
+            // No normal-send work right now. Block until there is work or shutdown.
+            // The queues' enqueue notifier wakes us instantly, so send/resend latency
+            // is unchanged in the common case; IDLE_WAIT_MS is only a backstop. This
+            // replaces the old 5ms busy-poll that woke the thread ~200x/sec per
+            // channel even when fully idle.
+            //
+            // Resend work only counts as wakeable when a resend connection is alive
+            // to drain it. Otherwise (the watchdog-reconnect window) pending resend
+            // items would keep the predicate true and spin the CPU; instead we fall
+            // back to the IDLE_WAIT_MS backstop and re-check liveness next iteration.
+            const bool resendDrainable = anyResendAlive;
+            std::unique_lock<std::mutex> lock(waker->mtx);
+            waker->cv.wait_for(lock, std::chrono::milliseconds(IDLE_WAIT_MS), [&] {
+                return !this->isRunning() ||
+                       (sendQueue && sendQueue->approxSize() > 0) ||
+                       (resendDrainable && resendQueue && resendQueue->approxSize() > 0);
+            });
+            continue; // loop back: drain resend first, then re-dequeue
+        }
         if (!this->isRunning())
             break;
 
         // Take a consistent snapshot of connections + stats under the mutex.
-        // This ensures replaceConnection() writes are visible immediately after the
-        // current dequeueWithTimeout unblocks — no stale pointers during scoring/sending.
+        // This ensures replaceConnection() writes are visible for this packet —
+        // no stale pointers during scoring/sending.
         std::vector<TcpConnectionSp> connSnap;
         std::vector<std::shared_ptr<ConnSendStats>> statsSnap;
         {
@@ -211,9 +268,12 @@ void TcpVCSendThread::run()
         // Rate data connections only (indices 0..numDataConns-1).
         // Resend connections (VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1) are excluded.
         int bestScore = -1;
+        bool uniformScores = true;
         for (size_t i = 0; i < numDataConns; i++)
         {
             scores[i] = rateConnection(i, connSnap, statsSnap);
+            if (i > 0 && scores[i] != scores[0])
+                uniformScores = false;
             if (scores[i] > bestScore)
                 bestScore = scores[i];
         }
@@ -225,11 +285,16 @@ void TcpVCSendThread::run()
             order[i] = (roundRobinStart + i) % numDataConns;
         roundRobinStart = (roundRobinStart + 1) % numDataConns;
 
-        // Stable-ish descending sort by score. Only the first few matter, so
-        // partial_sort would save work, but with N=28 full sort is ~130 comparisons
-        // which is fine and the code is clearer.
-        std::stable_sort(order.begin(), order.end(),
-                         [&](size_t a, size_t b) { return scores[a] > scores[b]; });
+        // Sort by score only when scores actually differ. On Windows TCP_INFO is
+        // unavailable, so every live connection scores identically and the sort would
+        // merely reproduce the round-robin order at O(N log N) per packet — pure
+        // hot-path overhead. When scores diverge (Linux/macOS, or a failing conn on
+        // any platform) the stable_sort orders best-first as before.
+        if (!uniformScores)
+        {
+            std::stable_sort(order.begin(), order.end(),
+                             [&](size_t a, size_t b) { return scores[a] > scores[b]; });
+        }
 
         // Fallback: if backoff eliminated all candidates, allow any connected socket.
         bool anyEligible = (bestScore >= 0);
@@ -250,16 +315,12 @@ void TcpVCSendThread::run()
 
             auto &conn = connSnap[idx];
 
-            // Pre-check: if the socket isn't immediately writable, skip it.
-            // This avoids calling SendTcpDirect on a congested socket (which could
-            // return a partial write, forcing the expensive completion path).
-            if (!IsSocketWritable(conn->getSocketFd(), 0))
-            {
-                if (idx < statsSnap.size() && statsSnap[idx])
-                    statsSnap[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
-                continue;
-            }
-
+            // No per-packet writability pre-poll. The socket is non-blocking, so
+            // SendTcpDirect returns immediately with SOCKET_ERROR_WOULD_BLOCK when
+            // the kernel send buffer is full. Dropping the IsSocketWritable() select()
+            // removes one syscall per sent packet on the hot path; behavior is
+            // unchanged because the WOULD_BLOCK/error case below already advances to
+            // the next connection (and increments reenqueueCount).
             conn->diagMarkSendStart(messageId);
 
             // Use direct send (no redundant poll) — socket is already non-blocking.
