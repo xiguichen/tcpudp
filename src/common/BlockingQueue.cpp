@@ -37,20 +37,6 @@ std::shared_ptr<std::vector<char>> BlockingQueue::dequeue()
     return result;
 }
 
-std::shared_ptr<std::vector<char>> BlockingQueue::dequeueWithTimeout(int timeoutMs)
-{
-    std::unique_lock<std::mutex> lock(queueMutex);
-    queueCondVar.wait_for(lock, std::chrono::milliseconds(timeoutMs),
-                          [this] { return !queue.empty() || cancelled; });
-    if (queue.empty() || cancelled)
-        return nullptr;
-    auto result = std::move(queue.front());
-    queue.pop();
-    lock.unlock();
-    approxQueueSize.fetch_sub(1, std::memory_order_relaxed);
-    return result;
-}
-
 std::shared_ptr<std::vector<char>> BlockingQueue::tryDequeue()
 {
     std::lock_guard<std::mutex> lock(queueMutex);

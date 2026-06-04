@@ -108,7 +108,7 @@ int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
     timeout.tv_usec = (timeoutMs % 1000) * 1000;
     
     int result = select(socketFd + 1, &readfds, &writefds, &exceptfds, &timeout);
-    
+
     if (result > 0) {
         int revents = 0;
         if (FD_ISSET(socketFd, &readfds))
@@ -118,6 +118,16 @@ int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
         if (FD_ISSET(socketFd, &exceptfds))
             revents |= POLLERR;
         return revents;
+    }
+    // EBADF-equivalent (WSAENOTSOCK): the fd was closed concurrently; WSAEINTR:
+    // interrupted. Treat as transient "no event" to match the macOS branch below,
+    // so callers retry instead of seeing a hard error. (select() is kept here —
+    // not WSAPoll — because the connect path polls POLLOUT on a connecting socket,
+    // which the WSAPoll connect-bug mishandles.)
+    if (result == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        if (err == WSAENOTSOCK || err == WSAEINTR || err == WSAEINVAL)
+            return 0;
     }
     return result; // 0 for timeout, -1 for error
 #elif defined(__APPLE__)
@@ -170,37 +180,39 @@ int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
 
 int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
 #ifdef _WIN32
-    FD_SET readfds, writefds, exceptfds;
-    FD_ZERO(&readfds);
-    FD_ZERO(&writefds);
-    FD_ZERO(&exceptfds);
-    int maxFd = 0;
-    int validCount = 0;
+    // Use WSAPoll instead of select() on Windows. WSAPOLLFD is layout-compatible
+    // with struct pollfd here (winsock2 defines both), so the caller's array is
+    // reused directly. Benefits over select():
+    //   - No per-call FD_SET marshalling (3 sets x N sockets) through the Winsock
+    //     SPI — markedly less CPU on the hot receive poll.
+    //   - Per-fd error reporting (POLLNVAL/POLLERR/POLLHUP). A single closed fd
+    //     (common during reconnect churn) no longer makes the WHOLE poll fail and
+    //     stall every other connection on the channel — the select() path did, and
+    //     unlike macOS the Windows select() error was never mapped to a retry.
+    // The known WSAPoll connect-bug only affects POLLOUT on *connecting* sockets;
+    // this poll requests POLLIN on established sockets, so it is unaffected.
+    ULONG validCount = 0;
     for (size_t i = 0; i < count; i++) {
-        if (fds[i].fd == INVALID_SOCKET) continue;
-        if (fds[i].events & POLLIN) FD_SET(fds[i].fd, &readfds);
-        if (fds[i].events & POLLOUT) FD_SET(fds[i].fd, &writefds);
-        FD_SET(fds[i].fd, &exceptfds);
-        if ((int)fds[i].fd > maxFd) maxFd = (int)fds[i].fd;
-        validCount++;
+        fds[i].revents = 0;
+        if (fds[i].fd != INVALID_SOCKET) validCount++;
     }
     if (validCount == 0) {
+        // Nothing to poll (all slots down, e.g. mid-reconnect). Sleep out the
+        // timeout instead of spinning; the caller rebuilds the set next iteration.
         std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
         return 0;
     }
-    struct timeval timeout;
-    timeout.tv_sec = timeoutMs / 1000;
-    timeout.tv_usec = (timeoutMs % 1000) * 1000;
-    int result = select(maxFd + 1, &readfds, &writefds, &exceptfds, &timeout);
-    if (result > 0) {
-        for (size_t i = 0; i < count; i++) {
-            fds[i].revents = 0;
-            if (fds[i].fd == INVALID_SOCKET) continue;
-            if (FD_ISSET(fds[i].fd, &readfds)) fds[i].revents |= POLLIN;
-            if (FD_ISSET(fds[i].fd, &writefds)) fds[i].revents |= POLLOUT;
-            if (FD_ISSET(fds[i].fd, &exceptfds)) fds[i].revents |= POLLERR;
-        }
+    int result = WSAPoll(fds, static_cast<ULONG>(count), timeoutMs);
+    if (result == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        // Transient: a slot's fd was closed concurrently or the call was
+        // interrupted. Report "no events" so run() rebuilds its pollfd set next
+        // iteration rather than treating it as a hard error (10ms back-off + log).
+        if (err == WSAENOTSOCK || err == WSAEINTR || err == WSAEINVAL)
+            return 0;
+        return result;
     }
+    // WSAPoll fills revents directly (POLLRDNORM->POLLIN, POLLERR/POLLHUP/POLLNVAL).
     return result;
 #elif defined(__APPLE__)
     fd_set readfds, writefds, exceptfds;
@@ -275,18 +287,6 @@ int SocketBytesAvailable(SocketFd socketFd)
 #endif
 }
 
-int SocketSelect(SocketFd socketFd, int timeoutSec) {
-    fd_set readfds;
-    FD_ZERO(&readfds);
-    FD_SET(socketFd, &readfds);
-
-    struct timeval timeout;
-    timeout.tv_sec = timeoutSec;
-    timeout.tv_usec = 0;
-
-    return select(socketFd + 1, &readfds, NULL, NULL, &timeout);
-}
-
 // Standard blocking I/O operations
 ssize_t SendTcpData(SocketFd socketFd, const void *data, size_t length, int flags) {
 #if defined(_WIN32)
@@ -330,133 +330,8 @@ ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flag
     return length;
 }
 
-// Non-blocking I/O operations with timeout
-ssize_t SendTcpDataNonBlocking(SocketFd socketFd, const void *data, size_t length, int flags, int timeoutMs) {
-    if (!IsSocketWritable(socketFd, timeoutMs)) {
-        return SOCKET_ERROR_TIMEOUT;
-    }
-    
-#if defined(_WIN32)
-    ssize_t bytesSent = send(socketFd, (const char *)data, length, flags);
-#else
-    ssize_t bytesSent = send(socketFd, data, length, flags);
-#endif
-
-    if (bytesSent < 0) {
-#ifdef _WIN32
-        int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK) {
-            bytesSent = SOCKET_ERROR_WOULD_BLOCK;
-        }
-#else
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            bytesSent = SOCKET_ERROR_WOULD_BLOCK;
-        } else if (errno == EINTR) {
-            bytesSent = SOCKET_ERROR_INTERRUPTED;
-        }
-#endif
-    }
-    
-    return bytesSent;
-}
-
-ssize_t SendUdpDataNonBlocking(SocketFd socketFd, const void *data, size_t length, int flags,
-                              const struct sockaddr *destAddr, socklen_t destAddrLen, int timeoutMs) {
-    // Check if socket is writable within timeout
-    if (!IsSocketWritable(socketFd, timeoutMs)) {
-        return SOCKET_ERROR_TIMEOUT;
-    }
-    
-    // Try to send data
-#if defined(_WIN32)
-    ssize_t bytesSent = sendto(socketFd, (const char *)data, length, flags, destAddr, destAddrLen);
-#else
-    ssize_t bytesSent = sendto(socketFd, data, length, flags, destAddr, destAddrLen);
-#endif
-
-    // Check for errors
-    if (bytesSent < 0) {
-#ifdef _WIN32
-        int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK) {
-            bytesSent = SOCKET_ERROR_WOULD_BLOCK;
-        }
-#else
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            bytesSent = SOCKET_ERROR_WOULD_BLOCK;
-        } else if (errno == EINTR) {
-            bytesSent = SOCKET_ERROR_INTERRUPTED;
-        }
-#endif
-    }
-    
-    
-    return bytesSent;
-}
-
-ssize_t RecvTcpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int timeoutMs) {
-    if (!IsSocketReadable(socketFd, timeoutMs)) {
-        return SOCKET_ERROR_TIMEOUT;
-    }
-    
-#if defined(_WIN32)
-    ssize_t bytesReceived = recv(socketFd, (char *)buffer, bufferSize, flags);
-#else
-    ssize_t bytesReceived = recv(socketFd, buffer, bufferSize, flags);
-#endif
-
-    if (bytesReceived < 0) {
-#ifdef _WIN32
-        int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK) {
-            bytesReceived = SOCKET_ERROR_WOULD_BLOCK;
-        }
-#else
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            bytesReceived = SOCKET_ERROR_WOULD_BLOCK;
-        } else if (errno == EINTR) {
-            bytesReceived = SOCKET_ERROR_INTERRUPTED;
-        }
-#endif
-    } else if (bytesReceived == 0) {
-        bytesReceived = SOCKET_ERROR_CLOSED;
-    }
-    
-    return bytesReceived;
-}
-
-ssize_t RecvUdpDataNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSize, int flags,
-                              struct sockaddr *srcAddr, socklen_t *srcAddrLen, int timeoutMs) {
-    if (!IsSocketReadable(socketFd, timeoutMs)) {
-        return SOCKET_ERROR_TIMEOUT;
-    }
-    
-#if defined(_WIN32)
-    ssize_t bytesReceived = recvfrom(socketFd, (char *)buffer, bufferSize, flags, srcAddr, srcAddrLen);
-#else
-    ssize_t bytesReceived = recvfrom(socketFd, buffer, bufferSize, flags, srcAddr, srcAddrLen);
-#endif
-
-    if (bytesReceived < 0) {
-#ifdef _WIN32
-        int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK) {
-            bytesReceived = SOCKET_ERROR_WOULD_BLOCK;
-        }
-#else
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            bytesReceived = SOCKET_ERROR_WOULD_BLOCK;
-        } else if (errno == EINTR) {
-            bytesReceived = SOCKET_ERROR_INTERRUPTED;
-        }
-#endif
-    }
-    
-    return bytesReceived;
-}
-
-// Direct non-blocking send/recv — skip the redundant poll() that the NonBlocking variants perform.
-// Callers must ensure the socket is already set to non-blocking mode.
+// Direct non-blocking send/recv. Callers must ensure the socket is already set
+// to non-blocking mode (these skip any internal readiness poll).
 
 ssize_t SendTcpDirect(SocketFd socketFd, const void *data, size_t length, int flags)
 {
@@ -586,11 +461,9 @@ int SocketClose(SocketFd socketFd) {
 }
 
 int SocketShutdown(SocketFd socketFd, int how) {
-#ifdef _WIN32
+    // shutdown() has the same signature on Winsock and POSIX (SHUT_RDWR is
+    // mapped to SD_BOTH in Socket.h), so no platform split is needed here.
     return shutdown(socketFd, how);
-#else
-    return shutdown(socketFd, how);
-#endif
 }
 
 // Specialized receive functions
@@ -611,67 +484,6 @@ ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, 
         totalBytesRead += bytesRead;
     }
 
-    return totalBytesRead;
-}
-
-ssize_t RecvTcpDataWithSizeNonBlocking(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int bytesToRead, int timeoutMs) {
-    char *bufPtr = static_cast<char *>(buffer);
-    ssize_t totalBytesRead = 0;
-    
-    
-    // Calculate deadline
-    auto startTime = std::chrono::steady_clock::now();
-    auto deadline = startTime + std::chrono::milliseconds(timeoutMs);
-    
-    while (totalBytesRead < bytesToRead) {
-        // Calculate remaining timeout
-        auto now = std::chrono::steady_clock::now();
-        if (now >= deadline) {
-            return SOCKET_ERROR_TIMEOUT;
-        }
-        
-        int remainingTimeoutMs = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-        
-        // Check if socket is readable
-        if (!IsSocketReadable(socketFd, remainingTimeoutMs)) {
-            return SOCKET_ERROR_TIMEOUT;
-        }
-        
-        // Try to read data
-#if defined(_WIN32)
-        ssize_t bytesRead = recv(socketFd, bufPtr + totalBytesRead, bytesToRead - totalBytesRead, flags);
-#else
-        ssize_t bytesRead = recv(socketFd, bufPtr + totalBytesRead, bytesToRead - totalBytesRead, flags);
-#endif
-
-        if (bytesRead < 0) {
-#ifdef _WIN32
-            int error = WSAGetLastError();
-            if (error == WSAEWOULDBLOCK) {
-                // No data available, try again
-                std::this_thread::yield();
-                continue;
-            }
-#else
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // No data available, try again
-                std::this_thread::yield();
-                continue;
-            } else if (errno == EINTR) {
-                // Interrupted, try again
-                continue;
-            }
-#endif
-            // Other error
-            SocketLogLastError();
-            return -1;
-        } else if (bytesRead == 0) {
-            return totalBytesRead;
-        }
-        
-        totalBytesRead += bytesRead;
-    }
-    
     return totalBytesRead;
 }
 

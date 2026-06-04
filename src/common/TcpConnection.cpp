@@ -162,7 +162,12 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         info.congestionWindowBytes = tcpInfo.tcpi_snd_cwnd;
         info.smoothedRttUs = tcpInfo.tcpi_srtt * 1000; // ms to us
         info.rtoUs = tcpInfo.tcpi_rto * 1000;          // ms to us
-        info.bytesInFlight = tcpInfo.tcpi_snd_cwnd > 0 ? tcpInfo.tcpi_snd_cwnd : 0;
+        // Bytes queued in the send buffer (data sent-but-unacked + waiting to send).
+        // Previously this mistakenly used tcpi_snd_cwnd (the congestion *window*),
+        // which made the bytesInFlight load penalty in rateConnection() meaningless on
+        // macOS. tcpi_snd_sbbytes is the actual send-buffer occupancy, so a backed-up
+        // connection now scores lower and the sender steers traffic to idle ones.
+        info.bytesInFlight = tcpInfo.tcpi_snd_sbbytes;
         info.timeoutEpisodes = tcpInfo.tcpi_txretransmitpackets;
         info.isInExponentialBackoff = false; // not directly available on macOS
     }
