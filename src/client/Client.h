@@ -52,5 +52,11 @@ class Client
 
     bool ReconnectVC(int maxRetries = 5, int initialBackoffMs = 1000);
     void StartWatchdog();
+    // Stop and join the watchdog thread if running. Idempotent.
+    void StopWatchdog();
+    // Tear down the current virtual channel: stop the watchdog, close+release the VC
+    // (which closes its TCP sockets), and clear the TCP socket bookkeeping. Does NOT
+    // touch the UDP socket. Safe to call when nothing is active.
+    void TeardownVc();
     bool ReconnectSingleSlot(int slotIndex);
 };

@@ -5,3 +5,5 @@ tags
 Build
 run
 .omc
+doc/superpowers/*
+.claude

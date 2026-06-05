@@ -118,6 +118,29 @@ void Server::AcceptConnections()
             auto *tcpVc = dynamic_cast<TcpVirtualChannel *>(existingVc.get());
             if (tcpVc)
             {
+                // slotIndex == -1 is an INITIAL connection: the client is (re)establishing
+                // its whole channel, not replacing a single slot. If we still hold a VC for
+                // this client it is stale — the client already tore its side down (e.g. after
+                // a full outage) and is reconnecting from scratch. Tear our VC down and fall
+                // through to fresh accumulation. Without this, the client's 32 fresh sockets
+                // are all rejected as "excess" (no connId match, no slotIndex, no dead slot),
+                // the client believes it reconnected, the sockets are closed, and it loops.
+                if (bindMsg.slotIndex < 0)
+                {
+                    log_info(std::format("[Server] Initial connect for clientId {} while a VC exists — "
+                                         "tearing down stale VC and re-establishing",
+                                         clientId));
+                    // close() synchronously disconnects all connections, which runs the VC
+                    // disconnect callback: removes the VC from VcManager, removes the peer,
+                    // closes the old UDP socket, and clears clientConnSlots. It is idempotent,
+                    // so the VC's later destruction won't re-fire it.
+                    existingVc->close();
+                    if (VcManager::getInstance().Exists(clientId))
+                        VcManager::getInstance().Remove(clientId);
+                    // Intentionally fall through to the fresh-accumulation path below.
+                }
+                else
+                {
                 // If the client provided a connectionId, use it to force-close the
                 // matching connection directly — no deadSlots check needed.
                 // The client KNOWS this connection is dead (it detected the TCP
@@ -173,6 +196,7 @@ void Server::AcceptConnections()
                     "[Server] Replaced slot {} for clientId {} (connIdSlot={}, sentConnId={}, slotIndex={})",
                     targetSlot, clientId, connIdSlot, bindMsg.connectionId, (int)bindMsg.slotIndex));
                 continue;
+                } // end else (slotIndex >= 0: targeted per-slot replacement)
             }
             else
             {

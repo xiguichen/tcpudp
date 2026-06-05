@@ -12,6 +12,13 @@ bool Client::PrepareVC()
 {
     log_info("Preparing virtual channel...");
 
+    // Start from a clean slate. A previous attempt (e.g. a Start() where PrepareVC
+    // succeeded but PrepareUdpSocket failed) may have left a running watchdog, an open
+    // VC, and 32 sockets in the member vectors. Without this, sockets accumulate (the
+    // next VC would be built from 64+ sockets) and StartWatchdog() below would assign
+    // over a still-joinable watchdog thread, calling std::terminate().
+    TeardownVc();
+
     for (int i = 0; i < VC_TCP_CONNECTIONS; i++)
     {
         // Create TCP socket here
@@ -19,6 +26,7 @@ bool Client::PrepareVC()
         if (tcpSocket == -1)
         {
             log_error("Failed to create TCP socket");
+            TeardownVc(); // close any sockets opened earlier this attempt
             return false;
         }
 
@@ -36,6 +44,7 @@ bool Client::PrepareVC()
         {
             log_error("Failed to connect to server");
             SocketClose(tcpSocket);
+            TeardownVc(); // close any sockets opened earlier this attempt
             return false;
         }
 
@@ -63,6 +72,7 @@ bool Client::PrepareVC()
         {
             log_error("Failed to send client ID to server");
             SocketClose(tcpSocket);
+            TeardownVc(); // close any sockets opened earlier this attempt
             return false;
         }
 
@@ -82,15 +92,16 @@ bool Client::PrepareVC()
 
     // Create virtual channel with the connected sockets
     log_info("Creating virtual channel with connected TCP sockets...");
-    vc = VirtualChannelFactory::create(tcpSockets);
-    if (!vc)
+    auto newVc = VirtualChannelFactory::create(tcpSockets);
+    if (!newVc)
     {
         log_error("Failed to create virtual channel");
+        TeardownVc(); // close the 32 sockets we just opened
         return false;
     }
 
     // Set up receive callback
-    vc->setReceiveCallback([this](const char *data, size_t size) {
+    newVc->setReceiveCallback([this](const char *data, size_t size) {
         log_debug(std::format("Virtual channel received {} bytes of data", size));
 
         auto remoteAddr = this->remoteUdpAddr;
@@ -107,7 +118,7 @@ bool Client::PrepareVC()
     // that same thread would cause it to join itself — a guaranteed deadlock.
     // Spawning a detached thread lets the VC thread exit normally while reconnection
     // proceeds independently.
-    vc->setDisconnectCallback([this]() {
+    newVc->setDisconnectCallback([this]() {
         log_warnning("Virtual channel disconnected. Attempting reconnection...");
         // Stop the watchdog immediately so its per-slot reconnects don't race
         // with the full ReconnectVC. If we delay this, the watchdog may already
@@ -120,6 +131,13 @@ bool Client::PrepareVC()
             }
         }).detach();
     });
+
+    // Publish the fully-configured VC under the lock so the watchdog / reconnect paths
+    // never observe a half-built channel or race on the shared_ptr.
+    {
+        std::lock_guard<std::mutex> lock(vcMutex);
+        vc = newVc;
+    }
 
     vc->open();
 
@@ -140,6 +158,11 @@ bool Client::PrepareUdpSocket()
         log_error("Failed to create UDP socket");
         return false;
     }
+
+    // Allow the local UDP port to be rebound immediately after a restart. Without this,
+    // a quick reconnect cycle fails the bind with EADDRINUSE while the previous socket
+    // lingers, which cascades into the failed-Start / reconnect storm.
+    SocketReuseAddress(udpSocket);
 
     // Prepare address structure for sending data
     struct sockaddr_in udpAddr{};
@@ -199,21 +222,56 @@ bool Client::PrepareUdpSocket()
     return true;
 }
 
+void Client::StopWatchdog()
+{
+    watchdogRunning = false;
+    // Serialize with Stop()/ReconnectVC — both may try to join the watchdog thread.
+    // Double-join is undefined behaviour (crash on most implementations).
+    std::lock_guard<std::mutex> lock(watchdogMutex);
+    if (watchdogThread.joinable())
+        watchdogThread.join();
+}
+
+void Client::TeardownVc()
+{
+    // Stop the watchdog first so it can't touch the VC while we tear it down, and so a
+    // subsequent StartWatchdog() never assigns over a still-joinable std::thread (which
+    // would call std::terminate()).
+    StopWatchdog();
+
+    bool hadVc = false;
+    {
+        std::lock_guard<std::mutex> lock(vcMutex);
+        if (vc)
+        {
+            vc->close();
+            vc = nullptr;
+            hadVc = true;
+        }
+    }
+
+    // Only close the raw FDs ourselves when no VC owned them. When a VC existed,
+    // vc->close() already closed them via TcpConnection::disconnect(); closing again
+    // would be a double-close of an FD number the OS may have reassigned.
+    if (!hadVc)
+    {
+        for (SocketFd fd : tcpSockets)
+            if (fd != -1)
+                SocketClose(fd);
+    }
+    tcpSockets.clear();
+    tcpConnectionIds.clear();
+}
+
 void Client::Stop()
 {
     log_info("Client stopping...");
     running = false;
 
-    watchdogRunning = false;
-    {
-        // Serialize with ReconnectVC — both may try to join the watchdog thread.
-        // Double-join is undefined behaviour (crash on most implementations).
-        std::lock_guard<std::mutex> lock(watchdogMutex);
-        if (watchdogThread.joinable())
-            watchdogThread.join();
-    }
+    StopWatchdog();
 
-    if(vc != nullptr)
+    std::lock_guard<std::mutex> lock(vcMutex);
+    if (vc != nullptr)
     {
         vc->close();
     }
@@ -229,12 +287,22 @@ void Client::Start()
     if (!PrepareVC())
     {
         log_error("Failed to prepare virtual channel");
+        TeardownVc(); // don't leave a watchdog/VC running for the next Start()
         return;
     }
 
     if (!PrepareUdpSocket())
     {
         log_error("Failed to prepare UDP socket");
+        // PrepareVC already started the VC + watchdog; tear them down so the next
+        // Start()/PrepareVC doesn't assign over a live watchdog thread (std::terminate)
+        // or accumulate orphaned connections.
+        TeardownVc();
+        if (udpSocket != -1)
+        {
+            SocketClose(udpSocket);
+            udpSocket = -1;
+        }
         return;
     }
 
@@ -252,13 +320,7 @@ bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
     reconnectEpoch.fetch_add(1, std::memory_order_release);
 
     // Stop the watchdog before tearing down the VC so it doesn't race with us.
-    watchdogRunning = false;
-    {
-        // Serialize with Stop() — both may try to join the watchdog thread.
-        std::lock_guard<std::mutex> lock(watchdogMutex);
-        if (watchdogThread.joinable())
-            watchdogThread.join();
-    }
+    StopWatchdog();
 
     int retryCount = 0;
     int delayMs = 3000;
