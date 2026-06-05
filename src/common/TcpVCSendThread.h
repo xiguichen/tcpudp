@@ -52,6 +52,16 @@ class TcpVCSendThread : public StopableThread
     // safety net (and lets the loop re-check isRunning() periodically).
     static constexpr int IDLE_WAIT_MS = 100;
 
+    // Partial-send completion: once any bytes of a packet are written to a
+    // connection, the rest MUST be flushed on the same connection (the receiver
+    // expects contiguous protocol bytes). A full kernel send buffer under load is
+    // normal backpressure, not a dead socket, so we wait for writability up to a
+    // total budget before declaring the connection genuinely stuck. The old code
+    // gave up after a single 10ms poll and disconnected, which tore down healthy
+    // but busy connections as traffic grew — driving a reconnect/resend storm.
+    static constexpr int PARTIAL_SEND_BUDGET_MS = 500;
+    static constexpr int PARTIAL_SEND_POLL_MS = 20;
+
     // Shared wake primitive for the idle wait. Held by both this thread and the
     // queues' enqueue notifiers via shared_ptr, so a queue can safely wake the
     // thread even if the thread object is being torn down (the Waker outlives it).

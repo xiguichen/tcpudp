@@ -147,8 +147,12 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
                 disconnectCallback(conn);
             return;
         }
-        else if (n == SOCKET_ERROR_WOULD_BLOCK || n == SOCKET_ERROR_TIMEOUT)
+        else if (n == SOCKET_ERROR_WOULD_BLOCK || n == SOCKET_ERROR_TIMEOUT ||
+                 n == SOCKET_ERROR_INTERRUPTED)
         {
+            // Transient: no data right now, or recv was interrupted by a signal.
+            // poll() will re-fire POLLIN on the next iteration. EINTR must NOT
+            // tear the connection down — it is recoverable.
             break;
         }
         else

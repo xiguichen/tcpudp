@@ -336,39 +336,68 @@ void TcpVCSendThread::run()
                 // the packet here — switching connections mid-packet corrupts both
                 // TCP streams (the receiver expects contiguous protocol bytes).
                 size_t totalSent = static_cast<size_t>(n);
+                // Flush the rest of the packet on THIS connection — partial bytes are
+                // already in the stream, so switching connections mid-packet would
+                // corrupt the framing. A full kernel send buffer under load is
+                // backpressure, not a dead socket: keep waiting for writability up to
+                // PARTIAL_SEND_BUDGET_MS instead of giving up after one short poll.
+                // Stalling here only delays throughput (and applies natural send-queue
+                // backpressure); it does NOT create a receiver-side gap, because the
+                // packets queued behind this one have not been sent yet. Only a genuine
+                // socket error or a sustained stall past the budget tears the conn down.
+                auto partialStart = std::chrono::steady_clock::now();
+                bool hardError = false;
                 while (totalSent < dataVec->size())
                 {
                     if (!conn->isConnected() || !this->isRunning())
                         break;
-                    // Short wait (10ms) — we must complete this packet on this connection
-                    // since partial bytes are already in the TCP stream. If we can't finish
-                    // quickly, disconnect to prevent stream corruption.
-                    if (!IsSocketWritable(conn->getSocketFd(), 10))
-                        break;
+                    if (!IsSocketWritable(conn->getSocketFd(), PARTIAL_SEND_POLL_MS))
+                    {
+                        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - partialStart)
+                                             .count();
+                        if (elapsedMs >= PARTIAL_SEND_BUDGET_MS)
+                            break; // truly stuck — give up
+                        continue;
+                    }
                     ssize_t r = SendTcpDirect(
                         conn->getSocketFd(),
                         dataVec->data() + totalSent,
                         dataVec->size() - totalSent, 0);
                     if (r > 0)
+                    {
                         totalSent += static_cast<size_t>(r);
-                    else if (r == SOCKET_ERROR_WOULD_BLOCK)
-                        break;
+                    }
+                    else if (r == SOCKET_ERROR_WOULD_BLOCK || r == SOCKET_ERROR_INTERRUPTED)
+                    {
+                        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - partialStart)
+                                             .count();
+                        if (elapsedMs >= PARTIAL_SEND_BUDGET_MS)
+                            break;
+                        continue;
+                    }
                     else
-                        break; // connection error
+                    {
+                        hardError = true;
+                        break; // genuine connection error
+                    }
                 }
 
                 if (totalSent < dataVec->size())
                 {
-                    // Partial bytes already written — the TCP stream framing is now
-                    // corrupt on this connection. Disconnect so the IO thread detects
-                    // it and the watchdog can cleanly reconnect the slot.
+                    // Couldn't finish — partial bytes already in the TCP stream make
+                    // the framing unrecoverable, so this connection must be dropped.
+                    // With the budget above this now only happens on a real error or a
+                    // sustained (>= PARTIAL_SEND_BUDGET_MS) stall, not brief backpressure.
                     conn->disconnect();
                     if (idx < statsSnap.size() && statsSnap[idx])
                         statsSnap[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                     log_warnning("Partial send on conn " + std::to_string(idx) +
                                  " for msgId " + std::to_string(messageId) +
                                  " (" + std::to_string(totalSent) + "/" +
-                                 std::to_string(dataVec->size()) + " bytes); disconnecting");
+                                 std::to_string(dataVec->size()) + " bytes, " +
+                                 (hardError ? "error" : "stalled") + "); disconnecting");
                     continue; // try next connection for this packet
                 }
 
@@ -395,6 +424,13 @@ void TcpVCSendThread::run()
             {
                 if (idx < statsSnap.size() && statsSnap[idx])
                     statsSnap[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
+                // WOULD_BLOCK just means this connection's buffer is full — skip to the
+                // next one. A genuine error (SOCKET_ERROR_CLOSED) means the connection
+                // is dead: disconnect it so the watchdog reaps and reconnects the slot.
+                // Without this, a reset connection that never sees a read event would
+                // linger as an undetected zombie that the scorer silently avoids.
+                if (n == SOCKET_ERROR_CLOSED)
+                    conn->disconnect();
             }
         }
 
@@ -467,21 +503,42 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
         if (n > 0)
         {
             size_t totalSent = static_cast<size_t>(n);
+            // Same budgeted completion as the normal send path: wait out transient
+            // backpressure instead of killing a healthy-but-busy resend connection.
+            auto partialStart = std::chrono::steady_clock::now();
             while (totalSent < data->size())
             {
                 if (!conn->isConnected() || !this->isRunning())
                     break;
-                if (!IsSocketWritable(conn->getSocketFd(), 10))
-                    break;
+                if (!IsSocketWritable(conn->getSocketFd(), PARTIAL_SEND_POLL_MS))
+                {
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - partialStart)
+                                         .count();
+                    if (elapsedMs >= PARTIAL_SEND_BUDGET_MS)
+                        break;
+                    continue;
+                }
                 ssize_t r = SendTcpDirect(conn->getSocketFd(),
                                           data->data() + totalSent,
                                           data->size() - totalSent, 0);
                 if (r > 0)
+                {
                     totalSent += static_cast<size_t>(r);
-                else if (r == SOCKET_ERROR_WOULD_BLOCK)
-                    break;
+                }
+                else if (r == SOCKET_ERROR_WOULD_BLOCK || r == SOCKET_ERROR_INTERRUPTED)
+                {
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - partialStart)
+                                         .count();
+                    if (elapsedMs >= PARTIAL_SEND_BUDGET_MS)
+                        break;
+                    continue;
+                }
                 else
-                    break;
+                {
+                    break; // genuine connection error
+                }
             }
 
             if (totalSent < data->size())
@@ -504,6 +561,10 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
             log_debug("[RESEND] SendTcpDirect failed on conn " + std::to_string(idx) +
                       " for msgId=" + std::to_string(messageId) +
                       " rc=" + std::to_string(n));
+            // A genuine error means this resend connection is dead — reap it so the
+            // watchdog reconnects the slot. WOULD_BLOCK is left alone (transient).
+            if (n == SOCKET_ERROR_CLOSED)
+                conn->disconnect();
         }
     }
 

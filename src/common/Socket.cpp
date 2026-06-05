@@ -346,12 +346,20 @@ ssize_t SendTcpDirect(SocketFd socketFd, const void *data, size_t length, int fl
         int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK)
             return SOCKET_ERROR_WOULD_BLOCK;
+        if (error == WSAEINTR)
+            return SOCKET_ERROR_INTERRUPTED;
 #else
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return SOCKET_ERROR_WOULD_BLOCK;
         if (errno == EINTR)
             return SOCKET_ERROR_INTERRUPTED;
 #endif
+        // Any other error (ECONNRESET, EPIPE, ETIMEDOUT, ...) is a genuine,
+        // non-recoverable connection failure. Return SOCKET_ERROR_CLOSED rather
+        // than the raw -1, which aliases SOCKET_ERROR_WOULD_BLOCK (-1) and would
+        // make callers treat a dead connection as transient backpressure (the
+        // connection then lingers as an undetected zombie).
+        return SOCKET_ERROR_CLOSED;
     }
     return bytesSent;
 }
@@ -369,12 +377,19 @@ ssize_t RecvTcpDirect(SocketFd socketFd, void *buffer, size_t bufferSize, int fl
         int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK)
             return SOCKET_ERROR_WOULD_BLOCK;
+        if (error == WSAEINTR)
+            return SOCKET_ERROR_INTERRUPTED;
 #else
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return SOCKET_ERROR_WOULD_BLOCK;
         if (errno == EINTR)
             return SOCKET_ERROR_INTERRUPTED;
 #endif
+        // Genuine error (ECONNRESET, ETIMEDOUT from keepalive, EPIPE, ...).
+        // Return SOCKET_ERROR_CLOSED instead of the raw -1 so the IO thread
+        // detects the dead connection instead of mistaking it for WOULD_BLOCK
+        // (-1) and looping forever on a reset socket.
+        return SOCKET_ERROR_CLOSED;
     }
     else if (bytesReceived == 0)
     {
