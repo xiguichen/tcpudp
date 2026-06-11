@@ -452,6 +452,11 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     SocketSetTcpNoDelay(tcpSocket, true);
     SocketSetReceiveBufferSize(tcpSocket, 512 * 1024);
     SocketSetSendBufferSize(tcpSocket, 128 * 1024);
+    // Must match PrepareVC(): without keepalive a reconnected slot that goes
+    // half-open again (common on macOS) is never detected and becomes a
+    // permanent zombie that the scorer routes around but the watchdog can't
+    // reap — progressively shrinking the usable connection pool.
+    SocketSetKeepAlive(tcpSocket, true, 10, 5, 3);
 
     // Include the old connection's ID so the server can close it by identity
     // instead of relying on getDeadSlots() timing (which may not have detected
