@@ -168,7 +168,14 @@ TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()
         // macOS. tcpi_snd_sbbytes is the actual send-buffer occupancy, so a backed-up
         // connection now scores lower and the sender steers traffic to idle ones.
         info.bytesInFlight = tcpInfo.tcpi_snd_sbbytes;
-        info.timeoutEpisodes = tcpInfo.tcpi_txretransmitpackets;
+        // macOS tcpi_txretransmitpackets is a cumulative lifetime counter (total
+        // retransmitted packets since connection start), unlike Linux tcpi_retransmits
+        // which is the current consecutive timeout count (resets to 0 on ACK).
+        // Using the cumulative counter caused scores to degrade over time as every
+        // connection accumulated retransmits, eventually collapsing all scores to 0
+        // and falling back to blind round-robin. Congestion is already captured by
+        // bytesInFlight (tcpi_snd_sbbytes) and smoothedRttUs (tcpi_srtt).
+        info.timeoutEpisodes = 0;
         info.isInExponentialBackoff = false; // not directly available on macOS
     }
 #else
