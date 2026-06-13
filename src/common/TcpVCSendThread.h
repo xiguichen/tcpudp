@@ -20,7 +20,8 @@ class TcpVCSendThread : public StopableThread
                     BlockingQueueSp resendQueue,
                     std::vector<std::shared_ptr<ConnSendStats>> connSendStats,
                     std::shared_ptr<MessageTracker> messageTracker,
-                    std::vector<std::shared_ptr<SocketStatus>> socketStatuses);
+                    std::vector<std::shared_ptr<SocketStatus>> socketStatuses,
+                    std::function<void(TcpConnectionSp)> disconnectCallback = nullptr);
 
     virtual ~TcpVCSendThread();
 
@@ -72,6 +73,7 @@ class TcpVCSendThread : public StopableThread
     };
     std::shared_ptr<Waker> waker;
 
+    std::function<void(TcpConnectionSp)> disconnectCallback;
     std::mutex connectionsMutex;
     std::condition_variable connAvailableCv;
     std::vector<TcpConnectionSp> connections;

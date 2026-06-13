@@ -12,13 +12,15 @@ TcpVCSendThread::TcpVCSendThread(std::vector<TcpConnectionSp> connections_,
                                  BlockingQueueSp resendQueue_,
                                  std::vector<std::shared_ptr<ConnSendStats>> connSendStats_,
                                  std::shared_ptr<MessageTracker> messageTracker_,
-                                 std::vector<std::shared_ptr<SocketStatus>> socketStatuses_)
+                                 std::vector<std::shared_ptr<SocketStatus>> socketStatuses_,
+                                 std::function<void(TcpConnectionSp)> disconnectCallback_)
     : connections(std::move(connections_)),
       sendQueue(std::move(sendQueue_)),
       resendQueue(std::move(resendQueue_)),
       connSendStats(std::move(connSendStats_)),
       messageTracker(std::move(messageTracker_)),
-      socketStatuses(std::move(socketStatuses_))
+      socketStatuses(std::move(socketStatuses_)),
+      disconnectCallback(std::move(disconnectCallback_))
 {
     lastRuntimeRefresh.resize(connections.size());
     auto now = std::chrono::steady_clock::now();
@@ -391,6 +393,8 @@ void TcpVCSendThread::run()
                     // With the budget above this now only happens on a real error or a
                     // sustained (>= PARTIAL_SEND_BUDGET_MS) stall, not brief backpressure.
                     conn->disconnect();
+                    if (disconnectCallback)
+                        disconnectCallback(conn);
                     if (idx < statsSnap.size() && statsSnap[idx])
                         statsSnap[idx]->reenqueueCount.fetch_add(1, std::memory_order_relaxed);
                     log_warnning("Partial send on conn " + std::to_string(idx) +
@@ -430,7 +434,11 @@ void TcpVCSendThread::run()
                 // Without this, a reset connection that never sees a read event would
                 // linger as an undetected zombie that the scorer silently avoids.
                 if (n == SOCKET_ERROR_CLOSED)
+                {
                     conn->disconnect();
+                    if (disconnectCallback)
+                        disconnectCallback(conn);
+                }
             }
         }
 
@@ -544,6 +552,8 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
             if (totalSent < data->size())
             {
                 conn->disconnect();
+                if (disconnectCallback)
+                    disconnectCallback(conn);
                 log_warnning("[RESEND] Partial send on resend conn " + std::to_string(idx) +
                              " for msgId=" + std::to_string(messageId) + "; disconnecting");
                 continue;
@@ -564,7 +574,11 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
             // A genuine error means this resend connection is dead — reap it so the
             // watchdog reconnects the slot. WOULD_BLOCK is left alone (transient).
             if (n == SOCKET_ERROR_CLOSED)
+            {
                 conn->disconnect();
+                if (disconnectCallback)
+                    disconnectCallback(conn);
+            }
         }
     }
 

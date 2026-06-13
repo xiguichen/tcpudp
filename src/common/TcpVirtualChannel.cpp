@@ -163,7 +163,8 @@ void TcpVirtualChannel::open()
         resendQueue,
         connSendStats,
         messageTracker,
-        socketStatuses
+        socketStatuses,
+        disconnectCB
     );
 
     sendThread->start();
