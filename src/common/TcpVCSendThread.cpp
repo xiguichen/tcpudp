@@ -280,18 +280,15 @@ void TcpVCSendThread::run()
                 bestScore = scores[i];
         }
 
-        // Build an order of indices to try. Start from roundRobinStart so that
-        // equal-scored connections (the common case on Windows where TCP_INFO is
-        // unavailable) are used in rotation rather than always hitting index 0.
+        // Build an order of indices to try, best-scored first.
         for (size_t i = 0; i < numDataConns; i++)
-            order[i] = (roundRobinStart + i) % numDataConns;
-        roundRobinStart = (roundRobinStart + 1) % numDataConns;
+            order[i] = i;
 
         // Sort by score only when scores actually differ. On Windows TCP_INFO is
         // unavailable, so every live connection scores identically and the sort would
-        // merely reproduce the round-robin order at O(N log N) per packet — pure
+        // merely reproduce the natural order at O(N log N) per packet — pure
         // hot-path overhead. When scores diverge (Linux/macOS, or a failing conn on
-        // any platform) the stable_sort orders best-first as before.
+        // any platform) the stable_sort orders best-first.
         if (!uniformScores)
         {
             std::stable_sort(order.begin(), order.end(),
@@ -300,6 +297,30 @@ void TcpVCSendThread::run()
 
         // Fallback: if backoff eliminated all candidates, allow any connected socket.
         bool anyEligible = (bestScore >= 0);
+
+        // Load-balance across the connections tied at the top. The previous code
+        // rotated the start index over ALL connections, but stable_sort only keeps
+        // the rotation order *within* a tie group. Since the rotation domain (all
+        // connections) is larger than a tie group that is a subset of them, the
+        // lowest-indexed member of the tie group won most rotation positions and was
+        // hammered while its equally-good peers sat idle. Instead, rotate the leading
+        // run of equally-best connections by a round-robin counter so each tied
+        // connection is selected in turn. When no connection is eligible (all in
+        // backoff), rotate across every connection so the connected-socket fallback
+        // below still spreads load.
+        size_t rotateCount = numDataConns;
+        if (anyEligible)
+        {
+            rotateCount = 0;
+            while (rotateCount < numDataConns && scores[order[rotateCount]] == bestScore)
+                rotateCount++;
+        }
+        if (rotateCount > 1)
+        {
+            size_t pick = roundRobinStart % rotateCount;
+            std::rotate(order.begin(), order.begin() + pick, order.begin() + rotateCount);
+        }
+        roundRobinStart = (roundRobinStart + 1) % numDataConns;
 
         bool sent = false;
         for (size_t rank = 0; rank < numDataConns; rank++)
