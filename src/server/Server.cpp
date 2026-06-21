@@ -74,7 +74,9 @@ void Server::AcceptConnections()
         SocketSetSendBufferSize(clientSocket, 128 * 1024);
         // Proactively detect half-open client connections so the server reaps a dead
         // socket via keepalive probes instead of leaving it lingering until recv fails.
-        SocketSetKeepAlive(clientSocket, true, 10, 5, 3);
+        // Timing is centralized in Socket.h; see the constants for the macOS tuning rationale.
+        SocketSetKeepAlive(clientSocket, true, VC_KEEPALIVE_IDLE_SEC, VC_KEEPALIVE_INTERVAL_SEC,
+                           VC_KEEPALIVE_PROBE_COUNT);
 
         // Log client connection
         char clientIP[INET_ADDRSTRLEN + 1];

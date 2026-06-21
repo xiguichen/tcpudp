@@ -107,4 +107,17 @@ int SocketSetReceiveBufferSize(SocketFd socketFd, int size);
 // are best-effort per platform. Returns 0 on success, non-zero on failure.
 int SocketSetKeepAlive(SocketFd socketFd, bool enable, int idleSec, int intervalSec, int count);
 
+// Shared VC keepalive timing (client + server). Tuned for flaky last-mile networks
+// (macOS WiFi/VPN, power-management stalls): probes start after 15s idle and repeat
+// every 15s, declaring a connection dead only after 8 unacked probes (~135s total).
+// The previous 10/5/3 (~25s) reaped idle connections on any brief network blip, and
+// because the send load balancer leaves most of the 32 connections idle, that caused
+// frequent spurious closes and watchdog-reconnect churn. The 15s probe cadence still
+// refreshes NAT mappings (typically 30-120s idle timeout). The longer dead-detection
+// latency is acceptable: the watchdog reconnects dead slots and the send scorer already
+// routes around unresponsive ones before keepalive reaps them.
+static constexpr int VC_KEEPALIVE_IDLE_SEC = 15;
+static constexpr int VC_KEEPALIVE_INTERVAL_SEC = 15;
+static constexpr int VC_KEEPALIVE_PROBE_COUNT = 8;
+
 void SocketReuseAddress(SocketFd socketFd);

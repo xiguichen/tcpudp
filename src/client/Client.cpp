@@ -53,7 +53,9 @@ bool Client::PrepareVC()
         SocketSetSendBufferSize(tcpSocket, 128 * 1024);
         // Proactively detect half-open connections (common on macOS) so a silently
         // dead slot is surfaced via keepalive probes instead of only when data flows.
-        SocketSetKeepAlive(tcpSocket, true, 10, 5, 3);
+        // Timing is centralized in Socket.h; see the constants for the macOS tuning rationale.
+        SocketSetKeepAlive(tcpSocket, true, VC_KEEPALIVE_IDLE_SEC, VC_KEEPALIVE_INTERVAL_SEC,
+                           VC_KEEPALIVE_PROBE_COUNT);
 
         // Assign a unique connection ID for this socket and register it with the server.
         // The server records clientId→connectionId→slotIndex so that when the watchdog
@@ -456,7 +458,8 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     // half-open again (common on macOS) is never detected and becomes a
     // permanent zombie that the scorer routes around but the watchdog can't
     // reap — progressively shrinking the usable connection pool.
-    SocketSetKeepAlive(tcpSocket, true, 10, 5, 3);
+    SocketSetKeepAlive(tcpSocket, true, VC_KEEPALIVE_IDLE_SEC, VC_KEEPALIVE_INTERVAL_SEC,
+                       VC_KEEPALIVE_PROBE_COUNT);
 
     // Include the old connection's ID so the server can close it by identity
     // instead of relying on getDeadSlots() timing (which may not have detected
