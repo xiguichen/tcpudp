@@ -22,22 +22,43 @@ def run_unit_tests():
     return result.returncode == 0
 
 
-def run_integration_test():
+def run_integration_test(extra_args=None):
     print("\n--- Running integration test ---")
-    result = subprocess.run(
-        [sys.executable, "test/integration_test.py"],
-        shell=False,
-        capture_output=False,
-    )
+    cmd = [sys.executable, "test/integration_test.py"]
+    if extra_args:
+        cmd.extend(extra_args)
+    result = subprocess.run(cmd, shell=False, capture_output=False)
     return result.returncode == 0
 
 
 def main():
-    unit_ok = run_unit_tests()
-    print(f"Unit tests {'PASSED' if unit_ok else 'FAILED'}")
+    # Separate our own args from args to pass through to the integration test.
+    # Usage: python test.py [--unit-only] [--int-only] [--int-args ...]
+    our_args = []
+    int_args = []
+    in_int_args = False
+    for a in sys.argv[1:]:
+        if a == "--int-args":
+            in_int_args = True
+            continue
+        if in_int_args:
+            int_args.append(a)
+        else:
+            our_args.append(a)
 
-    int_ok = run_integration_test()
-    print(f"Integration test {'PASSED' if int_ok else 'FAILED'}")
+    run_unit = "--int-only" not in our_args
+    run_int = "--unit-only" not in our_args
+
+    unit_ok = True
+    int_ok = True
+
+    if run_unit:
+        unit_ok = run_unit_tests()
+        print(f"Unit tests {'PASSED' if unit_ok else 'FAILED'}")
+
+    if run_int:
+        int_ok = run_integration_test(int_args if int_args else None)
+        print(f"Integration test {'PASSED' if int_ok else 'FAILED'}")
 
     if unit_ok and int_ok:
         print("\nAll tests passed.")

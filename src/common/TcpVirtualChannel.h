@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BlockingQueue.h"
+#include "NetworkScore.h"
 #include "Socket.h"
 #include "SpscQueue.h"
 #include "TcpVCIoThread.h"
@@ -92,6 +93,11 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::shared_ptr<MessageTracker> getMessageTracker() const { return messageTracker; }
 
     std::vector<std::shared_ptr<SocketStatus>> getSocketStatuses() const { return socketStatuses; }
+
+    /// Compute an aggregated network quality score from all per-connection TCP
+    /// metrics, send statistics, degradation status, and queue depth.
+    /// Safe to call from any thread.
+    NetworkScore getNetworkScore() const;
 
   private:
     struct ReceivedItem

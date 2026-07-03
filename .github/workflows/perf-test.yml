@@ -1,0 +1,105 @@
+name: Performance Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_addr:
+        description: 'Server address (IP or hostname of the machine running the tcpudp server)'
+        required: false
+        default: '127.0.0.1'
+      server_port:
+        description: 'Server TCP port'
+        required: false
+        default: '17001'
+      echo_port:
+        description: 'UDP echo server port'
+        required: false
+        default: '17002'
+      client_port:
+        description: 'Client UDP bind port'
+        required: false
+        default: '17003'
+      packet_count:
+        description: 'Number of packets for performance test'
+        required: false
+        default: '500'
+      deploy_to_vpn2:
+        description: 'Deploy test server to vpn2 before testing?'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  perf-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up CMake
+        uses: lukka/get-cmake@v4.0.0-rc3
+
+      - name: Configure and build
+        run: |
+          mkdir build
+          cd build
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -S ../src
+          ninja
+
+      - name: Start UDP echo server
+        run: |
+          python3 -c "
+          import socket
+          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          sock.bind(('0.0.0.0', ${{ github.event.inputs.echo_port }}))
+          print(f'Echo server listening on UDP :${{ github.event.inputs.echo_port }}')
+          while True:
+              data, addr = sock.recvfrom(65536)
+              sock.sendto(data, addr)
+          " &
+
+      - name: Start tcpudp server
+        run: |
+          ./build/bin/server \
+            --port=${{ github.event.inputs.server_port }} \
+            --udp-target-port=${{ github.event.inputs.echo_port }} \
+            --log-level=INFO &
+          sleep 2
+          echo "Server started on port ${{ github.event.inputs.server_port }}"
+
+      - name: Run performance test (local mode)
+        if: github.event.inputs.deploy_to_vpn2 == 'false'
+        run: |
+          python3 test/integration_test.py \
+            --mode local \
+            --server-addr ${{ github.event.inputs.server_addr }} \
+            --server-port ${{ github.event.inputs.server_port }} \
+            --echo-port ${{ github.event.inputs.echo_port }} \
+            --client-port ${{ github.event.inputs.client_port }} \
+            --client-id 99 \
+            --perf-only \
+            --packet-count ${{ github.event.inputs.packet_count }}
+
+      - name: Run performance test (remote mode against vpn2)
+        if: github.event.inputs.deploy_to_vpn2 == 'true'
+        run: |
+          python3 test/integration_test.py \
+            --mode remote \
+            --server-addr ${{ github.event.inputs.server_addr }} \
+            --server-port ${{ github.event.inputs.server_port }} \
+            --echo-port ${{ github.event.inputs.echo_port }} \
+            --client-port ${{ github.event.inputs.client_port }} \
+            --client-id 99 \
+            --perf-only \
+            --packet-count ${{ github.event.inputs.packet_count }}
+
+      - name: Collect results
+        if: always()
+        run: |
+          echo "Performance test completed. See output above for latency, throughput, and loss metrics."

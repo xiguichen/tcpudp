@@ -1,5 +1,6 @@
 #include "TcpVirtualChannel.h"
 #include "Log.h"
+#include "NetworkScoreCalculator.h"
 #include "VcProtocol.h"
 #include <algorithm>
 #include <chrono>
@@ -765,6 +766,7 @@ void TcpVirtualChannel::reorderThreadFunc()
                 }
                 txInfo += "]";
 
+                auto netScore = getNetworkScore();
                 log_info(std::format("[VC] Health: nextMsgId={} buffered={} queueDepth={} gap={}, {}, {}",
                                      nextMessageId.load(),
                                      receivedDataMap.size(),
@@ -772,6 +774,7 @@ void TcpVirtualChannel::reorderThreadFunc()
                                      gapTimerActive ? "active" : "none",
                                      rxInfo,
                                      txInfo));
+                log_info(netScore.format());
             }
         }
 
@@ -845,6 +848,23 @@ void TcpVirtualChannel::replaceConnection(int slotIndex, SocketFd newFd)
         sendThread->replaceConnection(slotIndex, newConn, newStats, newStatus);
 
     log_info(std::format("[VC] Replaced connection at slot {}", slotIndex));
+}
+
+NetworkScore TcpVirtualChannel::getNetworkScore() const
+{
+    // Sample per-connection TCP runtime info.
+    std::vector<TcpConnection::TcpConnectionRuntimeInfo> infos;
+    infos.reserve(connections.size());
+    for (const auto &conn : connections)
+    {
+        if (conn && conn->isConnected())
+            infos.push_back(conn->getLastRuntimeInfo());
+        else
+            infos.push_back({}); // invalid/zeroed entry for dead connections
+    }
+
+    return NetworkScoreCalculator::compute(infos, connSendStats, socketStatuses,
+                                           sendQueue ? sendQueue->approxSize() : 0);
 }
 
 TcpVirtualChannel::TcpVirtualChannel(std::vector<SocketFd> fds)
