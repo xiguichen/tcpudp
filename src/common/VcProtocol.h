@@ -62,7 +62,7 @@ const uint16_t VC_MAX_DATA_PAYLOAD_SIZE = 2000;
 const uint8_t VC_TCP_CONNECTIONS = 32;
 
 // Number of connections reserved for resend traffic (last N slots).
-constexpr uint8_t VC_RESEND_CONN_COUNT = 4;
+constexpr uint8_t VC_RESEND_CONN_COUNT = 8;
 
 // First resend connection index. Resend slots are [VC_FIRST_RESEND_CONN_INDEX, VC_TCP_CONNECTIONS).
 constexpr uint8_t VC_FIRST_RESEND_CONN_INDEX = VC_TCP_CONNECTIONS - VC_RESEND_CONN_COUNT;

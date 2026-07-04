@@ -102,6 +102,11 @@ bool Client::PrepareVC()
         return false;
     }
 
+    // Tune for WAN links with out-of-order delivery.
+    // Default 4000ms reorder timeout can trigger false timeouts when packets
+    // take different paths through the 32 connections on high-RTT links.
+    ((TcpVirtualChannel *)newVc.get())->setReorderTimeout(std::chrono::milliseconds(8000));
+
     // Set up receive callback
     newVc->setReceiveCallback([this](const char *data, size_t size) {
         log_debug(std::format("Virtual channel received {} bytes of data", size));

@@ -340,13 +340,10 @@ void TcpVCSendThread::run()
 
             // No per-packet writability pre-poll. The socket is non-blocking, so
             // SendTcpDirect returns immediately with SOCKET_ERROR_WOULD_BLOCK when
-            // the kernel send buffer is full. Dropping the IsSocketWritable() select()
-            // removes one syscall per sent packet on the hot path; behavior is
-            // unchanged because the WOULD_BLOCK/error case below already advances to
-            // the next connection (and increments reenqueueCount).
+            // the kernel send buffer is full.
             conn->diagMarkSendStart(messageId);
 
-            // Use direct send (no redundant poll) — socket is already non-blocking.
+            // Use direct send — socket is already non-blocking.
             ssize_t n = SendTcpDirect(conn->getSocketFd(), dataVec->data(), dataVec->size(), 0);
 
             conn->diagMarkSendEnd(messageId);

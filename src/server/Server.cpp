@@ -243,6 +243,9 @@ void Server::AcceptConnections()
             std::vector<SocketFd> fds = peer->GetSockets();
             VirtualChannelSp vc = VirtualChannelFactory::create(fds);
 
+            // Match client-side reorder timeout for WAN links.
+            ((TcpVirtualChannel *)vc.get())->setReorderTimeout(std::chrono::milliseconds(8000));
+
             // Add the virtual channel to the manager using client ID
             VcManager::getInstance().Add(clientId, vc);
             log_info(std::format("Created virtual channel for peer with client ID {}", clientId));
