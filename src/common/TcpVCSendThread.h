@@ -60,7 +60,7 @@ class TcpVCSendThread : public StopableThread
     // total budget before declaring the connection genuinely stuck. The old code
     // gave up after a single 10ms poll and disconnected, which tore down healthy
     // but busy connections as traffic grew — driving a reconnect/resend storm.
-    static constexpr int PARTIAL_SEND_BUDGET_MS = 500;
+    static constexpr int PARTIAL_SEND_BUDGET_MS = 3000;
     static constexpr int PARTIAL_SEND_POLL_MS = 20;
 
     // Shared wake primitive for the idle wait. Held by both this thread and the

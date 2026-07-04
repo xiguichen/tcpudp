@@ -43,7 +43,7 @@ STARTUP_WAIT = 3
 RECV_TIMEOUT = 15
 
 # Stress / performance test parameters
-PERF_PACKET_COUNT = 200
+PERF_PACKET_COUNT = 5000
 PERF_PACKET_SIZE = 1400
 
 
@@ -90,10 +90,15 @@ def run_echo_server(port, stop_event):
 
 def run_perf_test(test_sock, server_addr, client_port,
                   packet_count=PERF_PACKET_COUNT,
-                  packet_size=PERF_PACKET_SIZE):
+                  packet_size=PERF_PACKET_SIZE,
+                  no_pacing=False,
+                  pace_ms=2.0):
     """
     Send numbered packets as fast as reasonably possible, measure per-packet
     round-trip latency, and compute aggregate throughput.
+
+    When no_pacing is True, packets are sent back-to-back with no delay
+    (pressure test mode — may cause queue drops if the pipeline can't keep up).
     """
     print(f"\n{'='*60}")
     print(f"Performance Test: {packet_count} packets × {packet_size} bytes")
@@ -117,9 +122,11 @@ def run_perf_test(test_sock, server_addr, client_port,
         payload = header + fill_byte * (packet_size - len(header))
         sent_packets[seq] = payload
         test_sock.sendto(payload, (server_addr, client_port))
-        # Pace: slight delay every 10 packets to avoid overwhelming the VC send queue
-        if seq % 10 == 9:
-            time.sleep(0.002)
+        # Pace: configurable delay every N packets to avoid overwhelming the VC.
+        # For high-RTT WAN links, increase --pace-ms (e.g. 50-100ms).
+        # Skip pacing entirely in pressure-test mode (--no-pacing).
+        if not no_pacing and pace_ms > 0 and seq % 10 == 9:
+            time.sleep(pace_ms / 1000.0)
     send_end = time.monotonic()
     send_duration = send_end - send_start
     print(f"Sent {packet_count} packets in {send_duration:.2f}s "
@@ -127,10 +134,12 @@ def run_perf_test(test_sock, server_addr, client_port,
           f"{packet_count * packet_size * 8 / send_duration / 1e6:.2f} Mbps send rate)")
 
     # ---- Receive phase ----
-    print(f"Waiting for echoes (timeout={PERF_PACKET_COUNT * 2}s)...")
+    # Timeout scales with packet count: min 30s, max 600s
+    recv_timeout = max(30.0, min(packet_count * 2.0, 600.0))
+    print(f"Waiting for echoes (timeout={recv_timeout:.0f}s)...")
     test_sock.settimeout(2.0)
     received_seqs = set()
-    deadline = time.monotonic() + PERF_PACKET_COUNT * 2
+    deadline = time.monotonic() + recv_timeout
     recv_start = time.monotonic()
 
     while len(received_seqs) + corrupted < packet_count and time.monotonic() < deadline:
@@ -177,7 +186,13 @@ def run_perf_test(test_sock, server_addr, client_port,
 
     if recv_count == 0:
         print("  FAILED: No packets received — pipeline is broken")
-        return {"passed": False, "latencies": [], "throughput_mbps": 0.0}
+        return {
+            "passed": False, "latencies": [], "throughput_mbps": 0.0,
+            "loss_pct": 100.0, "corrupted": corrupted,
+            "recv_count": 0, "avg_lat_ms": 0.0,
+            "p50_lat_ms": 0.0, "p95_lat_ms": 0.0, "p99_lat_ms": 0.0,
+            "send_rate_mbps": packet_count * packet_size * 8 / send_duration / 1e6,
+        }
 
     latencies.sort()
     avg_lat = statistics.mean(latencies)
@@ -359,6 +374,10 @@ def main():
                         help=f"Packets for perf/stress test (default: {PERF_PACKET_COUNT})")
     parser.add_argument("--packet-size", type=int, default=PERF_PACKET_SIZE,
                         help=f"Packet size for perf/stress test (default: {PERF_PACKET_SIZE})")
+    parser.add_argument("--no-pacing", action="store_true",
+                        help="Send packets as fast as possible (no inter-packet delay, for pressure testing)")
+    parser.add_argument("--pace-ms", type=float, default=2.0,
+                        help="Inter-packet delay in ms (default: 2.0; increase for high-RTT links)")
     args = parser.parse_args()
 
     build_dir = os.path.abspath(args.build_dir)
@@ -403,6 +422,11 @@ def main():
         )
         processes.append(client_proc)
 
+        # The client process listens on localhost regardless of where the
+        # server is. UDP packets go to the local client, which forwards them
+        # over TCP to the remote server.
+        udp_target = "127.0.0.1"
+
         print(f"Server PID: {client_proc.pid}")
         if args.mode == "local":
             for p in processes:
@@ -422,17 +446,19 @@ def main():
 
         if not args.perf_only:
             # Test 1: Basic echo
-            if not run_basic_test(test_sock, args.server_addr, args.client_port):
+            if not run_basic_test(test_sock, udp_target, args.client_port):
                 all_passed = False
 
             # Test 2: Stress test (corruption check)
-            if not run_stress_test(test_sock, args.server_addr, args.client_port,
+            if not run_stress_test(test_sock, udp_target, args.client_port,
                                    args.packet_count, args.packet_size):
                 all_passed = False
 
         # Test 3: Performance test (always run)
-        perf_result = run_perf_test(test_sock, args.server_addr, args.client_port,
-                                    args.packet_count, args.packet_size)
+        perf_result = run_perf_test(test_sock, udp_target, args.client_port,
+                                    args.packet_count, args.packet_size,
+                                    no_pacing=args.no_pacing,
+                                    pace_ms=args.pace_ms)
         if not perf_result["passed"]:
             all_passed = False
 
