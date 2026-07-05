@@ -857,14 +857,24 @@ NetworkScore TcpVirtualChannel::getNetworkScore() const
     std::lock_guard<std::mutex> lock(disconnectMutex);
 
     // Sample per-connection TCP runtime info.
+    // Refresh runtime info for connected sockets that haven't been sampled yet
+    // (or whose last sample is stale). This is essential for resend connections
+    // (indices VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1) which are
+    // never scored by rateConnection() and would otherwise always report
+    // valid=false → counted as dead.
     std::vector<TcpConnection::TcpConnectionRuntimeInfo> infos;
     infos.reserve(connections.size());
     for (const auto &conn : connections)
     {
         if (conn && conn->isConnected())
+        {
+            conn->refreshRuntimeInfoIfStale(std::chrono::milliseconds(500));
             infos.push_back(conn->getLastRuntimeInfo());
+        }
         else
+        {
             infos.push_back({}); // invalid/zeroed entry for dead connections
+        }
     }
 
     return NetworkScoreCalculator::compute(infos, connSendStats, socketStatuses,
