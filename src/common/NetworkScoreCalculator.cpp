@@ -53,10 +53,15 @@ NetworkScore NetworkScoreCalculator::compute(
                 cwndSamples++;
             }
 
-            // Check degradation status
+            // Check degradation status. Use time-expiring check
+            // (isCurrentlyDegraded) instead of the raw isDegraded flag so
+            // degradation auto-recovers after the timeout. Without this,
+            // isDegraded is a one-way latch — once set by a resend request
+            // or missing-notify, it stays true forever, causing the degraded
+            // count to monotonically increase over the connection's lifetime.
             if (i < statuses.size() && statuses[i])
             {
-                if (statuses[i]->isDegraded.load(std::memory_order_acquire))
+                if (statuses[i]->isCurrentlyDegraded(std::chrono::seconds(10)))
                     degradedCount++;
             }
         }
