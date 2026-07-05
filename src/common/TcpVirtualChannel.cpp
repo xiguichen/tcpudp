@@ -852,6 +852,10 @@ void TcpVirtualChannel::replaceConnection(int slotIndex, SocketFd newFd)
 
 NetworkScore TcpVirtualChannel::getNetworkScore() const
 {
+    // Hold disconnectMutex to prevent a data race with replaceConnection(),
+    // which writes connections/connSendStats/socketStatuses under the same lock.
+    std::lock_guard<std::mutex> lock(disconnectMutex);
+
     // Sample per-connection TCP runtime info.
     std::vector<TcpConnection::TcpConnectionRuntimeInfo> infos;
     infos.reserve(connections.size());

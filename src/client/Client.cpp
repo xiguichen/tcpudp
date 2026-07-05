@@ -438,8 +438,8 @@ bool Client::ReconnectSingleSlot(int slotIndex)
     serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
     serverAddr.sin_port = htons(port);
 
-    // Non-blocking connect with 2s timeout — short enough that 4 dead resend
-    // slots don't block the watchdog for more than ~8s total.
+    // Non-blocking connect with 2s timeout — short enough that dead resend
+    // slots don't block the watchdog for more than 2×VC_RESEND_CONN_COUNT seconds total.
     if (SocketConnectNonBlocking(tcpSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr), 2000) < 0)
     {
         log_error(std::format("Watchdog: failed to connect for slot {}", slotIndex));

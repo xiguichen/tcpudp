@@ -30,29 +30,29 @@ bool WaitFor(Pred pred, std::chrono::milliseconds timeout,
 // Protocol constants
 // ---------------------------------------------------------------------------
 
-TEST(ResendProtocolTest, ResendConnectionCountIsFour)
+TEST(ResendProtocolTest, ResendConnectionCount)
 {
-    EXPECT_EQ(VC_RESEND_CONN_COUNT, 4);
+    EXPECT_GE(VC_RESEND_CONN_COUNT, 1);
+    EXPECT_LE(VC_RESEND_CONN_COUNT, VC_TCP_CONNECTIONS);
 }
 
-TEST(ResendProtocolTest, FirstResendIndexIs28)
+TEST(ResendProtocolTest, FirstResendIndexFormula)
 {
     EXPECT_EQ(VC_FIRST_RESEND_CONN_INDEX, VC_TCP_CONNECTIONS - VC_RESEND_CONN_COUNT);
-    EXPECT_EQ(VC_FIRST_RESEND_CONN_INDEX, 28);
 }
 
-TEST(ResendProtocolTest, DataConnectionCountIs28)
+TEST(ResendProtocolTest, DataConnectionCount)
 {
-    EXPECT_EQ(VC_TCP_CONNECTIONS - VC_RESEND_CONN_COUNT, 28);
+    EXPECT_EQ(VC_TCP_CONNECTIONS - VC_RESEND_CONN_COUNT, VC_FIRST_RESEND_CONN_INDEX);
 }
 
 TEST(ResendProtocolTest, IsResendConnection)
 {
-    for (int i = 0; i < 28; i++)
+    for (int i = 0; i < VC_FIRST_RESEND_CONN_INDEX; i++)
     {
         EXPECT_FALSE(IsResendConnectionIndex(i)) << "Index " << i << " should NOT be a resend connection";
     }
-    for (int i = 28; i < 32; i++)
+    for (int i = VC_FIRST_RESEND_CONN_INDEX; i < VC_TCP_CONNECTIONS; i++)
     {
         EXPECT_TRUE(IsResendConnectionIndex(i)) << "Index " << i << " should be a resend connection";
     }

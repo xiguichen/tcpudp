@@ -132,7 +132,7 @@ int NetworkScoreCalculator::scoreLatency(double avgRttMs)
         return 0;
 
     // Find the bracket and interpolate.
-    for (size_t i = 0; i < 6; ++i)
+    for (size_t i = 0; i < std::size(kThresholds) - 1; ++i)
     {
         if (avgRttMs >= kThresholds[i].rttMs && avgRttMs < kThresholds[i + 1].rttMs)
         {
