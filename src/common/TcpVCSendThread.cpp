@@ -522,6 +522,14 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
             continue;
         }
 
+        // Skip connections in TCP exponential backoff — sending on them
+        // would waste a round-trip on a connection the kernel already
+        // considers congested.  Refresh runtime info first (the resend
+        // path doesn't go through rateConnection, so it may be stale).
+        refreshConnRuntimeInfo(idx, conns);
+        if (conn->getLastRuntimeInfo().isInExponentialBackoff)
+            continue;
+
         aliveCount++;
 
         ssize_t n = SendTcpDirect(conn->getSocketFd(), data->data(), data->size(), 0);
