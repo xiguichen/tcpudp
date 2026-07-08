@@ -130,9 +130,13 @@ int TcpVCSendThread::rateConnection(size_t connIndex,
         return -1;
 
     int score = 10000;
-    score += static_cast<int>(info.congestionWindowBytes / 100);
-    score -= static_cast<int>(info.smoothedRttUs / 500);
-    score -= static_cast<int>(info.bytesInFlight / 500);
+    // RTT is weighted more heavily than cwnd to prefer low-latency paths.
+    // A 50ms RTT difference (100pt) now outweighs a 20KB cwnd difference (100pt),
+    // whereas the old weights let a high-cwnd/high-RTT connection beat a
+    // low-cwnd/low-RTT one (cwnd/100 vs rtt/500 made cwnd 5x more influential).
+    score += static_cast<int>(info.congestionWindowBytes / 200);
+    score -= static_cast<int>(info.smoothedRttUs / 200);
+    score -= static_cast<int>(info.bytesInFlight / 200);
     score -= info.timeoutEpisodes * 200;
 
     if (connIndex < stats.size() && stats[connIndex])
