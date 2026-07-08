@@ -77,4 +77,7 @@ inline bool IsResendConnectionIndex(int index)
 
 // Drop incoming UDP packets when any send queue exceeds this depth.
 // Prevents unbounded memory growth when the network can't keep up.
-const size_t SEND_QUEUE_DROP_THRESHOLD = 500;
+// Increased from 500 to 1000 to reduce packet drops under WAN load.
+// At ~2KB/packet, 1000 packets ≈ 2MB queue depth, which adds at most
+// ~500ms of buffering at typical WAN throughput (32 Mbps).
+const size_t SEND_QUEUE_DROP_THRESHOLD = 1000;
