@@ -117,7 +117,8 @@ int NetworkScoreCalculator::scoreLatency(double avgRttMs)
         return 100; // no data → assume best
 
     // Piecewise linear interpolation between thresholds.
-    // Thresholds in ms: 0→100, 1→90, 5→75, 20→55, 50→35, 100→15, 200→0
+    // Calibrated for WAN/VPN use: 80ms RTT (typical VPN) scores 100,
+    // declining to 0 at 3000ms.
     struct Threshold
     {
         double rttMs;
@@ -125,15 +126,15 @@ int NetworkScoreCalculator::scoreLatency(double avgRttMs)
     };
     static constexpr Threshold kThresholds[] = {
         {0.0, 100},
-        {1.0, 90},
-        {5.0, 75},
-        {20.0, 55},
-        {50.0, 35},
-        {100.0, 15},
-        {200.0, 0},
+        {80.0, 100},
+        {160.0, 75},
+        {300.0, 50},
+        {600.0, 25},
+        {1500.0, 10},
+        {3000.0, 0},
     };
 
-    if (avgRttMs >= 200.0)
+    if (avgRttMs >= 3000.0)
         return 0;
 
     // Find the bracket and interpolate.
