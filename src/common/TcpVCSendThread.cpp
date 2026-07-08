@@ -275,6 +275,10 @@ void TcpVCSendThread::run()
         // Resend connections (VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1) are excluded.
         int bestScore = -1;
         bool uniformScores = true;
+        // Harvest aggregate cwnd / RTT for send pacing (see below).
+        double aggregateCwndBytes = 0;
+        double firstRttUs = 0;
+        int cwndSamples = 0;
         for (size_t i = 0; i < numDataConns; i++)
         {
             scores[i] = rateConnection(i, connSnap, statsSnap);
@@ -282,6 +286,19 @@ void TcpVCSendThread::run()
                 uniformScores = false;
             if (scores[i] > bestScore)
                 bestScore = scores[i];
+
+            // rateConnection() refreshes runtime info -- harvest cwnd for pacing.
+            if (connSnap[i] && connSnap[i]->isConnected())
+            {
+                auto info = connSnap[i]->getLastRuntimeInfo();
+                if (info.supported && info.congestionWindowBytes > 0)
+                {
+                    aggregateCwndBytes += static_cast<double>(info.congestionWindowBytes);
+                    cwndSamples++;
+                    if (info.smoothedRttUs > 0 && firstRttUs == 0)
+                        firstRttUs = static_cast<double>(info.smoothedRttUs);
+                }
+            }
         }
 
         // Build an order of indices to try, best-scored first.
@@ -444,6 +461,26 @@ void TcpVCSendThread::run()
                 }
 
                 sent = true;
+
+                // ---- cwnd-aware send pacing ----
+                // During BBR startup on new connections, the aggregate cwnd is
+                // small (10-20 segments per conn).  Sending at line rate would
+                // overflow the send queue and cause 60-70% application-level
+                // drops.  Pace at 90% of the theoretical aggregate TCP throughput
+                // (total_cwnd / RTT) so the queue drains faster than it fills.
+                // When BBR converges (cwnd grows), the delay approaches zero.
+                if (cwndSamples > 0)
+                {
+                    double rttUs = firstRttUs > 0 ? firstRttUs : 80000.0;
+                    double maxBps = (aggregateCwndBytes / (rttUs / 1e6)) * 0.90;
+                    double packetBits = static_cast<double>(dataVec->size()) * 8.0;
+                    auto delayUs = static_cast<int64_t>((packetBits / maxBps) * 1e6);
+                    if (delayUs > 50000)  // cap at 50 ms per packet
+                        delayUs = 50000;
+                    if (delayUs > 0)
+                        std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
+                }
+
                 break;
             }
             else
