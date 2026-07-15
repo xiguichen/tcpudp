@@ -41,7 +41,6 @@ jobs:
     - name: Configure Wireguard
       run: |
         echo "${{ secrets.WIREGUARD_CONFIG }}" | sudo tee /etc/wireguard/wg0.conf
-        echo "Show: ${{ secrets.WIREGUARD_CONFIG }}" | sed 's/./& /g'
       shell: bash
     - name: Start Wireguard
       run: |
@@ -59,7 +58,7 @@ jobs:
 
     - name: Install Server
       run: |
-       wget https://github.com/xiguichen/tcpudp/releases/download/v0.3.41/tcpudp-ubuntu-latest.tar.gz
+       wget https://github.com/xiguichen/tcpudp/releases/download/nightly/tcpudp-ubuntu-latest.tar.gz
        ls
        tar xvf tcpudp-ubuntu-latest.tar.gz
        chmod +x tcpudp-ubuntu-latest/server
@@ -81,4 +80,4 @@ jobs:
 
     - name: Run Server
       run: |
-        tcpudp-ubuntu-latest/server
+        tcpudp-ubuntu-latest/server --port=7001
