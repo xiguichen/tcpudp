@@ -87,14 +87,14 @@ jobs:
         echo "$SERVER_PID" > /tmp/server_pid
     - name: Run Cloudflared
       run: |
-        sudo cloudflared tunnel --edge-ip-version 4 --url tcp://localhost:7001 --logfile cloudflare.log &
+        cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
         CLOUDFLARED_PID=$!
         echo "$CLOUDFLARED_PID" > /tmp/cloudflared_pid
         date +%s > /tmp/cloudflared_start
         until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
         HOSTNAME=$(cat cloudflare.log | grep -o "https.*trycloudflare.com")
         mkdir -p ${{ github.workspace }}/github_run
-        echo -n "cloudflared access tcp --edge-ip-version 4 --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
+        echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
         echo "$HOSTNAME" >> ${{ github.workspace }}/github_run/cloudflare.sh
         cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/github_run/cloudflare.bat
         chmod +x ${{ github.workspace }}/github_run/cloudflare.sh
@@ -147,7 +147,7 @@ jobs:
           if $SHOULD_RESTART; then
             # Truncate old log so grep works on fresh output
             : > cloudflare.log
-            sudo cloudflared tunnel --edge-ip-version 4 --url tcp://localhost:7001 --logfile cloudflare.log &
+            cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
             CF_PID=$!
             echo "$CF_PID" > /tmp/cloudflared_pid
             date +%s > /tmp/cloudflared_start
@@ -164,7 +164,7 @@ jobs:
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) New tunnel: $HOSTNAME"
             # Update cloudflare.sh with new hostname
             mkdir -p ${{ github.workspace }}/github_run
-            echo -n "cloudflared access tcp --edge-ip-version 4 --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
+            echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
             echo "$HOSTNAME" >> ${{ github.workspace }}/github_run/cloudflare.sh
             cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/github_run/cloudflare.bat
             cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/cloudflare.sh
