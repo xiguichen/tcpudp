@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://drugs-butterfly-distance-rely.trycloudflare.com
+cloudflared access tcp --edge-ip-version 4 --url tcp://localhost:7001 --hostname https://wealth-nascar-attempted-hiking.trycloudflare.com
