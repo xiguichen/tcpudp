@@ -36,7 +36,7 @@ jobs:
 
     - name: Install Cloudflared
       run: |
-        wget https://github.com/cloudflare/cloudflared/releases/download/2025.2.1/cloudflared-linux-amd64.deb
+        wget https://github.com/cloudflare/cloudflared/releases/download/2025.11.1/cloudflared-linux-amd64.deb
         sudo dpkg -i cloudflared-linux-amd64.deb
         sudo sysctl -w net.core.rmem_max=7500000
         sudo sysctl -w net.core.wmem_max=7500000
@@ -88,6 +88,8 @@ jobs:
     - name: Run Cloudflared
       run: |
         sudo cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
+        CLOUDFLARED_PID=$!
+        echo "$CLOUDFLARED_PID" > /tmp/cloudflared_pid
         until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
         HOSTNAME=$(cat cloudflare.log | grep -o "https.*trycloudflare.com")
         mkdir -p ${{ github.workspace }}/github_run
@@ -109,18 +111,48 @@ jobs:
           git push origin run
      
 
-    - name: Keep Server Alive
+    - name: Keep Services Alive
       run: |
-        # Monitor the server and restart on crash so the tunnel stays up.
+        # Monitor and restart server + cloudflared so the tunnel stays up.
         while true; do
+          # --- Server ---
           SERVER_PID=$(cat /tmp/server_pid 2>/dev/null || echo "")
           if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-            sleep 5
+            true
           else
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server not running. Restarting..."
             nohup tcpudp-ubuntu-latest/server --port=7001 > server.log 2>&1 &
             echo $! > /tmp/server_pid
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server restarted (PID $!)"
-            sleep 1
           fi
+
+          # --- Cloudflared ---
+          CF_PID=$(cat /tmp/cloudflared_pid 2>/dev/null || echo "")
+          if [ -n "$CF_PID" ] && kill -0 "$CF_PID" 2>/dev/null; then
+            true
+          else
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Cloudflared not running. Restarting..."
+            sudo cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
+            CF_PID=$!
+            echo "$CF_PID" > /tmp/cloudflared_pid
+            # Wait for new hostname
+            until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
+            HOSTNAME=$(grep -o "https.*trycloudflare.com" cloudflare.log)
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) New tunnel: $HOSTNAME"
+            # Update cloudflare.sh with new hostname
+            mkdir -p ${{ github.workspace }}/github_run
+            echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
+            echo "$HOSTNAME" >> ${{ github.workspace }}/github_run/cloudflare.sh
+            cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/github_run/cloudflare.bat
+            cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/cloudflare.sh
+            cp ${{ github.workspace }}/github_run/cloudflare.bat ${{ github.workspace }}/cloudflare.bat
+            echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
+            # Push updated hostname so clients can pick it up
+            cd ${{ github.workspace }}
+            git add github_run/ cloudflare.sh cloudflare.bat
+            git commit -m "Auto-update cloudflare tunnel info" || true
+            git push origin run || echo "Push failed — will retry on next restart"
+          fi
+
+          sleep 5
         done

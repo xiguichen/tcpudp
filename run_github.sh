@@ -42,6 +42,10 @@ if [ ! -f "$CLOUDFLARE_SCRIPT" ]; then
     exit 1
 fi
 
+# ---- Pull latest tunnel info ----
+echo "=== Pulling latest tunnel info ==="
+git pull origin run
+
 # ---- Save existing vpn2 config ----
 if [ -f "$CONFIG_FILE" ]; then
     cp "$CONFIG_FILE" "$CONFIG_BACKUP"
