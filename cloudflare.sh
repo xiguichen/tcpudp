@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://rhythm-providers-asking-bufing.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://directory-clouds-guarantees-metro.trycloudflare.com
