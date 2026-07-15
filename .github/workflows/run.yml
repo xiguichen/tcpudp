@@ -13,6 +13,11 @@ on:
     paths:
       - trigger/*
 
+# Cancel any previous run on this branch — only one tunnel at a time.
+concurrency:
+  group: run-tunnel
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -77,6 +82,16 @@ jobs:
         cp ${{ github.workspace }}/github_run/cloudflare.bat ${{ github.workspace }}/cloudflare.bat
         # Write machine-readable run info
         echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
+        # Verify the cloudflared tunnel is actually working before we commit
+        echo "Verifying cloudflared tunnel..."
+        for i in $(seq 1 10); do
+          if curl -sS --max-time 3 "https://$HOSTNAME" 2>/dev/null || true; then
+            echo "Tunnel reachable via HTTPS check"
+            break
+          fi
+          echo "  waiting for tunnel to be ready (attempt $i/10)..."
+          sleep 2
+        done
     - name: Commit Change
       working-directory: ${{ github.workspace }}
       run: |
@@ -87,4 +102,10 @@ jobs:
 
     - name: Run Server
       run: |
-        tcpudp-ubuntu-latest/server --port=7001
+        # Keep the server alive: restart on crash so the tunnel stays up.
+        while true; do
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Starting server..."
+          tcpudp-ubuntu-latest/server --port=7001
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server exited. Restarting in 3s..."
+          sleep 3
+        done
