@@ -66,15 +66,22 @@ jobs:
       run: |
         sudo cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
         until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
-        echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/cloudflare.sh
-        cat cloudflare.log | grep https.*trycloudflare.com -o >> ${{ github.workspace }}/cloudflare.sh
-        cp ${{ github.workspace }}/cloudflare.sh ${{ github.workspace }}/cloudflare.bat
-        chmod +x ${{ github.workspace }}/cloudflare.sh
+        HOSTNAME=$(cat cloudflare.log | grep -o "https.*trycloudflare.com")
+        mkdir -p ${{ github.workspace }}/github_run
+        echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
+        echo "$HOSTNAME" >> ${{ github.workspace }}/github_run/cloudflare.sh
+        cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/github_run/cloudflare.bat
+        chmod +x ${{ github.workspace }}/github_run/cloudflare.sh
+        # Backward compat: also write to root
+        cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/cloudflare.sh
+        cp ${{ github.workspace }}/github_run/cloudflare.bat ${{ github.workspace }}/cloudflare.bat
+        # Write machine-readable run info
+        echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
     - name: Commit Change
       working-directory: ${{ github.workspace }}
       run: |
-          git add cloudflare.sh cloudflare.bat
-          git commit -m "Auto-update"
+          git add github_run/ cloudflare.sh cloudflare.bat
+          git commit -m "Auto-update cloudflare tunnel info"
           git push origin run
      
 
