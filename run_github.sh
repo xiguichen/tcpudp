@@ -49,16 +49,24 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 # ---- Write GitHub-run config ----
+# Use port 5003 (different from vpn2's 5002) so they never conflict.
+GITHUB_UDP_PORT=5003
+
+# Kill any previous client still holding this port
+if lsof -i :$GITHUB_UDP_PORT -t 2>/dev/null | xargs kill 2>/dev/null; then
+    echo "Killed stale process on UDP port $GITHUB_UDP_PORT"
+fi
+
 mkdir -p "$RUN_DIR"
-cat > "$CONFIG_FILE" << 'EOF'
+cat > "$CONFIG_FILE" << EOF
 {
-  "localHostUdpPort": 5002,
+  "localHostUdpPort": $GITHUB_UDP_PORT,
   "peerTcpPort": 7001,
   "peerAddress": "127.0.0.1",
   "clientId": 4
 }
 EOF
-echo "Config set for GitHub run mode (127.0.0.1:7001)"
+echo "Config set for GitHub run mode (127.0.0.1:7001, UDP:$GITHUB_UDP_PORT)"
 
 # ---- Cleanup handler ----
 cleanup() {
