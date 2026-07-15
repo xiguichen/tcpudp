@@ -67,6 +67,24 @@ jobs:
        ls
        tar xvf tcpudp-ubuntu-latest.tar.gz
        chmod +x tcpudp-ubuntu-latest/server
+    - name: Start Server (background)
+      run: |
+        # Start server first so the port is listening when cloudflared connects
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Starting server..."
+        nohup tcpudp-ubuntu-latest/server --port=7001 > server.log 2>&1 &
+        SERVER_PID=$!
+        echo "Server PID: $SERVER_PID"
+        # Wait for the server to be ready
+        for i in $(seq 1 15); do
+          if nc -z localhost 7001 2>/dev/null; then
+            echo "Server is listening on port 7001"
+            break
+          fi
+          echo "  waiting for server to be ready (attempt $i/15)..."
+          sleep 1
+        done
+        # Save PID so the foreground step can monitor it
+        echo "$SERVER_PID" > /tmp/server_pid
     - name: Run Cloudflared
       run: |
         sudo cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
@@ -82,16 +100,7 @@ jobs:
         cp ${{ github.workspace }}/github_run/cloudflare.bat ${{ github.workspace }}/cloudflare.bat
         # Write machine-readable run info
         echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
-        # Verify the cloudflared tunnel is actually working before we commit
-        echo "Verifying cloudflared tunnel..."
-        for i in $(seq 1 10); do
-          if curl -sS --max-time 3 "https://$HOSTNAME" 2>/dev/null || true; then
-            echo "Tunnel reachable via HTTPS check"
-            break
-          fi
-          echo "  waiting for tunnel to be ready (attempt $i/10)..."
-          sleep 2
-        done
+        echo "Cloudflared tunnel registered: $HOSTNAME"
     - name: Commit Change
       working-directory: ${{ github.workspace }}
       run: |
@@ -100,12 +109,18 @@ jobs:
           git push origin run
      
 
-    - name: Run Server
+    - name: Keep Server Alive
       run: |
-        # Keep the server alive: restart on crash so the tunnel stays up.
+        # Monitor the server and restart on crash so the tunnel stays up.
         while true; do
-          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Starting server..."
-          tcpudp-ubuntu-latest/server --port=7001
-          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server exited. Restarting in 3s..."
-          sleep 3
+          SERVER_PID=$(cat /tmp/server_pid 2>/dev/null || echo "")
+          if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+            sleep 5
+          else
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server not running. Restarting..."
+            nohup tcpudp-ubuntu-latest/server --port=7001 > server.log 2>&1 &
+            echo $! > /tmp/server_pid
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server restarted (PID $!)"
+            sleep 1
+          fi
         done

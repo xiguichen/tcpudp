@@ -128,16 +128,6 @@ if [ -f github_run/cloudflare.sh ]; then
     fi
     echo ""
     echo "Next step:  ./run_github.sh"
-
-    # Quick tunnel liveness check
-    echo "=== Checking tunnel liveness ==="
-    echo -n "  "
-    if curl -sS --max-time 5 "https://$HOSTNAME" -o /dev/null 2>/dev/null; then
-        echo "Tunnel is reachable ✓"
-    else
-        echo "WARNING: Tunnel may not be fully ready yet (HTTPS check failed)."
-        echo "  Wait 10-15 seconds and try again, or re-run trigger_run.sh."
-    fi
 else
     echo "ERROR: github_run/cloudflare.sh not found."
     echo "The run may still be in progress or may have failed."
