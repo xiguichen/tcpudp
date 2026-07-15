@@ -90,6 +90,7 @@ jobs:
         sudo cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
         CLOUDFLARED_PID=$!
         echo "$CLOUDFLARED_PID" > /tmp/cloudflared_pid
+        date +%s > /tmp/cloudflared_start
         until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
         HOSTNAME=$(cat cloudflare.log | grep -o "https.*trycloudflare.com")
         mkdir -p ${{ github.workspace }}/github_run
@@ -127,17 +128,39 @@ jobs:
           fi
 
           # --- Cloudflared ---
+          # Restart cloudflared if PID is dead OR every CF_MAX_AGE seconds
+          # (the tunnel connection can break while the PID stays alive).
+          CF_MAX_AGE=300  # 5 minutes
           CF_PID=$(cat /tmp/cloudflared_pid 2>/dev/null || echo "")
-          if [ -n "$CF_PID" ] && kill -0 "$CF_PID" 2>/dev/null; then
-            true
-          else
-            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Cloudflared not running. Restarting..."
+          CF_START=$(cat /tmp/cloudflared_start 2>/dev/null || echo "0")
+          NOW=$(date +%s)
+          SHOULD_RESTART=false
+          if [ -z "$CF_PID" ] || ! kill -0 "$CF_PID" 2>/dev/null; then
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Cloudflared PID dead. Restarting..."
+            SHOULD_RESTART=true
+          elif [ $((NOW - CF_START)) -ge $CF_MAX_AGE ]; then
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Cloudflared reached max age ($CF_MAX_AGE s). Cycling..."
+            kill "$CF_PID" 2>/dev/null || true
+            sleep 1
+            SHOULD_RESTART=true
+          fi
+          if $SHOULD_RESTART; then
+            # Truncate old log so grep works on fresh output
+            : > cloudflare.log
             sudo cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
             CF_PID=$!
             echo "$CF_PID" > /tmp/cloudflared_pid
+            date +%s > /tmp/cloudflared_start
             # Wait for new hostname
-            until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
-            HOSTNAME=$(grep -o "https.*trycloudflare.com" cloudflare.log)
+            for i in $(seq 1 30); do
+              if grep -q "https.*trycloudflare.com" cloudflare.log 2>/dev/null; then break; fi
+              sleep 1
+            done
+            HOSTNAME=$(grep -o "https.*trycloudflare.com" cloudflare.log 2>/dev/null || echo "")
+            if [ -z "$HOSTNAME" ]; then
+              echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Cloudflared failed to get hostname. Will retry."
+              continue
+            fi
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) New tunnel: $HOSTNAME"
             # Update cloudflare.sh with new hostname
             mkdir -p ${{ github.workspace }}/github_run
