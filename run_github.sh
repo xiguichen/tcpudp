@@ -46,6 +46,20 @@ fi
 echo "=== Pulling latest tunnel info ==="
 git pull origin run
 
+# ---- Pin DNS to avoid unreachable China edge IP (221.228.32.13) ----
+TUNNEL_HOSTNAME=$(grep -o 'https://[^ ]*trycloudflare\.com' "$CLOUDFLARE_SCRIPT")
+TUNNEL_HOST=${TUNNEL_HOSTNAME#https://}
+HOSTS_ADDED=false
+RELIABLE_IP=""
+if [ -n "$TUNNEL_HOST" ] && command -v dig &>/dev/null; then
+    RELIABLE_IP=$(dig +short "$TUNNEL_HOST" 2>/dev/null | grep -v '221.228.32.13' || true | head -1)
+    if [ -n "$RELIABLE_IP" ]; then
+        echo "Pinning $TUNNEL_HOST -> $RELIABLE_IP in /etc/hosts"
+        echo "$RELIABLE_IP $TUNNEL_HOST" | sudo tee -a /etc/hosts > /dev/null
+        HOSTS_ADDED=true
+    fi
+fi
+
 # ---- Save existing vpn2 config ----
 if [ -f "$CONFIG_FILE" ]; then
     cp "$CONFIG_FILE" "$CONFIG_BACKUP"
@@ -78,6 +92,10 @@ cleanup() {
     echo "=== Cleaning up ==="
     # Kill cloudflared access
     pkill -f "cloudflared access tcp" 2>/dev/null || true
+    # Remove hosts entry
+    if [ "$HOSTS_ADDED" = true ] && [ -n "$TUNNEL_HOST" ]; then
+        sudo sed -i.bak "/ $TUNNEL_HOST\$/d" /etc/hosts 2>/dev/null || true
+    fi
     # Restore vpn2 config
     if [ -f "$CONFIG_BACKUP" ]; then
         mv "$CONFIG_BACKUP" "$CONFIG_FILE"
