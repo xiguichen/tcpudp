@@ -87,7 +87,7 @@ jobs:
         echo "$SERVER_PID" > /tmp/server_pid
     - name: Run Cloudflared
       run: |
-        TUNNEL_TRANSPORT_PROTOCOL=http2 cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
+        cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
         CLOUDFLARED_PID=$!
         echo "$CLOUDFLARED_PID" > /tmp/cloudflared_pid
         date +%s > /tmp/cloudflared_start
@@ -138,7 +138,7 @@ jobs:
           if $SHOULD_RESTART; then
             # Truncate old log so grep works on fresh output
             : > cloudflare.log
-            TUNNEL_TRANSPORT_PROTOCOL=http2 cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
+            cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log &
             CF_PID=$!
             echo "$CF_PID" > /tmp/cloudflared_pid
             date +%s > /tmp/cloudflared_start
