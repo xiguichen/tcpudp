@@ -36,7 +36,7 @@ jobs:
 
     - name: Install Cloudflared
       run: |
-        wget https://github.com/cloudflare/cloudflared/releases/download/2025.11.1/cloudflared-linux-amd64.deb
+        wget https://github.com/cloudflare/cloudflared/releases/download/2026.7.1/cloudflared-linux-amd64.deb
         sudo dpkg -i cloudflared-linux-amd64.deb
         sudo sysctl -w net.core.rmem_max=7500000
         sudo sysctl -w net.core.wmem_max=7500000
