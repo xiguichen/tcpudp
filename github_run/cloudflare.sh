@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://drinks-programmers-action-freight.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://number-broadway-that-verde.trycloudflare.com
