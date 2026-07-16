@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://organization-tune-silent-sox.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://authorities-simpson-helmet-years.trycloudflare.com
