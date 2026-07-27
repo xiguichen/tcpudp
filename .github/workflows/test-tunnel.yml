@@ -69,7 +69,7 @@ jobs:
 
     - name: Run Cloudflared
       run: |
-        cloudflared tunnel --url localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
+        cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
         echo $! > /tmp/cloudflared_pid
         until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
         HOSTNAME=$(grep -o "https.*trycloudflare.com" cloudflare.log)
@@ -96,7 +96,7 @@ jobs:
           CF_PID=$(cat /tmp/cloudflared_pid 2>/dev/null || echo "")
           if [ -z "$CF_PID" ] || ! kill -0 "$CF_PID" 2>/dev/null; then
             : > cloudflare.log
-            cloudflared tunnel --url localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
+            cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
             echo $! > /tmp/cloudflared_pid
             for i in $(seq 1 30); do
               grep -q "https.*trycloudflare.com" cloudflare.log 2>/dev/null && break
