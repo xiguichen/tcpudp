@@ -62,24 +62,7 @@ jobs:
 
     - name: Start Echo Server
       run: |
-        nohup python3 -c "
-import socket, threading
-def handle(conn):
-    try:
-        while True:
-            data = conn.recv(4096)
-            if not data: break
-            conn.sendall(data)
-    except: pass
-    finally: conn.close()
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('0.0.0.0', 7001))
-s.listen(32)
-while True:
-    c, a = s.accept()
-    threading.Thread(target=handle, args=(c,), daemon=True).start()
-" > /tmp/echo.log 2>&1 &
+        echo "aW1wb3J0IHNvY2tldCwgdGhyZWFkaW5nCgpkZWYgaGFuZGxlKGNvbm4pOgogICAgdHJ5OgogICAgICAgIHdoaWxlIFRydWU6CiAgICAgICAgICAgIGRhdGEgPSBjb25uLnJlY3YoNDA5NikKICAgICAgICAgICAgaWYgbm90IGRhdGE6IGJyZWFrCiAgICAgICAgICAgIGNvbm4uc2VuZGFsbChkYXRhKQogICAgZXhjZXB0OiBwYXNzCiAgICBmaW5hbGx5OiBjb25uLmNsb3NlKCkKCnMgPSBzb2NrZXQuc29ja2V0KHNvY2tldC5BRl9JTkVULCBzb2NrZXQuU09DS19TVFJFQU0pCnMuc2V0c29ja29wdChzb2NrZXQuU09MX1NPQ0tFVCwgc29ja2V0LlNPX1JFVVNFQUREUiwgMSkKcy5iaW5kKCgnMC4wLjAuMCcsIDcwMDEpKQpzLmxpc3RlbigzMikKd2hpbGUgVHJ1ZToKICAgIGMsIGEgPSBzLmFjY2VwdCgpCiAgICB0aHJlYWRpbmcuVGhyZWFkKHRhcmdldD1oYW5kbGUsIGFyZ3M9KGMsKSwgZGFlbW9uPVRydWUpLnN0YXJ0KCkK" | base64 -d | nohup python3 > /tmp/echo.log 2>&1 &
         echo $! > /tmp/echo_pid
         sleep 2
         echo "Echo server started on port 7001"
@@ -106,24 +89,7 @@ while True:
         while true; do
           ECHO_PID=$(cat /tmp/echo_pid 2>/dev/null || echo "")
           if [ -z "$ECHO_PID" ] || ! kill -0 "$ECHO_PID" 2>/dev/null; then
-            nohup python3 -c "
-import socket, threading
-def handle(conn):
-    try:
-        while True:
-            data = conn.recv(4096)
-            if not data: break
-            conn.sendall(data)
-    except: pass
-    finally: conn.close()
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('0.0.0.0', 7001))
-s.listen(32)
-while True:
-    c, a = s.accept()
-    threading.Thread(target=handle, args=(c,), daemon=True).start()
-" > /tmp/echo.log 2>&1 &
+            echo "aW1wb3J0IHNvY2tldCwgdGhyZWFkaW5nCgpkZWYgaGFuZGxlKGNvbm4pOgogICAgdHJ5OgogICAgICAgIHdoaWxlIFRydWU6CiAgICAgICAgICAgIGRhdGEgPSBjb25uLnJlY3YoNDA5NikKICAgICAgICAgICAgaWYgbm90IGRhdGE6IGJyZWFrCiAgICAgICAgICAgIGNvbm4uc2VuZGFsbChkYXRhKQogICAgZXhjZXB0OiBwYXNzCiAgICBmaW5hbGx5OiBjb25uLmNsb3NlKCkKCnMgPSBzb2NrZXQuc29ja2V0KHNvY2tldC5BRl9JTkVULCBzb2NrZXQuU09DS19TVFJFQU0pCnMuc2V0c29ja29wdChzb2NrZXQuU09MX1NPQ0tFVCwgc29ja2V0LlNPX1JFVVNFQUREUiwgMSkKcy5iaW5kKCgnMC4wLjAuMCcsIDcwMDEpKQpzLmxpc3RlbigzMikKd2hpbGUgVHJ1ZToKICAgIGMsIGEgPSBzLmFjY2VwdCgpCiAgICB0aHJlYWRpbmcuVGhyZWFkKHRhcmdldD1oYW5kbGUsIGFyZ3M9KGMsKSwgZGFlbW9uPVRydWUpLnN0YXJ0KCkK" | base64 -d | nohup python3 > /tmp/echo.log 2>&1 &
             echo $! > /tmp/echo_pid
           fi
 
