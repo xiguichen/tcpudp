@@ -1,0 +1,160 @@
+name: Test Tunnel
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_description:
+        description: 'description'
+        required: false
+        default: test-tunnel
+  push:
+    branches:
+      - run
+    paths:
+      - trigger/*
+
+concurrency:
+  group: run-tunnel
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      with:
+        ref: run
+
+    - name: Setup Git
+      run: |
+        git config --global user.name "GitHub Actions Bot"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+    - name: Install Cloudflared
+      run: |
+        wget https://github.com/cloudflare/cloudflared/releases/download/2026.7.1/cloudflared-linux-amd64.deb
+        sudo dpkg -i cloudflared-linux-amd64.deb
+        sudo sysctl -w net.core.rmem_max=7500000
+        sudo sysctl -w net.core.wmem_max=7500000
+
+    - name: Install Wireguard
+      run: |
+        sudo apt-get install -y wireguard
+
+    - name: Configure Wireguard
+      run: |
+        echo "${{ secrets.WIREGUARD_CONFIG }}" | sudo tee /etc/wireguard/wg0.conf
+      shell: bash
+
+    - name: Start Wireguard
+      run: |
+          sudo wg-quick up wg0
+          ifconfig
+          sysctl net.ipv4.ip_forward
+          sudo iptables -t nat -L
+
+    - name: Configure DNS
+      run: |
+        echo "DNSStubListener=yes" | sudo tee -a /etc/systemd/resolved.conf
+        echo "DNSStubListenerExtra=0.0.0.0" | sudo tee -a /etc/systemd/resolved.conf
+        sudo systemctl restart systemd-resolved
+
+    - name: Start Echo Server
+      run: |
+        # Simple TCP echo server using socat
+        sudo apt-get install -y socat
+        echo "Starting echo server on port 7001..."
+        nohup socat TCP-LISTEN:7001,fork EXEC:'/bin/cat' > echo_server.log 2>&1 &
+        ECHO_PID=$!
+        echo "Echo server PID: $ECHO_PID"
+        echo "$ECHO_PID" > /tmp/echo_pid
+        # Wait for server to be ready
+        for i in $(seq 1 10); do
+          if nc -z localhost 7001 2>/dev/null; then
+            echo "Echo server is ready"
+            break
+          fi
+          echo "Waiting for echo server... (attempt $i/10)"
+          sleep 1
+        done
+
+    - name: Run Cloudflared
+      run: |
+        cloudflared tunnel --url localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
+        CLOUDFLARED_PID=$!
+        echo "$CLOUDFLARED_PID" > /tmp/cloudflared_pid
+        date +%s > /tmp/cloudflared_start
+        until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
+        HOSTNAME=$(cat cloudflare.log | grep -o "https.*trycloudflare.com")
+        mkdir -p ${{ github.workspace }}/github_run
+        echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
+        echo "$HOSTNAME" >> ${{ github.workspace }}/github_run/cloudflare.sh
+        cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/github_run/cloudflare.bat
+        chmod +x ${{ github.workspace }}/github_run/cloudflare.sh
+        cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/cloudflare.sh
+        cp ${{ github.workspace }}/github_run/cloudflare.bat ${{ github.workspace }}/cloudflare.bat
+        echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
+        echo "Cloudflared tunnel registered: $HOSTNAME"
+
+    - name: Commit Change
+      working-directory: ${{ github.workspace }}
+      run: |
+          git add github_run/ cloudflare.sh cloudflare.bat
+          git commit -m "Auto-update cloudflare tunnel info (test)"
+          git push origin run
+
+    - name: Keep Services Alive
+      run: |
+        while true; do
+          # --- Echo Server ---
+          ECHO_PID=$(cat /tmp/echo_pid 2>/dev/null || echo "")
+          if [ -n "$ECHO_PID" ] && kill -0 "$ECHO_PID" 2>/dev/null; then
+            true
+          else
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Echo server not running. Restarting..."
+            nohup socat TCP-LISTEN:7001,fork EXEC:'/bin/cat' > echo_server.log 2>&1 &
+            echo $! > /tmp/echo_pid
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Echo server restarted (PID $!)"
+          fi
+
+          # --- Cloudflared ---
+          CF_PID=$(cat /tmp/cloudflared_pid 2>/dev/null || echo "")
+          SHOULD_RESTART=false
+          if [ -z "$CF_PID" ] || ! kill -0 "$CF_PID" 2>/dev/null; then
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Cloudflared PID dead. Restarting..."
+            SHOULD_RESTART=true
+          fi
+          if $SHOULD_RESTART; then
+            : > cloudflare.log
+            cloudflared tunnel --url localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
+            CF_PID=$!
+            echo "$CF_PID" > /tmp/cloudflared_pid
+            date +%s > /tmp/cloudflared_start
+            for i in $(seq 1 30); do
+              if grep -q "https.*trycloudflare.com" cloudflare.log 2>/dev/null; then break; fi
+              sleep 1
+            done
+            HOSTNAME=$(grep -o "https.*trycloudflare.com" cloudflare.log 2>/dev/null || echo "")
+            if [ -z "$HOSTNAME" ]; then
+              echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Cloudflared failed to get hostname. Will retry."
+              continue
+            fi
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) New tunnel: $HOSTNAME"
+            mkdir -p ${{ github.workspace }}/github_run
+            echo -n "cloudflared access tcp --url tcp://localhost:7001 --hostname " > ${{ github.workspace }}/github_run/cloudflare.sh
+            echo "$HOSTNAME" >> ${{ github.workspace }}/github_run/cloudflare.sh
+            cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/github_run/cloudflare.bat
+            cp ${{ github.workspace }}/github_run/cloudflare.sh ${{ github.workspace }}/cloudflare.sh
+            cp ${{ github.workspace }}/github_run/cloudflare.bat ${{ github.workspace }}/cloudflare.bat
+            echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
+            cd ${{ github.workspace }}
+            git add github_run/ cloudflare.sh cloudflare.bat
+            git commit -m "Auto-update cloudflare tunnel info (test)" || true
+            git push origin run || echo "Push failed — will retry on next restart"
+          fi
+
+          sleep 5
+        done
