@@ -64,33 +64,25 @@ jobs:
 
     - name: Start Echo Server
       run: |
-        cat > /tmp/echo_server.py << 'PYEOF'
-import socket, threading, sys
-
-def handle_client(conn, addr):
-    print(f"Client connected: {addr}", flush=True)
+        python3 -c "
+import socket, threading
+def handle(conn, addr):
     try:
         while True:
             data = conn.recv(4096)
-            if not data:
-                break
+            if not data: break
             conn.sendall(data)
-    except Exception as e:
-        print(f"Client error: {e}", flush=True)
-    finally:
-        conn.close()
-        print(f"Client disconnected: {addr}", flush=True)
-
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind(('0.0.0.0', 7001))
-server.listen(32)
-print("Echo server listening on port 7001", flush=True)
+    except: pass
+    finally: conn.close()
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', 7001))
+s.listen(32)
+print('Echo server listening on port 7001', flush=True)
 while True:
-    conn, addr = server.accept()
-    threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
-PYEOF
-        nohup python3 /tmp/echo_server.py > echo_server.log 2>&1 &
+    c, a = s.accept()
+    threading.Thread(target=handle, args=(c, a), daemon=True).start()
+" &
         ECHO_PID=$!
         echo "Echo server PID: $ECHO_PID"
         echo "$ECHO_PID" > /tmp/echo_pid
@@ -135,7 +127,24 @@ PYEOF
           ECHO_PID=$(cat /tmp/echo_pid 2>/dev/null || echo "")
           if [ -z "$ECHO_PID" ] || ! kill -0 "$ECHO_PID" 2>/dev/null; then
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Echo server not running. Restarting..."
-            nohup python3 /tmp/echo_server.py > echo_server.log 2>&1 &
+            python3 -c "
+import socket, threading
+def handle(conn, addr):
+    try:
+        while True:
+            data = conn.recv(4096)
+            if not data: break
+            conn.sendall(data)
+    except: pass
+    finally: conn.close()
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', 7001))
+s.listen(32)
+while True:
+    c, a = s.accept()
+    threading.Thread(target=handle, args=(c, a), daemon=True).start()
+" &
             echo $! > /tmp/echo_pid
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Echo server restarted (PID $!)"
           fi
