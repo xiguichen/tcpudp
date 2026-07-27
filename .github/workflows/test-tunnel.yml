@@ -60,32 +60,10 @@ jobs:
         echo "DNSStubListenerExtra=0.0.0.0" | sudo tee -a /etc/systemd/resolved.conf
         sudo systemctl restart systemd-resolved
 
-    - name: Start HTTP Echo Server
+    - name: Start Echo Server
       run: |
-        python3 -c "
-import http.server, socketserver
-
-class EchoHandler(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(length)
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/octet-stream')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'OK')
-
-    def log_message(self, format, *args):
-        pass
-
-with socketserver.TCPServer(('0.0.0.0', 7001), EchoHandler) as httpd:
-    httpd.serve_forever()
-" &
+        chmod +x test/echo_server.py
+        nohup python3 test/echo_server.py &
         echo $! > /tmp/echo_pid
         sleep 2
         curl -s http://localhost:7001/ && echo " - Echo server ready"
@@ -112,25 +90,7 @@ with socketserver.TCPServer(('0.0.0.0', 7001), EchoHandler) as httpd:
         while true; do
           ECHO_PID=$(cat /tmp/echo_pid 2>/dev/null || echo "")
           if [ -z "$ECHO_PID" ] || ! kill -0 "$ECHO_PID" 2>/dev/null; then
-            python3 -c "
-import http.server, socketserver
-class H(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        l = int(self.headers.get('Content-Length', 0))
-        b = self.rfile.read(l)
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/octet-stream')
-        self.send_header('Content-Length', str(len(b)))
-        self.end_headers()
-        self.wfile.write(b)
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'OK')
-    def log_message(self, f, *a): pass
-with socketserver.TCPServer(('0.0.0.0', 7001), H) as h:
-    h.serve_forever()
-" &
+            nohup python3 test/echo_server.py &
             echo $! > /tmp/echo_pid
           fi
 
