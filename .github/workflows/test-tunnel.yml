@@ -39,7 +39,6 @@ jobs:
         sudo dpkg -i cloudflared-linux-amd64.deb
         sudo sysctl -w net.core.rmem_max=7500000
         sudo sysctl -w net.core.wmem_max=7500000
-        sudo apt-get install -y socat
 
     - name: Install Wireguard
       run: |
@@ -63,10 +62,27 @@ jobs:
 
     - name: Start Echo Server
       run: |
-        nohup socat TCP-LISTEN:7001,fork,reuseaddr EXEC:'/bin/cat' &
+        nohup python3 -c "
+import socket, threading
+def handle(conn):
+    try:
+        while True:
+            data = conn.recv(4096)
+            if not data: break
+            conn.sendall(data)
+    except: pass
+    finally: conn.close()
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', 7001))
+s.listen(32)
+while True:
+    c, a = s.accept()
+    threading.Thread(target=handle, args=(c,), daemon=True).start()
+" > /tmp/echo.log 2>&1 &
         echo $! > /tmp/echo_pid
         sleep 2
-        echo "Echo server started"
+        echo "Echo server started on port 7001"
 
     - name: Run Cloudflared
       run: |
@@ -90,7 +106,24 @@ jobs:
         while true; do
           ECHO_PID=$(cat /tmp/echo_pid 2>/dev/null || echo "")
           if [ -z "$ECHO_PID" ] || ! kill -0 "$ECHO_PID" 2>/dev/null; then
-            nohup socat TCP-LISTEN:7001,fork,reuseaddr EXEC:'/bin/cat' &
+            nohup python3 -c "
+import socket, threading
+def handle(conn):
+    try:
+        while True:
+            data = conn.recv(4096)
+            if not data: break
+            conn.sendall(data)
+    except: pass
+    finally: conn.close()
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', 7001))
+s.listen(32)
+while True:
+    c, a = s.accept()
+    threading.Thread(target=handle, args=(c,), daemon=True).start()
+" > /tmp/echo.log 2>&1 &
             echo $! > /tmp/echo_pid
           fi
 
