@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname https://mainland-submit-lot-scenes.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname https://ampland-relevance-yard-kenny.trycloudflare.com
