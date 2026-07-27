@@ -14,7 +14,7 @@ on:
       - trigger/*
 
 concurrency:
-  group: run-tunnel
+  group: test-tunnel
   cancel-in-progress: true
 
 jobs:
