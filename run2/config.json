@@ -1,7 +1,0 @@
-{
-  "localHostUdpPort": 5002,
-  "peerTcpPort": 17001,
-  "peerAddress": "127.0.0.1",
-  "clientId": 4
-}
-
