@@ -7,11 +7,6 @@ on:
         description: 'description'
         required: false
         default: test-tunnel
-  push:
-    branches:
-      - run
-    paths:
-      - trigger/*
 
 concurrency:
   group: test-tunnel
@@ -72,7 +67,7 @@ jobs:
       run: |
         cloudflared tunnel --url http://localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
         echo $! > /tmp/cloudflared_pid
-        until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
+        until grep -q "https.*trycloudflare.com" cloudflare.log 2>/dev/null; do sleep 1; done
         HOSTNAME=$(grep -o "https.*trycloudflare.com" cloudflare.log)
         mkdir -p ${{ github.workspace }}/github_run
         echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
@@ -83,6 +78,7 @@ jobs:
       run: |
           git add github_run/
           git commit -m "Auto-update cloudflare tunnel info (test)" || true
+          git pull --rebase origin run || true
           git push origin run || true
 
     - name: Keep Services Alive
@@ -110,6 +106,7 @@ jobs:
               cd ${{ github.workspace }}
               git add github_run/
               git commit -m "Auto-update cloudflare tunnel info (test)" || true
+              git pull --rebase origin run || true
               git push origin run || true
             fi
           fi

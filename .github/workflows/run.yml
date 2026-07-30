@@ -91,7 +91,7 @@ jobs:
         CLOUDFLARED_PID=$!
         echo "$CLOUDFLARED_PID" > /tmp/cloudflared_pid
         date +%s > /tmp/cloudflared_start
-        until grep -q "https.*trycloudflare.com" cloudflare.log; do sleep 1; done
+        until grep -q "https.*trycloudflare.com" cloudflare.log 2>/dev/null; do sleep 1; done
         HOSTNAME=$(cat cloudflare.log | grep -o "https.*trycloudflare.com")
         HOSTNAME_BARE=$(echo "$HOSTNAME" | sed 's|https://||')
         mkdir -p ${{ github.workspace }}/github_run
@@ -109,7 +109,8 @@ jobs:
       working-directory: ${{ github.workspace }}
       run: |
           git add github_run/ cloudflare.sh cloudflare.bat
-          git commit -m "Auto-update cloudflare tunnel info"
+          git commit -m "Auto-update cloudflare tunnel info" || true
+          git pull --rebase origin run || true
           git push origin run
      
 
@@ -167,6 +168,7 @@ jobs:
             cd ${{ github.workspace }}
             git add github_run/ cloudflare.sh cloudflare.bat
             git commit -m "Auto-update cloudflare tunnel info" || true
+            git pull --rebase origin run || true
             git push origin run || echo "Push failed — will retry on next restart"
           fi
 
