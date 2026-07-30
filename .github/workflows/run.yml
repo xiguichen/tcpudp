@@ -61,17 +61,17 @@ jobs:
         echo "DNSStubListenerExtra=0.0.0.0" | sudo tee -a /etc/systemd/resolved.conf
         sudo systemctl restart systemd-resolved
 
-    - name: Build Server
+    - name: Install Server
       run: |
-       sudo apt-get install -y cmake ninja-build
-       mkdir build && cd build
-       cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -S ../src
-       ninja
+       wget https://github.com/xiguichen/tcpudp/releases/download/nightly/tcpudp-ubuntu-latest.tar.gz
+       ls
+       tar xvf tcpudp-ubuntu-latest.tar.gz
+       chmod +x tcpudp-ubuntu-latest/server
     - name: Start Server (background)
       run: |
         # Start server first so the port is listening when cloudflared connects
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Starting server..."
-        nohup build/bin/server > server.log 2>&1 &
+        nohup tcpudp-ubuntu-latest/server > server.log 2>&1 &
         SERVER_PID=$!
         echo "Server PID: $SERVER_PID"
         # Wait for the server to be ready
@@ -125,7 +125,7 @@ jobs:
             true
           else
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server not running. Restarting..."
-            nohup build/bin/server > server.log 2>&1 &
+            nohup tcpudp-ubuntu-latest/server > server.log 2>&1 &
             echo $! > /tmp/server_pid
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Server restarted (PID $!)"
           fi
