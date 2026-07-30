@@ -83,6 +83,7 @@ jobs:
 
     - name: Keep Services Alive
       run: |
+        tail -f cloudflare.log 2>/dev/null &
         while true; do
           ECHO_PID=$(cat /tmp/echo_pid 2>/dev/null || echo "")
           if [ -z "$ECHO_PID" ] || ! kill -0 "$ECHO_PID" 2>/dev/null; then

@@ -1,0 +1,19 @@
+LogTest:42: 2026-07-05 08:23:07.551 [INFO] This is a test info log.
+LogTest:43: 2026-07-05 08:23:07.552 [ERROR] This is a test error log.
+/Users/chenxigui/develop/tcpudp/src/server/Peer.cpp:32: 2026-07-05 08:23:07.553 [ERROR] Peer 7 already has 32 sockets (max 32), closing excess socket 38
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:23:10.430 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:689: 2026-07-05 08:23:10.933 [WARNING] Reorder timeout (501ms): skipping messageIds 0-0, advancing to 1. Buffered=1 (lastDeliveredConn=-1, firstBuffered=1 conn=0, lastBuffered=1 conn=0, suspectConn=-1 suspectRx=0@0ms pendingBytes=-1, bufByConn=[0:1], rx=[0:1@501ms], tx=[0:-])
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:23:11.273 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:689: 2026-07-05 08:23:11.881 [WARNING] Reorder timeout (502ms): skipping messageIds 2-2, advancing to 3. Buffered=1 (lastDeliveredConn=0, firstBuffered=3 conn=0, lastBuffered=3 conn=0, suspectConn=-1 suspectRx=0@0ms pendingBytes=-1, bufByConn=[0:1], rx=[0:3@502ms], tx=[0:-])
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:23:12.334 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:23:12.659 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+LogTest:42: 2026-07-05 08:40:47.693 [INFO] This is a test info log.
+LogTest:43: 2026-07-05 08:40:47.696 [ERROR] This is a test error log.
+/Users/chenxigui/develop/tcpudp/src/server/Peer.cpp:32: 2026-07-05 08:40:47.697 [ERROR] Peer 7 already has 32 sockets (max 32), closing excess socket 38
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:40:50.238 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:689: 2026-07-05 08:40:51.096 [WARNING] Reorder timeout (510ms): skipping messageIds 0-0, advancing to 1. Buffered=1 (lastDeliveredConn=-1, firstBuffered=1 conn=0, lastBuffered=1 conn=0, suspectConn=-1 suspectRx=0@0ms pendingBytes=-1, bufByConn=[0:1], rx=[0:1@510ms], tx=[0:-])
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:40:51.433 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:689: 2026-07-05 08:40:52.049 [WARNING] Reorder timeout (506ms): skipping messageIds 2-2, advancing to 3. Buffered=1 (lastDeliveredConn=0, firstBuffered=3 conn=0, lastBuffered=3 conn=0, suspectConn=-1 suspectRx=0@0ms pendingBytes=-1, bufByConn=[0:1], rx=[0:3@506ms], tx=[0:-])
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:40:52.383 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:40:52.443 [WARNING] [VC] All TCP connections dead, closing virtual channel.
+/Users/chenxigui/develop/tcpudp/src/common/TcpVirtualChannel.cpp:78: 2026-07-05 08:40:52.792 [WARNING] [VC] All TCP connections dead, closing virtual channel.

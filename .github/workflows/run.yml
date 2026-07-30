@@ -116,6 +116,7 @@ jobs:
 
     - name: Keep Services Alive
       run: |
+        tail -f cloudflare.log -f server.log &
         # Monitor and restart server + cloudflared so the tunnel stays up.
         while true; do
           # --- Server ---
