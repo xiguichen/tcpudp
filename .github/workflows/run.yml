@@ -71,6 +71,7 @@ jobs:
       run: |
         # Start server first so the port is listening when cloudflared connects
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Starting server..."
+        tcpudp-ubuntu-latest/server
         nohup tcpudp-ubuntu-latest/server > server.log 2>&1 &
         SERVER_PID=$!
         echo "Server PID: $SERVER_PID"
