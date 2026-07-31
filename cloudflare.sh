@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname databases-arrived-dubai-early.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname academic-occupational-ships-redhead.trycloudflare.com
