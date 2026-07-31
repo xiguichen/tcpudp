@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname follows-johnny-animation-impacts.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname boats-cole-hamilton-painting.trycloudflare.com
