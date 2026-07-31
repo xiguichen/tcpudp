@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname basically-amber-mph-applications.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname instant-freebsd-websites-left.trycloudflare.com
