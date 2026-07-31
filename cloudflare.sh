@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname being-successfully-true-tricks.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname montgomery-usgs-export-there.trycloudflare.com
