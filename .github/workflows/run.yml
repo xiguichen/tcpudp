@@ -97,6 +97,15 @@ jobs:
         # Write machine-readable run info
         echo "{\"hostname\":\"$HOSTNAME\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"port\":7001}" > ${{ github.workspace }}/github_run/run_info.json
         echo "Cloudflared tunnel registered: $HOSTNAME"
+        echo "HOSTNAME=$HOSTNAME" >> $GITHUB_ENV
+        echo "HOSTNAME_BARE=$HOSTNAME_BARE" >> $GITHUB_ENV
+    - name: Ping Cloudflare Edge
+      run: |
+        echo "=== Ping to tunnel hostname: ${{ env.HOSTNAME_BARE }} ==="
+        ping -c 10 ${{ env.HOSTNAME_BARE }} || true
+        echo ""
+        echo "=== Ping to Cloudflare Edge IP (162.159.38.209) for comparison ==="
+        ping -c 10 162.159.38.209 || true
     - name: Commit Change
       working-directory: ${{ github.workspace }}
       run: |

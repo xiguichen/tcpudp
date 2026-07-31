@@ -119,13 +119,31 @@ if [ -f github_run/cloudflare.sh ]; then
     echo ""
     echo "=== Cloudflare tunnel ready ==="
     echo ""
-    HOSTNAME=$(grep -o 'https://[^ ]*trycloudflare\.com' github_run/cloudflare.sh 2>/dev/null || echo "unknown")
+    HOSTNAME=$(grep -o '[^ ]*\.trycloudflare\.com' github_run/cloudflare.sh 2>/dev/null || echo "unknown")
     echo "  Hostname: $HOSTNAME"
     echo "  Command:  $(cat github_run/cloudflare.sh)"
     echo ""
     if [ -f github_run/run_info.json ]; then
         echo "  Run info: $(cat github_run/run_info.json)"
     fi
+
+    # Pin tunnel hostname to a known-good Cloudflare edge IP so the client
+    # can avoid unreachable IPs returned by DNS (e.g. 221.228.32.13 in China).
+    TUNNEL_HOST="${HOSTNAME#https://}"
+    if [ -n "$TUNNEL_HOST" ] && [ "$TUNNEL_HOST" != "unknown" ]; then
+        echo ""
+        echo "=== Pinning DNS for lower latency ==="
+        if grep -q " $TUNNEL_HOST\$" /etc/hosts 2>/dev/null; then
+            echo "  /etc/hosts already has an entry for $TUNNEL_HOST"
+        elif sudo -n true 2>/dev/null; then
+            echo "162.159.38.209 $TUNNEL_HOST" | sudo tee -a /etc/hosts > /dev/null
+            echo "  Added 162.159.38.209 $TUNNEL_HOST to /etc/hosts"
+        else
+            echo "  To pin to a known-good Cloudflare edge IP, run:"
+            echo "    echo '162.159.38.209 $TUNNEL_HOST' | sudo tee -a /etc/hosts"
+        fi
+    fi
+
     echo ""
     echo "Next step:  ./run_github.sh"
 else
