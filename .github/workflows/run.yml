@@ -71,19 +71,11 @@ jobs:
       run: |
         # Start server first so the port is listening when cloudflared connects
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Starting server..."
-        tcpudp-ubuntu-latest/server
-        nohup tcpudp-ubuntu-latest/server > server.log 2>&1 &
+        chmod +x tcpudp-ubuntu-latest/server
+        ./tcpudp-ubuntu-latest/server
+        //nohup tcpudp-ubuntu-latest/server > server.log 2>&1 &
         SERVER_PID=$!
         echo "Server PID: $SERVER_PID"
-        # Wait for the server to be ready
-        for i in $(seq 1 15); do
-          if nc -z localhost 7001 2>/dev/null; then
-            echo "Server is listening on port 7001"
-            break
-          fi
-          echo "  waiting for server to be ready (attempt $i/15)..."
-          sleep 1
-        done
         # Save PID so the foreground step can monitor it
         echo "$SERVER_PID" > /tmp/server_pid
     - name: Run Cloudflared
