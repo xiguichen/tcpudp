@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname golf-moved-epson-shaft.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname literary-distant-cognitive-betting.trycloudflare.com
