@@ -129,18 +129,57 @@ if [ -f github_run/cloudflare.sh ]; then
 
     # Pin tunnel hostname to a known-good Cloudflare edge IP so the client
     # can avoid unreachable IPs returned by DNS (e.g. 221.228.32.13 in China).
+    # We probe multiple candidate IPs in parallel, then pick the one with the
+    # lowest average RTT.
     TUNNEL_HOST="${HOSTNAME#https://}"
     if [ -n "$TUNNEL_HOST" ] && [ "$TUNNEL_HOST" != "unknown" ]; then
         echo ""
         echo "=== Pinning DNS for lower latency ==="
         if grep -q " $TUNNEL_HOST\$" /etc/hosts 2>/dev/null; then
             echo "  /etc/hosts already has an entry for $TUNNEL_HOST"
-        elif sudo -n true 2>/dev/null; then
-            echo "162.159.38.209 $TUNNEL_HOST" | sudo tee -a /etc/hosts > /dev/null
-            echo "  Added 162.159.38.209 $TUNNEL_HOST to /etc/hosts"
         else
-            echo "  To pin to a known-good Cloudflare edge IP, run:"
-            echo "    echo '162.159.38.209 $TUNNEL_HOST' | sudo tee -a /etc/hosts"
+            CANDIDATE_IPS=("162.159.38.209" "104.17.213.97")
+            PING_COUNT=5
+            PING_TIMEOUT_SEC=2
+
+            echo "  Probing ${#CANDIDATE_IPS[@]} candidate IPs (${PING_COUNT} pings each, in parallel)..."
+
+            tmpdir=$(mktemp -d)
+            i=0
+            for ip in "${CANDIDATE_IPS[@]}"; do
+                (
+                    avg=$(ping -c "$PING_COUNT" -W $((PING_TIMEOUT_SEC * 1000)) "$ip" 2>/dev/null \
+                        | awk -F' = ' '/^round-trip/{split($2,a,"/"); print a[2]}')
+                    if [ -n "$avg" ]; then
+                        echo "$avg $ip"
+                    else
+                        echo "999999 $ip unreachable"
+                    fi
+                ) > "$tmpdir/$i" &
+                i=$((i + 1))
+            done
+            wait
+
+            # Show results (sorted by RTT, best first)
+            while read -r rtt ip label; do
+                if [ "$label" = "unreachable" ]; then
+                    printf "    %-16s  unreachable\n" "$ip"
+                else
+                    printf "    %-16s  %s ms\n" "$ip" "$rtt"
+                fi
+            done < <(sort -n "$tmpdir"/* 2>/dev/null)
+
+            # Pick the reachable IP with lowest average RTT
+            BEST_INFO=$(sort -n "$tmpdir"/* 2>/dev/null | head -1)
+            BEST_IP=$(echo "$BEST_INFO" | awk '{print $2}')
+            if echo "$BEST_INFO" | grep -q 'unreachable'; then
+                BEST_IP="${CANDIDATE_IPS[0]}"
+                echo "  Warning: all candidates unreachable, falling back to $BEST_IP"
+            fi
+            rm -rf "$tmpdir"
+
+            echo "$BEST_IP $TUNNEL_HOST" | sudo tee -a /etc/hosts > /dev/null
+            echo "  Added $BEST_IP $TUNNEL_HOST to /etc/hosts"
         fi
     fi
 
