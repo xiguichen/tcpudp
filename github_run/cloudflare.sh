@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname analyses-train-grows-survivors.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname synthesis-ears-defense-spam.trycloudflare.com
