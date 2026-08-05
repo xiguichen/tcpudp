@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname already-analog-claire-processed.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname hartford-respond-tells-symantec.trycloudflare.com
