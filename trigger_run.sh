@@ -38,81 +38,121 @@ if [ "$CURRENT_BRANCH" != "run" ]; then
     git checkout run
 fi
 
-# Pull to avoid push conflicts with any previous Auto-update commits
-echo "=== Pulling latest run branch ==="
-git pull origin run
+MAX_RETRIES=5
+ATTEMPT=0
+FOUND=false
 
-# Record the commit that WE are about to push (the trigger commit).
-# After the Action runs, it will push an "Auto-update" commit on top of this.
-TRIGGER_COMMIT_FILE="/tmp/tcpudp_trigger_commit.txt"
-PUSH_COMMIT=$(git rev-parse HEAD)
+while [ $ATTEMPT -lt $MAX_RETRIES ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    [ $ATTEMPT -gt 1 ] && echo "" && echo "=== Retry $ATTEMPT/$MAX_RETRIES ==="
 
-# ---- Create and push the trigger ----
-TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-TRIGGER_FILE="trigger/$(date +%s)"
+    # Pull to avoid push conflicts with any previous Auto-update commits
+    echo "=== Pulling latest run branch ==="
+    git pull origin run
 
-mkdir -p trigger
-echo "trigger $TIMESTAMP" > "$TRIGGER_FILE"
+    # Record the commit that WE are about to push (the trigger commit).
+    # After the Action runs, it will push an "Auto-update" commit on top of this.
+    TRIGGER_COMMIT_FILE="/tmp/tcpudp_trigger_commit.txt"
+    PUSH_COMMIT=$(git rev-parse HEAD)
 
-echo "=== Triggering GitHub run via git push ==="
-git add "$TRIGGER_FILE"
-git commit -m "trigger: $TIMESTAMP"
-git push origin run
+    # ---- Create and push the trigger ----
+    TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    TRIGGER_FILE="trigger/$(date +%s)"
 
-# Record the commit we just pushed (this is what the Auto-update builds on)
-PUSH_COMMIT=$(git rev-parse HEAD)
-echo "$PUSH_COMMIT" > "$TRIGGER_COMMIT_FILE"
-echo "  Trigger commit: ${PUSH_COMMIT:0:7}"
-echo "  Timestamp:      $TIMESTAMP"
+    mkdir -p trigger
+    echo "trigger $TIMESTAMP" > "$TRIGGER_FILE"
 
-if $NO_WAIT; then
-    echo ""
-    echo "Run triggered. To fetch results later, run:"
-    echo "  git pull origin run"
-    exit 0
-fi
+    echo "=== Triggering GitHub run via git push ==="
+    git add "$TRIGGER_FILE"
+    git commit -m "trigger: $TIMESTAMP"
+    git push origin run
 
-# ---- Poll via git fetch until the Auto-update commit appears ----
-echo ""
-echo "=== Waiting for GitHub Action to complete (timeout: ${TIMEOUT}s) ==="
-echo -n "  polling"
+    # Record the commit we just pushed (this is what the Auto-update builds on)
+    PUSH_COMMIT=$(git rev-parse HEAD)
+    echo "$PUSH_COMMIT" > "$TRIGGER_COMMIT_FILE"
+    echo "  Trigger commit: ${PUSH_COMMIT:0:7}"
+    echo "  Timestamp:      $TIMESTAMP"
 
-START_TIME=$(date +%s)
-POLL_INTERVAL=10
-
-while true; do
-    ELAPSED=$(($(date +%s) - START_TIME))
-    if [ "$ELAPSED" -gt "$TIMEOUT" ]; then
+    if $NO_WAIT; then
         echo ""
-        echo "ERROR: Timed out after ${TIMEOUT}s."
-        echo "The workflow may still be running. Check:"
-        echo "  https://github.com/xiguichen/tcpudp/actions"
-        echo ""
-        echo "To fetch results when it finishes:"
+        echo "Run triggered. To fetch results later, run:"
         echo "  git pull origin run"
-        exit 1
+        exit 0
     fi
 
-    git fetch origin run 2>/dev/null
-    REMOTE_HEAD=$(git rev-parse origin/run)
-    REMOTE_MSG=$(git log --format=%s -1 origin/run)
+    # ---- Poll via git fetch until the Auto-update commit appears ----
+    echo ""
+    echo "=== Waiting for GitHub Action to complete (timeout: ${TIMEOUT}s) ==="
+    echo -n "  polling"
 
-    # The Action is done when origin/run has moved past our trigger commit
-    # AND the top commit is an "Auto-update" from the Action.
-    if [ "$REMOTE_HEAD" != "$PUSH_COMMIT" ] && echo "$REMOTE_MSG" | grep -q "Auto-update"; then
-        echo ""
-        echo "  GitHub Action completed!"
-        break
+    START_TIME=$(date +%s)
+    POLL_INTERVAL=10
+
+    while true; do
+        ELAPSED=$(($(date +%s) - START_TIME))
+        if [ "$ELAPSED" -gt "$TIMEOUT" ]; then
+            echo ""
+            echo "ERROR: Timed out after ${TIMEOUT}s."
+            echo "The workflow may still be running. Check:"
+            echo "  https://github.com/xiguichen/tcpudp/actions"
+            echo ""
+            echo "To fetch results when it finishes:"
+            echo "  git pull origin run"
+            exit 1
+        fi
+
+        git fetch origin run 2>/dev/null
+        REMOTE_HEAD=$(git rev-parse origin/run)
+        REMOTE_MSG=$(git log --format=%s -1 origin/run)
+
+        # The Action is done when origin/run has moved past our trigger commit
+        # AND the top commit is an "Auto-update" from the Action.
+        if [ "$REMOTE_HEAD" != "$PUSH_COMMIT" ] && echo "$REMOTE_MSG" | grep -q "Auto-update"; then
+            echo ""
+            echo "  GitHub Action completed!"
+            break
+        fi
+
+        echo -n "."
+        sleep "$POLL_INTERVAL"
+    done
+
+    # ---- Pull the results ----
+    echo ""
+    echo "=== Fetching cloudflare tunnel info ==="
+    git pull origin run
+
+    # ---- Check for bad region ----
+    IS_BAD=false
+    if [ -f github_run/region.json ]; then
+        REGION=$(grep -o '"region"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
+        CITY=$(grep -o '"city"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
+        COUNTRY=$(grep -o '"country"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
+
+        BAD_REGIONS=("Virginia")
+        for bad in "${BAD_REGIONS[@]}"; do
+            if [ "$REGION" = "$bad" ]; then
+                IS_BAD=true
+                break
+            fi
+        done
     fi
 
-    echo -n "."
-    sleep "$POLL_INTERVAL"
+    if $IS_BAD; then
+        echo "  Bad region: $CITY, $REGION, $COUNTRY — re-triggering (attempt $ATTEMPT/$MAX_RETRIES)..."
+        continue
+    fi
+
+    FOUND=true
+    break
 done
 
-# ---- Pull the results ----
-echo ""
-echo "=== Fetching cloudflare tunnel info ==="
-git pull origin run
+if ! $FOUND; then
+    echo ""
+    echo "ERROR: All $MAX_RETRIES attempts landed in bad regions. Giving up."
+    echo "Check: https://github.com/xiguichen/tcpudp/actions"
+    exit 1
+fi
 
 # ---- Display results ----
 if [ -f github_run/cloudflare.sh ]; then
@@ -125,6 +165,9 @@ if [ -f github_run/cloudflare.sh ]; then
     echo ""
     if [ -f github_run/run_info.json ]; then
         echo "  Run info: $(cat github_run/run_info.json)"
+    fi
+    if [ -f github_run/region.json ]; then
+        echo "  Region:   $(cat github_run/region.json)"
     fi
 
     # Pin tunnel hostname to a known-good Cloudflare edge IP so the client
