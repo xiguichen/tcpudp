@@ -1,11 +1,11 @@
 {
-  "ip": "20.29.188.148",
-  "city": "Moses Lake",
-  "region": "Washington",
+  "ip": "135.232.177.242",
+  "city": "Chicago",
+  "region": "Illinois",
   "country": "US",
-  "loc": "47.1301,-119.2781",
+  "loc": "41.8500,-87.6500",
   "org": "AS8075 Microsoft Corporation",
-  "postal": "98837",
-  "timezone": "America/Los_Angeles",
+  "postal": "60608",
+  "timezone": "America/Chicago",
   "readme": "https://ipinfo.io/missingauth"
 }

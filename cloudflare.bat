@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname assess-granted-certainly-atomic.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname corresponding-metallica-visiting-operation.trycloudflare.com
