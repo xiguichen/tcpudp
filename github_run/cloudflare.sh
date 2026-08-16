@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname corresponding-metallica-visiting-operation.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname electric-annual-approximately-legacy.trycloudflare.com
