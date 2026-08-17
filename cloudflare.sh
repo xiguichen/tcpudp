@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname busy-anything-persian-decision.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname examine-rec-timber-classes.trycloudflare.com

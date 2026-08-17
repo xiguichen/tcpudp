@@ -1,11 +1,11 @@
 {
-  "ip": "57.154.217.184",
-  "city": "Dulles Town Center",
-  "region": "Virginia",
+  "ip": "172.182.226.215",
+  "city": "Phoenix",
+  "region": "Arizona",
   "country": "US",
-  "loc": "39.0376,-77.4158",
+  "loc": "33.4484,-112.0740",
   "org": "AS8075 Microsoft Corporation",
-  "postal": "20164",
-  "timezone": "America/New_York",
+  "postal": "85003",
+  "timezone": "America/Phoenix",
   "readme": "https://ipinfo.io/missingauth"
 }
