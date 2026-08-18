@@ -46,7 +46,7 @@ jobs:
         echo "$REGION_INFO" > github_run/region.json
 
         # Blacklist: known-bad regions — skip and commit signal
-        BAD_REGIONS=("Virginia, Arizona")
+        BAD_REGIONS=("Virginia, Arizona, Wyoming")
         for bad in "${BAD_REGIONS[@]}"; do
           if [ "$REGION" = "$bad" ]; then
             echo "SKIP=true" >> $GITHUB_ENV
