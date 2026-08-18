@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname barry-humidity-tracy-boxing.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname general-damages-relaxation-adam.trycloudflare.com
