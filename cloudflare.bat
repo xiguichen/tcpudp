@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname rough-fcc-distance-mountains.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname plane-cove-hampshire-bibliography.trycloudflare.com
