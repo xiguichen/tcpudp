@@ -144,6 +144,7 @@ echo "$REMOTE_OUTPUT"
 
 TUNNEL_HOSTNAME=$(echo "$REMOTE_OUTPUT" | grep '^TUNNEL_HOSTNAME=' | cut -d= -f2-)
 REMOTE_RUNDIR=$(echo "$REMOTE_OUTPUT" | grep '^REMOTE_RUNDIR=' | cut -d= -f2-)
+REMOTE_SERVER=$(echo "$REMOTE_OUTPUT" | grep '^REMOTE_SERVER=' | cut -d= -f2-)
 [ -n "$TUNNEL_HOSTNAME" ] || { echo "ERROR: no tunnel hostname returned from $HOST"; exit 1; }
 [ -n "$REMOTE_RUNDIR" ] || { echo "ERROR: no remote rundir returned from $HOST"; exit 1; }
 
@@ -190,7 +191,7 @@ fi
 
 # ---- Step 4: start client-side access tunnel ----
 echo "=== Step 4: Starting client-side access tunnel ==="
-pkill -f 'cloudflared access tcp' 2>/dev/null && sleep 1 || true
+pkill -f '^cloudflared access tcp' 2>/dev/null && sleep 1 || true
 bash "$LOCAL_RUN_DIR/cloudflare.sh" > /tmp/tcpudp-access.log 2>&1 &
 ACCESS_PID=$!
 echo "  access tunnel pid $ACCESS_PID"
