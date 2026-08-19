@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname plane-cove-hampshire-bibliography.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname trailer-mild-downloads-throws.trycloudflare.com
