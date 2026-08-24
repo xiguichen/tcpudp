@@ -18,7 +18,7 @@
 - Info files written by the deploy portion: `cloudflare.sh`, `cloudflare.bat`, `run_info.json` in `$RUNDIR` on vpn2.
 - Local fetch target: `github_run/` plus root `cloudflare.sh` / `cloudflare.bat` (mirrors the GH-flow layout).
 - Client config: `run/config.json` = `{"localHostUdpPort": 5003, "peerTcpPort": 7001, "peerAddress": "127.0.0.1", "clientId": 4}`.
-- Handoff: print `Run:  ./run/udp_client` and exit 0.
+- Handoff: print `Run:  cd run && ./udp_client` and exit 0.
 - Process-kill patterns must be anchored (`^...`) so they never match the script's own shell.
 
 ---
@@ -257,7 +257,7 @@ echo "=== Tunnel ready ==="
 echo "  Hostname: $TUNNEL_HOSTNAME"
 echo "  Server:   $HOST:$REMOTE_SERVER"
 echo ""
-echo "Run:  ./run/udp_client"
+echo "Run:  cd run && ./udp_client"
 ```
 
 - [ ] **Step 2: Make it executable and syntax-check**

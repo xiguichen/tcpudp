@@ -94,23 +94,15 @@ access` tunnel and the `udp_client`.
 
   `~/tcpudp/server`.
 
-- Server process: if the server is not running (no process for the binary and
+- Server process: kill any existing server process for this binary, then
 
-  nothing listening on TCP 7001), start it with
+  start it fresh with `nohup <server> --log-level=INFO` logging to
 
-  `nohup <server> --log-level=INFO` logging to `~/tcpudp/server.log`. If it
+  `~/tcpudp/server.log`. Always restart — never reuse a running server.
 
-  is already running, leave it alone.
+- Cloudflare tunnel: kill any existing `cloudflared tunnel
 
-- Cloudflare tunnel: if a `cloudflared tunnel --url tcp://localhost:7001`
-
-  process is running, extract its hostname from the log and verify the
-
-  hostname still resolves (via `dig`) and accepts TCP connections (short
-
-  connect probe on port 443). If the process is dead or the hostname is
-
-  stale, kill any old cloudflared and start a fresh
+  --url tcp://localhost:7001` process, then start a fresh
 
   `nohup cloudflared tunnel --url tcp://localhost:7001 --logfile ~/tcpudp/cloudflared.log`.
 
@@ -166,7 +158,7 @@ access` tunnel and the `udp_client`.
 
 **Step 6 — Handoff**
 
-- Print the tunnel hostname and: "Tunnel ready. Run `./run/udp_client`."
+- Print the tunnel hostname and: "Tunnel ready. Run `cd run && ./udp_client`."
 
 ### Decisions and explicit non-goals
 
@@ -178,9 +170,13 @@ access` tunnel and the `udp_client`.
 
   Alive"). Each run of the script re-checks and repairs state.
 
-- Idempotent by construction: re-running reuses running server/cloudflared
+- Always restart fresh: every run kills any running server and cloudflared
 
-  where healthy.
+  first, then starts new ones. Re-running never reuses existing processes
+
+  (mirrors `run.yml`'s `concurrency: cancel-in-progress` guarantee of one
+
+  clean tunnel per run).
 
 - No code sharing with `run_github.sh` / `trigger_run.sh`; the script is
 
@@ -194,16 +190,14 @@ access` tunnel and the `udp_client`.
 
 - Expect: vpn2 has exactly one server process and one cloudflared process
 
-  (not duplicates on re-run), `~/tcpudp/cloudflare.sh` exists on vpn2 and
+  after the run (previous ones killed), `~/tcpudp/cloudflare.sh` exists on
 
-  `github_run/cloudflare.sh` exists locally with a matching hostname.
+  vpn2 and `github_run/cloudflare.sh` exists locally with a matching
+
+  hostname.
 
 - `./run/udp_client` connects (tunnel hostname reachable from the Mac).
 
-- Re-run the script — it should detect the running instances and not start
+- Re-run the script — it kills and restarts both processes and picks up a
 
-  duplicates.
-
-- Kill cloudflared on vpn2, re-run — the script restarts it and picks up the
-
-  new hostname.
+  fresh hostname.

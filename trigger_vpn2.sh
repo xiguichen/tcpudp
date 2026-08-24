@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
         --host) HOST="$2"; shift 2 ;;
         --server) SERVER="$2"; shift 2 ;;
         --release) RELEASE="$2"; shift 2 ;;
-        --help) sed -n '2,32p' "$0"; exit 0 ;;
+        --help) sed -n '2,27p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1"; echo "Run '$0 --help' for usage."; exit 1 ;;
     esac
 done
@@ -95,7 +95,7 @@ for i in $(seq 1 10); do
     fi
     sleep 1
 done
-nohup "$SERVER" --log-level=INFO > "$RUNDIR/server.log" 2>&1 &
+nohup "$SERVER" --log-level=INFO </dev/null > "$RUNDIR/server.log" 2>&1 &
 echo "  server pid $!" >&2
 for i in $(seq 1 10); do
     if ss -tln 2>/dev/null | grep -q ':7001 ' || netstat -tln 2>/dev/null | grep -q ':7001 '; then
@@ -172,7 +172,7 @@ else
     for ip in "${CANDIDATE_IPS[@]}"; do
         (
             avg=$(ping -c "$PING_COUNT" -W $((PING_TIMEOUT_SEC * 1000)) "$ip" 2>/dev/null \
-                | awk -F' = ' '/^round-trip/{split($2,a,"/"); print a[2]}')
+                | awk -F' = ' '/^round-trip/{split($2,a,"/"); print a[2]}') || true
             [ -n "$avg" ] && echo "$avg $ip" || echo "999999 $ip unreachable"
         ) > "$tmpdir/$i" &
         i=$((i + 1))
