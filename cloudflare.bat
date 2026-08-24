@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname cables-controlling-quotations-precipitation.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname measures-cars-growing-introduces.trycloudflare.com
