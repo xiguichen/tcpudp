@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname measures-cars-growing-introduces.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname pencil-sacred-blackjack-donated.trycloudflare.com
