@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname pencil-sacred-blackjack-donated.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname talk-professionals-captain-strength.trycloudflare.com
