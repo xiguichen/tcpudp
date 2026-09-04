@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname copied-realtors-dispatched-love.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname creative-trained-conference-vegetables.trycloudflare.com
