@@ -2,6 +2,7 @@
 
 #include "Socket.h"
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <thread>
 #include "VirtualChannel.h"
@@ -49,6 +50,15 @@ class Client
     std::mutex watchdogMutex;                 // serializes join() between ReconnectVC and Stop()
     std::atomic<int> reconnectEpoch{0};       // incremented by ReconnectVC; per-slot reconnects
                                               // abort if the epoch changed mid-operation
+
+    // Per-slot reconnect backoff. During a flaky/half-open period a reconnected slot
+    // can drop again immediately, so the watchdog would otherwise hammer the same slot
+    // every 500ms until the network settles. slotBackoffMs[slot] grows exponentially on
+    // each reconnect attempt and slotLastReconnect[slot] records the attempt time; the
+    // watchdog skips a dead slot until enough time has passed. Backoff resets to the
+    // base once the slot is observed alive again. Only touched by the watchdog thread.
+    std::vector<std::chrono::steady_clock::time_point> slotLastReconnect;
+    std::vector<int> slotBackoffMs;
 
     bool ReconnectVC(int maxRetries = 5, int initialBackoffMs = 1000);
     void StartWatchdog();

@@ -5,6 +5,7 @@
 #include "VirtualChannelFactory.h"
 #include "TcpVirtualChannel.h"
 #include "Protocol.h"
+#include <algorithm>
 #include <thread>
 #include <format>
 
@@ -377,8 +378,17 @@ void Client::StartWatchdog()
     // Guard against double-start. Caller must stop the previous thread before calling again.
     assert(!watchdogThread.joinable() && "StartWatchdog called with a running watchdog thread");
 
+    // Base per-slot reconnect backoff and its cap. On a flaky link a reconnected slot
+    // can drop again within a tick; exponential backoff stops the watchdog from
+    // hammering the same slot hundreds of times before the network settles.
+    constexpr int SLOT_BACKOFF_BASE_MS = 1000;
+    constexpr int SLOT_BACKOFF_MAX_MS = 30000;
+
+    slotLastReconnect.assign(VC_TCP_CONNECTIONS, std::chrono::steady_clock::time_point{});
+    slotBackoffMs.assign(VC_TCP_CONNECTIONS, SLOT_BACKOFF_BASE_MS);
+
     watchdogRunning = true;
-    watchdogThread = std::thread([this]() {
+    watchdogThread = std::thread([this, SLOT_BACKOFF_BASE_MS, SLOT_BACKOFF_MAX_MS]() {
         while (watchdogRunning.load())
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -394,10 +404,37 @@ void Client::StartWatchdog()
                 deadSlots = static_cast<TcpVirtualChannel *>(vc.get())->getDeadSlots();
             }
 
+            if (deadSlots.empty())
+                continue;
+
+            // Reset backoff for any slot that is currently connected so a healthy slot
+            // reconnects promptly the next time it really dies.
+            {
+                for (int slot = 0; slot < VC_TCP_CONNECTIONS; slot++)
+                {
+                    if (std::find(deadSlots.begin(), deadSlots.end(), slot) == deadSlots.end())
+                        slotBackoffMs[slot] = SLOT_BACKOFF_BASE_MS;
+                }
+            }
+
+            auto now = std::chrono::steady_clock::now();
             for (int slot : deadSlots)
             {
                 if (!watchdogRunning.load())
                     break;
+
+                // Respect per-slot backoff: skip this slot if we reconnected it too recently.
+                if (now < slotLastReconnect[slot] + std::chrono::milliseconds(slotBackoffMs[slot]))
+                {
+                    log_info(std::format("Watchdog: slot {} in reconnect backoff ({}ms), skipping",
+                                         slot, slotBackoffMs[slot]));
+                    continue;
+                }
+
+                slotLastReconnect[slot] = now;
+                int backoff = slotBackoffMs[slot];
+                slotBackoffMs[slot] = std::min(backoff * 2, SLOT_BACKOFF_MAX_MS);
+
                 ReconnectSingleSlot(slot);
             }
         }
