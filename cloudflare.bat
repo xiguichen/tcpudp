@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname content-bronze-employer-cause.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname speeds-authentication-cleaner-metadata.trycloudflare.com
