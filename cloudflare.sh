@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname stanford-lat-pregnant-accordance.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname content-bronze-employer-cause.trycloudflare.com
