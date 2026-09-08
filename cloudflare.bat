@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname speeds-authentication-cleaner-metadata.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname celebration-capable-department-imported.trycloudflare.com
