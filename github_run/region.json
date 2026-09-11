@@ -1,11 +1,11 @@
 {
-  "ip": "52.161.51.50",
-  "city": "Cheyenne",
-  "region": "Wyoming",
+  "ip": "4.246.63.147",
+  "city": "Moses Lake",
+  "region": "Washington",
   "country": "US",
-  "loc": "41.1400,-104.8203",
+  "loc": "47.1301,-119.2781",
   "org": "AS8075 Microsoft Corporation",
-  "postal": "82001",
-  "timezone": "America/Denver",
+  "postal": "98837",
+  "timezone": "America/Los_Angeles",
   "readme": "https://ipinfo.io/missingauth"
 }
