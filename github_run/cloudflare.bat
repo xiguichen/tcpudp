@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname cuisine-contributors-dale-extension.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname acre-ref-mines-county.trycloudflare.com
