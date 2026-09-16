@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname multiple-turbo-unto-retailers.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname vocals-burns-acm-term.trycloudflare.com
