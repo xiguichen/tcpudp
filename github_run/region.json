@@ -1,11 +1,11 @@
 {
-  "ip": "52.188.87.146",
-  "city": "Dulles Town Center",
-  "region": "Virginia",
+  "ip": "172.215.210.228",
+  "city": "Cheyenne",
+  "region": "Wyoming",
   "country": "US",
-  "loc": "39.0376,-77.4158",
+  "loc": "41.1400,-104.8203",
   "org": "AS8075 Microsoft Corporation",
-  "postal": "20164",
-  "timezone": "America/New_York",
+  "postal": "82001",
+  "timezone": "America/Denver",
   "readme": "https://ipinfo.io/missingauth"
 }
