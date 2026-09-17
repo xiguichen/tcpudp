@@ -1,11 +1,11 @@
 {
-  "ip": "40.116.92.112",
-  "city": "Chicago",
-  "region": "Illinois",
+  "ip": "128.24.162.176",
+  "city": "Cheyenne",
+  "region": "Wyoming",
   "country": "US",
-  "loc": "41.8500,-87.6500",
+  "loc": "41.1400,-104.8203",
   "org": "AS8075 Microsoft Corporation",
-  "postal": "60608",
-  "timezone": "America/Chicago",
+  "postal": "82001",
+  "timezone": "America/Denver",
   "readme": "https://ipinfo.io/missingauth"
 }
