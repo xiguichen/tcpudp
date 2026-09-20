@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname katrina-dubai-reload-vegas.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname summaries-brochure-halloween-ads.trycloudflare.com
