@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname summaries-brochure-halloween-ads.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname casting-component-browse-loans.trycloudflare.com
