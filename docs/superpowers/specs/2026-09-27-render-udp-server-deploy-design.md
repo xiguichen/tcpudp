@@ -159,6 +159,11 @@ folder can move to another repo by changing configuration only.
 | `PUBLISH` | `true` | supervisor | `false` disables all git writes (local testing) |
 | `RENDER_HEALTH_URL` | `https://tcpudp-render.onrender.com/healthz` | `trigger_render.sh` | Where to wake and query the service |
 
+Additionally, these exist as **test seams** and all have working defaults, so
+production never sets them: `TCPUDP_STATE_DIR` (`/run/tcpudp`),
+`GITHUB_REMOTE_URL`, `GITHUB_PUSH_URL`, `KEEPALIVE_READY_FILE`,
+`CF_EDGE_IPS`, `PING_COUNT` (5), and `HOSTS_FILE` (`/etc/hosts`).
+
 ## Detailed design
 
 ### `render/render.yaml`
@@ -307,9 +312,10 @@ Files written by `publish`, in the **exact formats `run.yml` uses** so that
 - Push uses an inline token URL and never `git remote add`, so the PAT is not
   written into `.git/config`:
   `git push "https://x-access-token:${GITHUB_PAT}@github.com/${GITHUB_REPO}.git" "HEAD:$GITHUB_PUSH_BRANCH"`
-- If `GITHUB_PAT` is unset, skip publishing, log a warning once, set
-  `published: false`, and keep serving. The tunnel and `/healthz` still work; the
-  Mac side compensates.
+- If `GITHUB_PAT` is unset, write the info files but skip the commit and push,
+  log a warning once, set `published: false`, and keep serving. The tunnel and
+  `/healthz` still work; the Mac side compensates. (`PUBLISH=false` is
+  different: it skips the file writes too, and exists only for local testing.)
 - The PAT is never echoed to logs.
 - `SIGTERM`/`SIGINT` trap kills the child processes and exits 0, so Render's
   shutdown stays clean.
