@@ -58,11 +58,16 @@ probe_best_edge_ip() {
 }
 
 # --------------------------------------------------------------------------
-# _hosts_write
+# _hosts_write / _hosts_append
 #
-# Install the contents of $2 as the hosts file $1, using sudo only when the
-# current user cannot write it. Keeping the privilege check here means the
-# tests need no sudo and production still works.
+# Install (or append) file contents, using sudo only when the current user
+# cannot write the target. Keeping the privilege check here means the tests
+# need no sudo and production still works.
+#
+# Both propagate the underlying command's exit status. The caller must check
+# it: a silent failure here is the worst kind, because the user would be told
+# DNS is pinned while still being handed the slow CN edge IP that this whole
+# function exists to avoid.
 # --------------------------------------------------------------------------
 _hosts_write() {
   local dest=$1 src=$2
@@ -72,6 +77,17 @@ _hosts_write() {
     sudo tee "$dest" >/dev/null <"$src"
   else
     cat "$src" >"$dest"
+  fi
+}
+
+_hosts_append() {
+  local dest=$1 src=$2
+  if [ -w "$dest" ] 2>/dev/null; then
+    cat "$src" >>"$dest"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo tee -a "$dest" >/dev/null <"$src"
+  else
+    cat "$src" >>"$dest"
   fi
 }
 
@@ -123,19 +139,21 @@ pin_tunnel_hostname() {
     tmp=$(mktemp "${TMPDIR:-/tmp}/tcpudp-hosts.XXXXXX") || return 1
     grep -vE "[[:space:]]$host\$" "$hosts_file" >"$tmp" 2>/dev/null || true
     printf '%s %s\n' "$best_ip" "$host" >>"$tmp"
-    _hosts_write "$hosts_file" "$tmp"
+    if ! _hosts_write "$hosts_file" "$tmp"; then
+      rm -f "$tmp"
+      printf 'pin_tunnel_hostname: could not write %s (need sudo?)\n' "$hosts_file" >&2
+      return 1
+    fi
     rm -f "$tmp"
   else
     # Absent: a plain append is enough and cannot disturb the rest of the file.
     local tmp
     tmp=$(mktemp "${TMPDIR:-/tmp}/tcpudp-hosts.XXXXXX") || return 1
     printf '%s %s\n' "$best_ip" "$host" >"$tmp"
-    if [ -w "$hosts_file" ] 2>/dev/null; then
-      cat "$tmp" >>"$hosts_file"
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo tee -a "$hosts_file" >/dev/null <"$tmp"
-    else
-      cat "$tmp" >>"$hosts_file"
+    if ! _hosts_append "$hosts_file" "$tmp"; then
+      rm -f "$tmp"
+      printf 'pin_tunnel_hostname: could not write %s (need sudo?)\n' "$hosts_file" >&2
+      return 1
     fi
     rm -f "$tmp"
   fi

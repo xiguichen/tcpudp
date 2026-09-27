@@ -312,6 +312,39 @@ test_probe_best_edge_ip_fails_when_none_respond() {
 }
 
 # A host with no entry gets one, and the caller is told which IP was used.
+# A hosts write that fails must not be reported as a success. The whole point of
+# this function is to dodge the slow CN edge IP, so silently "succeeding" would
+# hand the user exactly the outcome they are trying to avoid - while telling
+# them it worked. Simulated with a sudo stub that always fails and a directory
+# the test cannot write.
+test_pin_tunnel_hostname_reports_a_failed_write() {
+  new_sandbox fast || return 1
+  local ro="$sandbox/ro"
+  mkdir -p "$ro"
+  printf '127.0.0.1 localhost\n' >"$ro/hosts"
+  printf '#!/bin/sh\nexit 1\n' >"$sandbox/bin/sudo"
+  chmod +x "$sandbox/bin/sudo"
+  # The file itself must be read-only. Locking the directory would not do:
+  # appending to an already-writable file does not need directory write
+  # permission, so the write would succeed and the test would prove nothing.
+  chmod 444 "$ro/hosts"
+
+  local out rc=0
+  # 2>&1 matters: the diagnostic goes to stderr, and $(...) alone would
+  # capture only the stdout side, making this test pass for the wrong reason.
+  out=$(
+    load_net
+    HOSTS_FILE="$ro/hosts" CF_EDGE_IPS="$FAST_IP $SLOW_IP" \
+      pin_tunnel_hostname 'fresh.trycloudflare.com' 2>&1
+  ) || rc=$?
+  chmod 644 "$ro/hosts"
+
+  assert_contains "$out" 'could not write' pin-reports-the-failure
+  if [ "$rc" -eq 0 ]; then
+    fail 'a failed hosts write must return non-zero'
+  fi
+}
+
 test_pin_tunnel_hostname_appends_when_absent() {
   new_sandbox fast || return 1
   local out
@@ -463,6 +496,7 @@ test_default_health_url_matches_the_blueprint_service_name() {
 }
 
 run_test test_default_health_url_matches_the_blueprint_service_name test_default_health_url_matches_the_blueprint_service_name
+run_test test_pin_tunnel_hostname_reports_a_failed_write test_pin_tunnel_hostname_reports_a_failed_write
 run_test test_pin_tunnel_hostname_appends_when_absent test_pin_tunnel_hostname_appends_when_absent
 run_test test_pin_tunnel_hostname_is_idempotent test_pin_tunnel_hostname_is_idempotent
 run_test test_pin_tunnel_hostname_replaces_stale_entry test_pin_tunnel_hostname_replaces_stale_entry

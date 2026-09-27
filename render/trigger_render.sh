@@ -195,14 +195,19 @@ if [ -f "$HERE/net.sh" ]; then
   . "$HERE/net.sh"
   log ""
   log "=== Pinning DNS for lower latency ==="
-  pin_result=$(pin_tunnel_hostname "$host") || pin_result=''
-  if [ -n "$pin_result" ]; then
+  if pin_result=$(pin_tunnel_hostname "$host"); then
     case "$pin_result" in
       already-pinned*) log "  /etc/hosts already correct" ;;
       pinned*) log "  Added $pin_result to ${HOSTS_FILE:-/etc/hosts}" ;;
       fallback*) warn "  No candidate edge IP answered; using $pin_result" ;;
       *) log "  $pin_result" ;;
     esac
+  else
+    # Not fatal - the tunnel works without it - but say so loudly, because the
+    # consequence is exactly the slow CN edge IP this step exists to avoid.
+    warn "DNS pinning FAILED. The client may be routed to a slow Cloudflare"
+    warn "edge IP. Re-run with sudo, or add the line by hand:"
+    warn "  echo '<edge-ip> $host' | sudo tee -a ${HOSTS_FILE:-/etc/hosts}"
   fi
 else
   warn "net.sh not found next to this script; skipping DNS pinning"
