@@ -255,7 +255,7 @@ run_trigger() {
     HOSTS_FILE="$hosts" \
     PING_MODE="${PING_MODE:-fast}" \
     POLL_INTERVAL=1 \
-    RECONCILE_TIMEOUT=2 \
+    RECONCILE_TIMEOUT="${RECONCILE_TIMEOUT_OVERRIDE:-2}" \
     GITHUB_PUSH_BRANCH="$BRANCH" \
     GITHUB_REMOTE_URL="$origin" \
     TCPUDP_INFO_DIR=github_run \
@@ -479,18 +479,20 @@ test_trigger_render_does_not_wait_when_no_publish_is_expected() {
   start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"nopub.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
 
-  # RECONCILE_TIMEOUT is 2s in run_trigger; allow a wide margin so a slow test
-  # machine cannot make a real wait look like no wait.
+  # Make the reconcile timeout far larger than the ceiling below. If the wait
+  # were not skipped, elapsed would be >= 30s; if it was skipped, elapsed is
+  # however long the git/curl work takes. A 2s timeout with a 2s ceiling made
+  # the two indistinguishable and the test failed intermittently under load.
   local started elapsed
   started=$(date +%s)
-  run_trigger --timeout 30
+  RECONCILE_TIMEOUT_OVERRIDE=30 run_trigger --timeout 30
   elapsed=$(( $(date +%s) - started ))
 
   assert_eq 0 "$trigger_rc" exits-0
   assert_not_contains "$trigger_out" 'waiting up to' 'does-not-wait-for-a-publish'
   assert_contains "$trigger_out" 'nothing to wait for' explains-why-it-skipped
   # The behaviour itself, not just the wording.
-  if [ "$elapsed" -ge 2 ]; then
+  if [ "$elapsed" -ge 10 ]; then
     fail 'skips-the-wait-in-practice' "still took ${elapsed}s despite published=false"
   fi
   # It must still do the useful part: write the live hostname locally.
