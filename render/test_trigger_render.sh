@@ -18,6 +18,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 TRIGGER="$HERE/trigger_render.sh"
 NET="$HERE/net.sh"
+BLUEPRINT="$HERE/render.yaml"
 
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
@@ -446,6 +447,22 @@ test_trigger_render_prints_handoff() {
 
 run_test test_probe_best_edge_ip_picks_lowest_rtt test_probe_best_edge_ip_picks_lowest_rtt
 run_test test_probe_best_edge_ip_fails_when_none_respond test_probe_best_edge_ip_fails_when_none_respond
+# The service name lives in two places: `name:` in the Blueprint, and the host
+# baked into trigger_render.sh's default RENDER_HEALTH_URL. When those drift,
+# the failure is a bare 404 with "x-render-routing: no-server", which reads as a
+# dead service rather than a typo - and the default URL is what a user gets
+# before they know the env var exists.
+test_default_health_url_matches_the_blueprint_service_name() {
+  local name host
+
+  name=$(sed -n 's/^    name: *//p' "$BLUEPRINT" | head -1)
+  assert_eq tcpudp "$name" 'blueprint-service-name'
+
+  host=$(sed -n 's|.*RENDER_HEALTH_URL:-https://\([^./]*\)\..*|\1|p' "$TRIGGER" | head -1)
+  assert_eq "$name" "$host" 'default-health-url-host-matches-service-name'
+}
+
+run_test test_default_health_url_matches_the_blueprint_service_name test_default_health_url_matches_the_blueprint_service_name
 run_test test_pin_tunnel_hostname_appends_when_absent test_pin_tunnel_hostname_appends_when_absent
 run_test test_pin_tunnel_hostname_is_idempotent test_pin_tunnel_hostname_is_idempotent
 run_test test_pin_tunnel_hostname_replaces_stale_entry test_pin_tunnel_hostname_replaces_stale_entry

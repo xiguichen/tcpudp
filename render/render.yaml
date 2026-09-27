@@ -1,6 +1,9 @@
 services:
   - type: web
-    name: tcpudp-render
+    # Must match the hostname baked into trigger_render.sh's default
+    # RENDER_HEALTH_URL, or that script polls a 404 on first use.
+    # test_trigger_render.sh asserts the two agree.
+    name: tcpudp
     runtime: docker
     # Everything this service needs lives in render/. Render hides the rest of
     # the repo from the build, which is what keeps the folder liftable.

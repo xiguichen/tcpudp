@@ -26,7 +26,7 @@ also what wakes the instance, and it always answers `200` — with
 "still waking" from "broken".
 
 ```
-$ curl -fsS https://tcpudp-render.onrender.com/healthz
+$ curl -fsS https://tcpudp.onrender.com/healthz
 {"status":"ok","hostname":"abc-def.trycloudflare.com","port":7001,"published":false,"source":"render","updated":"2026-09-27T12:34:56Z"}
 ```
 
@@ -81,7 +81,7 @@ All optional; the defaults are the working values.
 | `SUPERVISE_INTERVAL` | `5` | supervisor |
 | `TUNNEL_START_TIMEOUT` | `60` | supervisor |
 | `PUBLISH` | `true` | supervisor |
-| `RENDER_HEALTH_URL` | `https://tcpudp-render.onrender.com/healthz` | trigger |
+| `RENDER_HEALTH_URL` | `https://tcpudp.onrender.com/healthz` | trigger |
 
 Test seams, also defaulted: `POLL_INTERVAL`, `RECONCILE_TIMEOUT`,
 `HEALTH_TIMEOUT`, `HOSTS_FILE`, `CF_EDGE_IPS`, `PING_COUNT`,

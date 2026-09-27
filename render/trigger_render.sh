@@ -30,7 +30,11 @@ set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 REPO_ROOT=$(cd "$HERE/.." && pwd -P)
 
-HEALTH_URL=${RENDER_HEALTH_URL:-https://tcpudp-render.onrender.com/healthz}
+# Must agree with `name:` in render.yaml. Pinned by a test, because a mismatch
+# here is a silent 404 rather than an error: Render answers an unknown service
+# name with 404 and "x-render-routing: no-server", which reads as a dead
+# service rather than a typo.
+HEALTH_URL=${RENDER_HEALTH_URL:-https://tcpudp.onrender.com/healthz}
 BRANCH=${GITHUB_PUSH_BRANCH:-run}
 INFO_DIR=${TCPUDP_INFO_DIR:-github_run}
 SERVER_PORT=${TCPUDP_SERVER_PORT:-7001}
