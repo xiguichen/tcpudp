@@ -1,0 +1,465 @@
+#!/usr/bin/env bash
+#
+# Tests for net.sh and trigger_render.sh (the Mac-side entry point).
+#
+#   bash render/test_trigger_render.sh
+#
+# Plain bash, no test framework, no real network:
+#   - git talks to a throwaway bare repo, never to github.com
+#   - /healthz is served by a local python server on 127.0.0.1
+#   - `ping` is stubbed on PATH, so no ICMP leaves the machine
+#   - /etc/hosts is redirected to a sandbox file via HOSTS_FILE, so no sudo
+#
+# Deliberately `set -uo pipefail` without `-e`, so a failing assertion is
+# reported and the test carries on instead of aborting the run.
+
+set -uo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+TRIGGER="$HERE/trigger_render.sh"
+NET="$HERE/net.sh"
+
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_TERMINAL_PROMPT=0
+
+BRANCH=run
+FAST_IP=162.159.38.209
+SLOW_IP=104.17.213.97
+
+tests_run=0
+tests_failed=0
+current_test=''
+failures=()
+sandboxes=()
+health_pids=()
+sandbox=''
+origin=''
+repo=''
+hosts=''
+health_port=''
+trigger_out=''
+trigger_rc=0
+
+if [ ! -f "$TRIGGER" ] || [ ! -f "$NET" ]; then
+  printf 'ERROR: %s and %s must both exist - nothing to test\n' "$TRIGGER" "$NET" >&2
+  exit 1
+fi
+
+# --------------------------------------------------------------------------
+# assertions
+# --------------------------------------------------------------------------
+
+fail() {
+  failures+=("$current_test: $1${2:+ -- $2}")
+  printf '  FAIL %s\n' "$1"
+  [ -n "${2:-}" ] && printf '       %s\n' "$2"
+  return 0
+}
+
+assert_eq() { # expected actual label
+  [ "$1" = "$2" ] && return 0
+  fail "$3" "expected [$1], got [$2]"
+  return 1
+}
+
+assert_contains() { # haystack needle label
+  case "$1" in *"$2"*) return 0 ;; esac
+  fail "$3" "expected output to contain [$2]"
+  return 1
+}
+
+assert_not_contains() { # haystack needle label
+  case "$1" in
+    *"$2"*)
+      fail "$3" "expected output NOT to contain [$2]"
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+assert_empty() { # actual label
+  [ -z "$1" ] && return 0
+  fail "$2" "expected nothing, got [$1]"
+  return 1
+}
+
+assert_not_empty() { # actual label
+  [ -n "$1" ] && return 0
+  fail "$2" 'expected a value, got nothing'
+  return 1
+}
+
+# assert_host_line_count HOST IP LABEL - exactly one hosts line is "<ip> <host>"
+assert_host_line_count() { # host ip label
+  local count
+  count=$(grep -cE "^[[:space:]]*$2[[:space:]]+$1\$" "$hosts" 2>/dev/null)
+  [ -n "$count" ] || count=0
+  assert_eq 1 "$count" "$3"
+}
+
+run_test() { # fn name
+  current_test=$2
+  tests_run=$((tests_run + 1))
+  local before=${#failures[@]}
+  "$1" || true
+  if [ "${#failures[@]}" -gt "$before" ]; then
+    tests_failed=$((tests_failed + 1))
+    printf 'FAIL  %s\n' "$2"
+  else
+    printf 'ok    %s\n' "$2"
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# helpers
+# --------------------------------------------------------------------------
+
+# A ping stub. PING_MODE=fast makes FAST_IP the winner; PING_MODE=none makes
+# every candidate unreachable.
+make_ping_stub() { # dir mode
+  cat >"$1/ping" <<'STUB'
+#!/usr/bin/env bash
+# Stub for ping(1). The last argument is the address.
+ip=${@: -1}
+emit() { printf 'round-trip min/avg/max/stddev = 1.0/%s/3.0/0.5 bytes\n' "$1"; }
+case "${PING_MODE:-fast}" in
+  none) exit 1 ;;
+  fast)
+    case "$ip" in
+      162.159.38.209) emit 5.0; exit 0 ;;
+      104.17.213.97) emit 50.0; exit 0 ;;
+      *) exit 1 ;;
+    esac
+    ;;
+esac
+exit 1
+STUB
+  chmod +x "$1/ping"
+}
+
+# A local /healthz that walks a list of canned responses, one per request, and
+# then repeats the last one forever. Lets a test change what the caller sees
+# between polls without racing it.
+make_health_server() { # docroot port
+  cat >"$1/server.py" <<'PY'
+import http.server, json, os, sys
+
+docroot, port = sys.argv[1], int(sys.argv[2])
+state = {"n": 0}
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            with open(os.path.join(docroot, "responses.json")) as fh:
+                responses = json.load(fh)
+        except Exception:
+            responses = [{"status": 200, "body": "not json"}]
+        i = min(state["n"], len(responses) - 1)
+        state["n"] += 1
+        r = responses[i]
+        body = r.get("body", "").encode()
+        self.send_response(r.get("status", 200))
+        self.send_header("Content-Type", r.get("type", "application/json"))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+PY
+}
+
+free_port() {
+  python3 -c 'import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()'
+}
+
+# new_sandbox [ping_mode] - bare origin + a repo whose render/ holds the scripts
+new_sandbox() {
+  local mode=${1:-fast}
+  sandbox=$(mktemp -d "${TMPDIR:-/tmp}/tcpudp-render-test.XXXXXX")
+  # Physical path: ps reports resolved paths, so a relative TMPDIR would not
+  # match the stubs' command lines.
+  sandbox=$(cd "$sandbox" && pwd -P)
+  sandboxes+=("$sandbox")
+  origin="$sandbox/origin.git"
+  repo="$sandbox/repo"
+  hosts="$sandbox/hosts"
+  mkdir -p "$sandbox/seed" "$sandbox/bin" "$sandbox/health" || return 1
+  : >"$hosts"
+
+  make_ping_stub "$sandbox/bin" "$mode"
+  # The stub has to be on PATH for the net.sh library tests too, not only for
+  # run_trigger: probe_best_edge_ip calls a bare `ping`, so without this the
+  # suite would send real ICMP and measure the user's real network.
+  PATH="$sandbox/bin:$PATH"
+  export PATH
+  export PING_MODE=$mode
+
+  git init --quiet --bare --initial-branch="$BRANCH" "$origin" || return 1
+  (
+    cd "$sandbox/seed" || exit 1
+    git init --quiet --initial-branch="$BRANCH" . || exit 1
+    git config user.name sandbox
+    git config user.email sandbox@example.invalid
+    mkdir -p github_run
+    printf 'cloudflared access tcp --url tcp://localhost:7001 --hostname seed.trycloudflare.com\n' \
+      >github_run/cloudflare.sh
+    git add README.md 2>/dev/null || true
+    printf 'seed\n' >README.md
+    git add -A
+    git commit --quiet -m seed
+    git remote add origin "$origin"
+    git push --quiet origin "$BRANCH"
+  ) >/dev/null 2>&1 || return 1
+  git clone --quiet --branch "$BRANCH" "$origin" "$repo" || return 1
+  mkdir -p "$repo/render"
+  cp "$TRIGGER" "$NET" "$repo/render/" || return 1
+  chmod +x "$repo/render/trigger_render.sh"
+  return 0
+}
+
+# start_health RESP_JSON - serve that list of responses on 127.0.0.1
+start_health() {
+  printf '%s' "$1" >"$sandbox/health/responses.json"
+  make_health_server "$sandbox/health"
+  health_port=$(free_port)
+  python3 "$sandbox/health/server.py" "$sandbox/health" "$health_port" \
+    >"$sandbox/health/server.log" 2>&1 &
+  health_pids+=("$!")
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if curl -fsS --max-time 1 "http://127.0.0.1:$health_port/ping" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+# run_trigger [extra args] - invoke the script; sets trigger_out and trigger_rc
+run_trigger() {
+  trigger_out=$(cd "$repo" && env \
+    PATH="$sandbox/bin:$PATH" \
+    HOSTS_FILE="$hosts" \
+    PING_MODE="${PING_MODE:-fast}" \
+    POLL_INTERVAL=1 \
+    RECONCILE_TIMEOUT=2 \
+    GITHUB_PUSH_BRANCH="$BRANCH" \
+    GITHUB_REMOTE_URL="$origin" \
+    TCPUDP_INFO_DIR=github_run \
+    RENDER_HEALTH_URL="http://127.0.0.1:$health_port/healthz" \
+    "$repo/render/trigger_render.sh" --health-url "http://127.0.0.1:$health_port/healthz" \
+    "$@" 2>&1)
+  trigger_rc=$?
+  return 0
+}
+
+# Load net.sh into the current shell for the library-level tests.
+load_net() {
+  # shellcheck disable=SC1090
+  . "$NET"
+}
+
+teardown() {
+  local pid dir
+  for pid in "${health_pids[@]:-}"; do
+    [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null
+  done
+  for dir in "${sandboxes[@]:-}"; do
+    [ -n "$dir" ] || continue
+    rm -rf "$dir"
+  done
+  return 0
+}
+trap teardown EXIT
+
+# --------------------------------------------------------------------------
+# net.sh
+# --------------------------------------------------------------------------
+
+# The fastest reachable candidate wins, reported as "<ip> <avg_rtt_ms>".
+test_probe_best_edge_ip_picks_lowest_rtt() {
+  new_sandbox fast || return 1
+  (
+    load_net
+    CF_EDGE_IPS="$FAST_IP $SLOW_IP" probe_best_edge_ip
+  ) >"$sandbox/probe.out" 2>&1
+  assert_eq "$FAST_IP 5.0" "$(cat "$sandbox/probe.out")" probe-returns-fastest-ip
+}
+
+# No candidate answers, so the probe fails rather than guessing.
+test_probe_best_edge_ip_fails_when_none_respond() {
+  new_sandbox none || return 1
+  local rc=0
+  (
+    load_net
+    CF_EDGE_IPS="$FAST_IP $SLOW_IP" probe_best_edge_ip
+  ) >"$sandbox/probe.out" 2>&1 || rc=$?
+  assert_not_empty "$rc" 'probe must exit non-zero when nothing responds'
+  assert_empty "$(cat "$sandbox/probe.out")" probe-echoes-nothing-on-failure
+}
+
+# A host with no entry gets one, and the caller is told which IP was used.
+test_pin_tunnel_hostname_appends_when_absent() {
+  new_sandbox fast || return 1
+  local out
+  out=$(
+    load_net
+    HOSTS_FILE="$hosts" CF_EDGE_IPS="$FAST_IP $SLOW_IP" \
+      pin_tunnel_hostname 'fresh.trycloudflare.com'
+  )
+  assert_contains "$out" 'pinned' pin-reports-pinned
+  assert_contains "$out" "$FAST_IP" pin-reports-the-ip
+  assert_host_line_count 'fresh.trycloudflare.com' "$FAST_IP" hosts-has-one-line
+}
+
+# Re-running must not append a duplicate.
+test_pin_tunnel_hostname_is_idempotent() {
+  new_sandbox fast || return 1
+  local first second
+  first=$(
+    load_net
+    HOSTS_FILE="$hosts" CF_EDGE_IPS="$FAST_IP $SLOW_IP" \
+      pin_tunnel_hostname 'twice.trycloudflare.com'
+  )
+  second=$(
+    load_net
+    HOSTS_FILE="$hosts" CF_EDGE_IPS="$FAST_IP $SLOW_IP" \
+      pin_tunnel_hostname 'twice.trycloudflare.com'
+  )
+  assert_contains "$first" 'pinned' first-call-pins
+  assert_contains "$second" 'already-pinned' second-call-is-a-no-op
+  assert_host_line_count 'twice.trycloudflare.com' "$FAST_IP" still-exactly-one-line
+}
+
+# A stale entry pointing at the wrong IP is replaced, not duplicated.
+test_pin_tunnel_hostname_replaces_stale_entry() {
+  new_sandbox fast || return 1
+  printf '%s %s\n' "$SLOW_IP" 'stale.trycloudflare.com' >>"$hosts"
+  (
+    load_net
+    HOSTS_FILE="$hosts" CF_EDGE_IPS="$FAST_IP $SLOW_IP" \
+      pin_tunnel_hostname 'stale.trycloudflare.com' >/dev/null
+  )
+  assert_host_line_count 'stale.trycloudflare.com' "$FAST_IP" stale-entry-replaced
+  assert_empty "$(grep -E "[[:space:]]$SLOW_IP[[:space:]]+stale\.trycloudflare\.com\$" "$hosts")" \
+    old-ip-no-longer-present
+}
+
+# --------------------------------------------------------------------------
+# trigger_render.sh
+# --------------------------------------------------------------------------
+
+# Render serves an HTML "spinning up" page at the edge on a cold start. That page
+# never reaches our server, so the caller must keep polling instead of treating
+# it as an answer. This is the single most common real occurrence.
+test_trigger_render_waits_through_a_non_json_loading_page() {
+  new_sandbox fast || return 1
+  start_health '[
+    {"status":200,"type":"text/html","body":"<html><body>Loading...</body></html>"},
+    {"status":200,"type":"text/html","body":"<html><body>Loading...</body></html>"},
+    {"status":200,"type":"text/html","body":"<html><body>Loading...</body></html>"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"woke.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
+  ]' || return 1
+  run_trigger --timeout 30
+  assert_eq 0 "$trigger_rc" exits-0-after-the-loading-page
+  assert_contains "$trigger_out" 'woke.trycloudflare.com' reports-the-live-hostname
+}
+
+# Our own server answers 200 with hostname:null while the tunnel is still
+# registering. That means "still waking", not "broken".
+test_trigger_render_waits_for_null_hostname_then_succeeds() {
+  new_sandbox fast || return 1
+  start_health '[
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"up.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
+  ]' || return 1
+  run_trigger --timeout 30
+  assert_eq 0 "$trigger_rc" exits-0-once-the-hostname-appears
+  assert_contains "$trigger_out" 'up.trycloudflare.com' reports-the-live-hostname
+}
+
+# A service that never reports a hostname must fail loudly, not hang forever.
+test_trigger_render_times_out_with_clear_error() {
+  new_sandbox fast || return 1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+  run_trigger --timeout 6
+  assert_not_empty "$trigger_rc" 'times-out-with-non-zero-status'
+  assert_contains "$trigger_out" 'timed out' 'says-it-timed-out'
+}
+
+# The normal case after a free-tier sleep: git still holds the previous tunnel's
+# hostname. The live one must win locally so run_github.sh keeps working.
+test_trigger_render_uses_live_hostname_when_branch_is_stale() {
+  new_sandbox fast || return 1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"new.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+  run_trigger --timeout 30
+  assert_eq 0 "$trigger_rc" exits-0-even-when-git-is-stale
+  assert_contains "$trigger_out" 'stale' warns-that-git-is-behind
+  # Ruling 1: the local file must keep the exact one-line command format that
+  # run_github.sh sources, never a bare hostname.
+  assert_eq \
+    'cloudflared access tcp --url tcp://localhost:7001 --hostname new.trycloudflare.com' \
+    "$(cat "$repo/github_run/cloudflare.sh")" local-file-holds-the-live-hostname
+}
+
+# When git already agrees, there is nothing to warn about.
+test_trigger_render_accepts_matching_branch() {
+  new_sandbox fast || return 1
+  printf 'cloudflared access tcp --url tcp://localhost:7001 --hostname match.trycloudflare.com\n' \
+    >"$repo/github_run/cloudflare.sh"
+  # Must reach origin: the script checks origin/$BRANCH, so a purely local
+  # commit would look stale and the assertion below would pass for the wrong
+  # reason.
+  ( cd "$repo" && git add -A && git commit --quiet -m 'matching hostname' &&
+    git push --quiet origin "$BRANCH" ) >/dev/null 2>&1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"match.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+  run_trigger --timeout 30
+  assert_eq 0 "$trigger_rc" exits-0-when-git-already-matches
+  assert_not_contains "$trigger_out" 'stale' no-stale-warning-when-in-sync
+}
+
+# The user has to be told what to run next.
+test_trigger_render_prints_handoff() {
+  new_sandbox fast || return 1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"handoff.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+  run_trigger --timeout 30
+  assert_contains "$trigger_out" './run_github.sh' prints-the-next-command
+}
+
+run_test test_probe_best_edge_ip_picks_lowest_rtt test_probe_best_edge_ip_picks_lowest_rtt
+run_test test_probe_best_edge_ip_fails_when_none_respond test_probe_best_edge_ip_fails_when_none_respond
+run_test test_pin_tunnel_hostname_appends_when_absent test_pin_tunnel_hostname_appends_when_absent
+run_test test_pin_tunnel_hostname_is_idempotent test_pin_tunnel_hostname_is_idempotent
+run_test test_pin_tunnel_hostname_replaces_stale_entry test_pin_tunnel_hostname_replaces_stale_entry
+run_test test_trigger_render_waits_through_a_non_json_loading_page test_trigger_render_waits_through_a_non_json_loading_page
+run_test test_trigger_render_waits_for_null_hostname_then_succeeds test_trigger_render_waits_for_null_hostname_then_succeeds
+run_test test_trigger_render_times_out_with_clear_error test_trigger_render_times_out_with_clear_error
+run_test test_trigger_render_uses_live_hostname_when_branch_is_stale test_trigger_render_uses_live_hostname_when_branch_is_stale
+run_test test_trigger_render_accepts_matching_branch test_trigger_render_accepts_matching_branch
+run_test test_trigger_render_prints_handoff test_trigger_render_prints_handoff
+
+printf '\n%s tests, %s failed\n' "$tests_run" "$tests_failed"
+if [ "$tests_failed" -gt 0 ]; then
+  printf 'failures:\n'
+  for failure in "${failures[@]}"; do printf '  %s\n' "$failure"; done
+  exit 1
+fi
+exit 0
