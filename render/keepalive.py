@@ -25,6 +25,11 @@ DEFAULTS = {
     "published": False,
     "source": "render",
     "updated": "",
+    # One of: skipped, up, up-not-routed, failed, error, unknown.
+    # "up" alone does not mean egress is tunnelled - "up-not-routed" is an
+    # interface that came up but is not in the default route, which is the
+    # failure worth noticing.
+    "wireguard": "skipped",
 }
 
 DEFAULT_PORT = 10000

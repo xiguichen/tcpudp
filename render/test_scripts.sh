@@ -189,6 +189,11 @@ pids_matching() {
 # on the push branch, plus a clone of it. Exports the two test seams and the
 # clone path, then loads the supervisor against it.
 new_sandbox() {
+  # The stub knobs are read by wg-quick/ip at call time, so they have to be
+  # exported rather than prefixed onto a single command. Clearing them here
+  # keeps tests independent of each other's leftovers.
+  unset STUB_WG_FAIL STUB_WG_ROUTED STUB_WG_LEAK STUB_WG_KEY STUB_WG_ADDR
+  unset STUB_SERVER_SPEAK STUB_SERVER_LINES
   sandbox=$(mktemp -d "${TMPDIR:-/tmp}/tcpudp-supervisor-test.XXXXXX")
   # Physical path: ps reports resolved paths, so a relative TMPDIR would not
   # match the stubs' command lines.
@@ -280,6 +285,22 @@ install_stubs() {
 #!/bin/bash
 # Stands in for the release's server binary: holds 127.0.0.1:$TCPUDP_SERVER_PORT
 # open so the supervisor's readiness poll succeeds, then idles.
+[ -n "${STUB_ORDER_LOG:-}" ] && printf 'server\n' >>"$STUB_ORDER_LOG"
+# STUB_SERVER_SPEAK makes the stub emit the lines the log-visibility tests look
+# for, on both streams, and STUB_SERVER_LINES of them in a burst. Nothing else
+# prints, so every other test is unaffected.
+if [ -n "${STUB_SERVER_SPEAK:-}" ]; then
+  i=1
+  while [ "$i" -le "${STUB_SERVER_LINES:-1}" ]; do
+    printf 'STUB_SERVER_STDOUT_MARKER_%s\n' "$i"
+    printf 'STUB_SERVER_STDERR_MARKER_%s\n' "$i" >&2
+    i=$((i + 1))
+  done
+  # Keep speaking slowly so a long-lived child is judged on a stream that
+  # stays open, not just on the initial burst. Backgrounded so the stub still
+  # falls through to binding its port below.
+  ( while :; do sleep 1; printf 'STUB_SERVER_STDOUT_TICK\n'; done ) &
+fi
 python3 - "${TCPUDP_SERVER_PORT:-7001}" <<'PY' &
 import socket, sys, time
 sock = socket.socket()
@@ -309,7 +330,48 @@ printf '%s INF |  https://%s.trycloudflare.com  |\n' \
   "${STUB_TUNNEL_HOST:-render-stub.trycloudflare.com}" >>"$log"
 while :; do sleep 1; done
 STUB
-  chmod +x "$sandbox/bin/server" "$sandbox/bin/cloudflared"
+  cat >"$sandbox/bin/wg-quick" <<'STUB'
+#!/bin/bash
+# Stands in for wg-quick. `up` fails when STUB_WG_FAIL=1, using the real tool's
+# wording. STUB_WG_LEAK=1 makes it print a PrivateKey line: a well-behaved
+# wg-quick never would, so this is what actually exercises the redaction.
+[ -n "${STUB_ORDER_LOG:-}" ] && printf 'wireguard\n' >>"$STUB_ORDER_LOG"
+action=${1:-}
+cfg=${2:-wg0}
+if [ "$action" = up ] && [ "${STUB_WG_FAIL:-0}" = 1 ]; then
+  printf 'RTNETLINK answers: Operation not permitted\n' >&2
+  exit 1
+fi
+if [ "$action" = up ]; then
+  if [ "${STUB_WG_LEAK:-0}" = 1 ]; then
+    printf '[Interface]\nPrivateKey = %s\n' "${STUB_WG_KEY:?}"
+  fi
+  printf '# %s\n' "$cfg"
+fi
+exit 0
+STUB
+  cat >"$sandbox/bin/ip" <<'STUB'
+#!/bin/bash
+# Stands in for iproute2's `ip`, for the two queries the supervisor makes.
+case "${1:-}" in
+  -4)
+    printf '    inet %s scopeid global\n' "${STUB_WG_ADDR:-10.7.0.2/32}"
+    ;;
+  route)
+    # STUB_WG_ROUTED decides whether the interface carries the default route.
+    # This is the distinction that matters: an interface that is up but not in
+    # the default route tunnels nothing.
+    if [ "${STUB_WG_ROUTED:-0}" = 1 ]; then
+      printf 'default via 10.7.0.1 dev wg0 proto static\n'
+    else
+      printf 'default via 172.17.0.1 dev eth0\n'
+    fi
+    ;;
+esac
+exit 0
+STUB
+  chmod +x "$sandbox/bin/server" "$sandbox/bin/cloudflared" \
+    "$sandbox/bin/wg-quick" "$sandbox/bin/ip"
 }
 
 # --------------------------------------------------------------------------
@@ -344,19 +406,22 @@ test_resolve_config_defaults() {
   assert_eq '/app/repo/server' "${SERVER_BIN:-}" SERVER_BIN
 }
 
-test_write_state_writes_all_five_keys() {
+test_write_state_writes_all_six_keys() {
   new_sandbox || return 1
   write_state 'h.trycloudflare.com' 1
   local file
   file=$(state_file)
   assert_parses "$file" state-file-is-an-object
-  assert_eq "['hostname', 'port', 'published', 'source', 'updated']" \
-    "$(json_eval "$file" 'sorted(d.keys())')" five-keys
+  assert_eq "['hostname', 'port', 'published', 'source', 'updated', 'wireguard']" \
+    "$(json_eval "$file" 'sorted(d.keys())')" six-keys
   assert_eq "'h.trycloudflare.com'" "$(json_eval "$file" 'd["hostname"]')" hostname
   assert_eq '7001' "$(json_eval "$file" 'd["port"]')" port
   assert_eq 'True' "$(json_eval "$file" 'd["published"]')" published
   assert_eq "'render'" "$(json_eval "$file" 'd["source"]')" source
   assert_matches "$(json_text "$file" 'd["updated"]')" "$UPDATED_RE" updated
+  # Must be a known token. WG_STATUS is interpolated into this JSON, so an
+  # unexpected value must not be able to break the document.
+  assert_eq "'skipped'" "$(json_eval "$file" 'd["wireguard"]')" wireguard-default
 }
 
 test_write_state_empty_hostname_is_json_null() {
@@ -691,6 +756,275 @@ teardown() {
 # "preflight failed" - which is exactly how the missing git package showed up
 # in production. Read the fatal list out of preflight rather than restating it
 # here, so this test cannot itself go stale.
+# A wg0.conf with a recognisable private key, so the leak tests have something
+# to look for. The value is syntactically a WireGuard key (44 chars, base64)
+# but it is not a real key and grants nothing.
+WG_KEY='qJ0vQ1J8kZ3xW7pL2mN9cR4tY6uB8eH0dF1gI3jK5lM7nO9pQ2rS4tU6vW8xY0zA='
+WG_SAMPLE_CONFIG="[Interface]
+PrivateKey = $WG_KEY
+Address = 10.7.0.2/32
+
+[Peer]
+PublicKey = TruncatedForTestsOnly0000000000000000000000=
+Endpoint = vpn.example.invalid:51820
+AllowedIPs = 0.0.0.0/0"
+
+# wg_quiet - run start_wireguard in the current shell (so WG_STATUS survives)
+# with its log captured to $sandbox/wg.log. Sets wg_rc.
+wg_quiet() {
+  wg_rc=0
+  PATH="$sandbox/bin:$PATH" start_wireguard >"$sandbox/wg.log" 2>&1 || wg_rc=$?
+  return 0
+}
+
+# No config: skip cleanly, report skipped, and never invoke wg-quick.
+test_wireguard_is_skipped_when_config_is_unset() {
+  new_sandbox || return 1
+  install_stubs
+  WIREGUARD_CONFIG='' resolve_config
+  wg_quiet
+  assert_eq 0 "$wg_rc" skip-returns-0
+  assert_eq 'skipped' "$WG_STATUS" status-is-skipped
+  assert_contains "$(cat "$sandbox/wg.log")" 'not set' logs-that-it-skipped
+  if grep -q 'wg-quick' "$sandbox/wg.log" 2>/dev/null; then
+    fail 'wg-quick-must-not-run' 'wg-quick ran even though no config was set'
+  fi
+}
+
+# A failed wg-quick must not take the service down by default: /healthz has to
+# stay reachable for the failure to be diagnosable from outside.
+test_wireguard_failure_is_not_fatal_by_default() {
+  new_sandbox || return 1
+  install_stubs
+  export STUB_WG_FAIL=1
+  WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+    WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" resolve_config
+  wg_quiet
+  assert_eq 1 "$wg_rc" failure-returns-1
+  assert_eq 'failed' "$WG_STATUS" status-is-failed
+  local log
+  log=$(cat "$sandbox/wg.log")
+  assert_contains "$log" 'RTNETLINK' surfaces-the-underlying-error
+  assert_contains "$log" 'NOT tunnelled' warns-that-egress-is-not-tunnelled
+}
+
+# ...unless the operator explicitly asked for it to be mandatory.
+test_wireguard_failure_is_fatal_when_required() {
+  new_sandbox || return 1
+  install_stubs
+  (
+    export STUB_WG_FAIL=1
+    WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+      WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" WIREGUARD_REQUIRED=true \
+      PATH="$sandbox/bin:$PATH" \
+      bash -c 'source "$1"; resolve_config; start_wireguard' _ "$SUPERVISOR"
+  ) >"$sandbox/wg.log" 2>&1
+  local rc=$?
+  local log
+  log=$(cat "$sandbox/wg.log")
+
+  # The exit code alone cannot tell die() apart from a plain `return 1` as the
+  # last statement of bash -c, so assert the message only die() produces, and
+  # assert the continue-anyway warning is absent. Together they pin the behaviour.
+  assert_contains "$log" 'WireGuard is required but wg-quick failed' explains-why-it-stopped
+  if printf '%s' "$log" | grep -q 'continuing without WireGuard'; then
+    fail required-stops-dont-continue \
+      'it both announced it was required and carried on anyway'
+  fi
+  if [ "$rc" -ne 0 ]; then
+    :
+  else
+    fail 'required-failure-must-exit-nonzero' \
+      'WIREGUARD_REQUIRED=true did not stop the supervisor'
+  fi
+}
+
+# The happy path, and the case that actually matters: an interface that came up
+# but is not in the default route has tunnelled nothing.
+test_wireguard_up_and_carrying_the_default_route() {
+  new_sandbox || return 1
+  install_stubs
+  export STUB_WG_ROUTED=1
+  WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+    WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" resolve_config
+  wg_quiet
+  assert_eq 0 "$wg_rc" success-returns-0
+  assert_eq 'up' "$WG_STATUS" status-is-up
+  local log
+  log=$(cat "$sandbox/wg.log")
+  assert_contains "$log" 'egress IS tunnelled' confirms-the-route
+  assert_contains "$log" '10.7.0.2/32' reports-the-address
+}
+
+test_wireguard_up_but_not_routed_is_flagged() {
+  new_sandbox || return 1
+  install_stubs
+  export STUB_WG_ROUTED=0
+  WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+    WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" resolve_config
+  wg_quiet
+  assert_eq 0 "$wg_rc" interface-still-came-up
+  # The distinct status is the point: /healthz must distinguish "tunnelled" from
+  # "interface exists but carries no traffic".
+  assert_eq 'up-not-routed' "$WG_STATUS" status-distinguishes-routing
+  local log
+  log=$(cat "$sandbox/wg.log")
+  assert_contains "$log" 'does NOT traverse' warns-about-the-route
+  assert_contains "$log" 'AllowedIPs' explains-the-likely-cause
+}
+
+# A private key must not reach the log, the state file, or the repo that
+# publish() pushes - even when the tool handling it prints one.
+test_wireguard_private_key_never_leaks() {
+  new_sandbox || return 1
+  install_stubs
+  export STUB_WG_ROUTED=1 STUB_WG_LEAK=1 STUB_WG_KEY="$WG_KEY"
+  WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+    WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" resolve_config
+  wg_quiet
+  write_state 'h.trycloudflare.com' 1
+
+  local log
+  log=$(cat "$sandbox/wg.log")
+  if printf '%s' "$log" | grep -qF "$WG_KEY"; then
+    fail 'key-not-in-log' 'the private key appeared in the supervisor log'
+  fi
+  assert_contains "$log" '<redacted>' output-is-redacted
+  if grep -rqF "$WG_KEY" "$STATE_DIR" 2>/dev/null; then
+    fail 'key-not-in-state' 'the private key appeared in the state directory'
+  fi
+  if grep -rqF "$WG_KEY" "$clone" 2>/dev/null; then
+    fail 'key-not-in-repo' 'the private key appeared inside the pushed repo'
+  fi
+  # It must still have been written, 0600, or nothing was achieved.
+  assert_file_contains "$sandbox/wg0.conf" "$WG_KEY" config-was-written
+  local mode
+  mode=$(ls -l "$sandbox/wg0.conf" | cut -c1-10)
+  assert_eq '-rw-------' "$mode" config-is-0600
+}
+
+# WireGuard must come up before the server and the tunnel. This is not a
+# stylistic preference: wg-quick installs routing as it brings the interface
+# up, so anything already running has already sent its traffic on the
+# container's ordinary egress. The result would look like success in every log
+# line except the one that matters.
+test_wireguard_comes_up_before_the_server() {
+  new_sandbox || return 1
+  install_stubs
+  local server_port health_port sup_pid sup_log order
+  server_port=$(free_port)
+  health_port=$(free_port)
+  sup_log="$sandbox/supervisor.log"
+  order="$sandbox/order.log"
+  : >"$order"
+
+  TCPUDP_STATE_DIR="$sandbox/state" \
+    TCPUDP_REPO_DIR="$clone" \
+    TCPUDP_SERVER_BIN="$sandbox/bin/server" \
+    TCPUDP_SERVER_PORT="$server_port" \
+    TCPUDP_INFO_DIR=github_run \
+    TCPUDP_RELEASE=v1.1.16 \
+    SUPERVISE_INTERVAL=1 \
+    TUNNEL_START_TIMEOUT=5 \
+    PUBLISH=false \
+    PORT="$health_port" \
+    KEEPALIVE_SCRIPT="$KEEPALIVE_SCRIPT_PATH" \
+    KEEPALIVE_BIND=127.0.0.1 \
+    GITHUB_REMOTE_URL="$origin" \
+    GITHUB_PUSH_URL="$origin" \
+    GITHUB_PUSH_BRANCH="$BRANCH" \
+    STUB_TUNNEL_HOST=render-stub.trycloudflare.com \
+    STUB_WG_ROUTED=1 \
+    STUB_ORDER_LOG="$order" \
+    WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+    WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" \
+    PATH="$sandbox/bin:$PATH" \
+    bash "$SUPERVISOR" >"$sup_log" 2>&1 &
+  sup_pid=$!
+  child_pids+=("$sup_pid")
+
+  # Wait for both markers instead of sleeping a fixed amount: supervise_loop
+  # restarts the server, so a fixed wait would read later lines.
+  local tries=0
+  while [ "$tries" -lt 60 ]; do
+    if grep -q '^wireguard$' "$order" 2>/dev/null &&
+      grep -q '^server$' "$order" 2>/dev/null; then
+      break
+    fi
+    kill -0 "$sup_pid" 2>/dev/null || break
+    sleep 0.5
+    tries=$((tries + 1))
+  done
+
+  kill -TERM "$sup_pid" 2>/dev/null
+  wait "$sup_pid" 2>/dev/null
+
+  local wg_line server_line
+  wg_line=$(grep -n '^wireguard$' "$order" 2>/dev/null | head -1 | cut -d: -f1)
+  server_line=$(grep -n '^server$' "$order" 2>/dev/null | head -1 | cut -d: -f1)
+  assert_not_empty "$wg_line" wireguard-was-invoked
+  assert_not_empty "$server_line" server-was-started
+  if [ -z "$wg_line" ] || [ -z "$server_line" ]; then
+    fail ordering-could-be-checked \
+      "order.log=[$(tr '\n' '|' <"$order" 2>/dev/null)] log=[$(tail -n 5 "$sup_log" 2>/dev/null | tr '\n' '|')]"
+    return 1
+  fi
+  if [ "$wg_line" -lt "$server_line" ]; then
+    :
+  else
+    fail wireguard-precedes-server \
+      "wg-quick ran at line $wg_line but the server started at line $server_line"
+  fi
+}
+
+# The capability check is the one diagnostic that predicts the outcome, so it
+# gets tested against known capability sets rather than left to whatever host
+# the suite happens to run on. 0x00000000200425fb is Docker's *default* set.
+test_wireguard_reports_capabilities_honestly() {
+  new_sandbox || return 1
+  install_stubs
+  local proc status i
+  for i in 1 2; do
+    case "$i" in
+      # Docker default: CAP_NET_ADMIN (bit 12) is NOT set.
+      1) capeff='00000000200425fb' expect='missing' ;;
+      # The same set with bit 12 added.
+      2) capeff='00000000200435fb' expect='held' ;;
+    esac
+    proc="$sandbox/status.$i"
+    printf 'Name:\tsupervisor\nCapEff:\t%s\n' "$capeff" >"$proc"
+    WIREGUARD_PROC_STATUS="$proc" WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+      WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" resolve_config
+    wg_quiet
+    local log
+    log=$(cat "$sandbox/wg.log")
+    assert_contains "$log" "CAP_NET_ADMIN=$expect" "capability-$expect-reported"
+
+    # Only the blocked case should predict the failure; claiming a block that
+    # does not exist would send the operator chasing the wrong cause.
+    if [ "$expect" = missing ]; then
+      assert_contains "$log" 'a TUN device cannot be created' blocked-case-explains-why
+    elif printf '%s' "$log" | grep -q 'a TUN device cannot be created'; then
+      fail unblocked-case-makes-no-block-claim \
+        'told the operator the host is blocked when it holds CAP_NET_ADMIN'
+    fi
+  done
+
+  # No /proc at all: report 'unknown' rather than claiming a capability we
+  # never measured.
+  WIREGUARD_CONFIG="$WG_SAMPLE_CONFIG" \
+    WIREGUARD_CONFIG_PATH="$sandbox/wg0.conf" \
+    WIREGUARD_PROC_STATUS="$sandbox/absent" resolve_config
+  wg_quiet
+  local log
+  log=$(cat "$sandbox/wg.log")
+  assert_contains "$log" 'CAP_NET_ADMIN=unknown' unreadable-proc-reports-unknown
+  if printf '%s' "$log" | grep -q 'a TUN device cannot be created'; then
+    fail unknown-must-not-claim-a-block \
+      'made a blocking claim without having measured the capability'
+  fi
+}
+
 test_dockerfile_provides_every_required_command() {
   local required providers missing=''
 
@@ -713,12 +1047,28 @@ test_dockerfile_provides_every_required_command() {
     esac
   done
   assert_eq '' "$missing" 'every-fatal-tool-is-present-in-the-image'
+
+  # wg-quick cannot be joined to the loop above: it is a warn-only preflight
+  # check, and the package providing it is named differently from the tool.
+  # Checked against $providers (the extracted apt list), never against the file:
+  # a comment naming the package would otherwise satisfy this and the image
+  # would still lack it - the same class of bug as the missing `git` that killed
+  # the container at preflight.
+  if grep -q 'wg-quick up' "$SUPERVISOR"; then
+    case " $providers " in
+      *" wireguard-tools "*) ;;
+      *)
+        fail 'the-image-ships-wireguard-tools' \
+          'the supervisor runs wg-quick but the apt install list has no wireguard-tools'
+        ;;
+    esac
+  fi
 }
 
 trap teardown EXIT
 
 run_test test_resolve_config_defaults test_resolve_config_defaults
-run_test test_write_state_writes_all_five_keys test_write_state_writes_all_five_keys
+run_test test_write_state_writes_all_six_keys test_write_state_writes_all_six_keys
 run_test test_write_state_empty_hostname_is_json_null test_write_state_empty_hostname_is_json_null
 run_test test_write_state_is_atomic test_write_state_is_atomic
 run_test test_publish_writes_run_yml_compatible_files test_publish_writes_run_yml_compatible_files
@@ -730,8 +1080,145 @@ run_test test_publish_rebases_when_branch_moved_on test_publish_rebases_when_bra
 run_test test_publish_respects_publish_disabled test_publish_respects_publish_disabled
 run_test test_pat_never_appears_in_state_or_repo test_pat_never_appears_in_state_or_repo
 run_test test_is_alive_detects_dead_and_live_pids test_is_alive_detects_dead_and_live_pids
+test_server_output_reaches_the_supervisor_log() {
+  new_sandbox || return 1
+  install_stubs
+  local server_port health_port sup_pid sup_log
+  server_port=$(free_port)
+  health_port=$(free_port)
+  sup_log="$sandbox/supervisor.log"
+
+  STUB_SERVER_SPEAK=1 STUB_SERVER_LINES=3 \
+    TCPUDP_STATE_DIR="$sandbox/state" \
+    TCPUDP_REPO_DIR="$clone" \
+    TCPUDP_SERVER_BIN="$sandbox/bin/server" \
+    TCPUDP_SERVER_PORT="$server_port" \
+    TCPUDP_INFO_DIR=github_run \
+    TCPUDP_RELEASE=v1.1.16 \
+    SUPERVISE_INTERVAL=1 \
+    TUNNEL_START_TIMEOUT=5 \
+    PUBLISH=false \
+    PORT="$health_port" \
+    KEEPALIVE_SCRIPT="$KEEPALIVE_SCRIPT_PATH" \
+    KEEPALIVE_BIND=127.0.0.1 \
+    GITHUB_REMOTE_URL="$origin" \
+    GITHUB_PUSH_URL="$origin" \
+    GITHUB_PUSH_BRANCH="$BRANCH" \
+    STUB_TUNNEL_HOST=render-stub.trycloudflare.com \
+    PATH="$sandbox/bin:$PATH" \
+    bash "$SUPERVISOR" >"$sup_log" 2>&1 &
+  sup_pid=$!
+  child_pids+=("$sup_pid")
+
+  local state="$sandbox/state/tunnel.json" tries=0
+  while [ "$tries" -lt 60 ]; do
+    [ -f "$state" ] && break
+    if ! kill -0 "$sup_pid" 2>/dev/null; then break; fi
+    sleep 0.5
+    tries=$((tries + 1))
+  done
+
+  kill -TERM "$sup_pid" 2>/dev/null
+  wait "$sup_pid" 2>/dev/null
+
+  local whole
+  whole=$(cat "$sup_log" 2>/dev/null)
+
+  # Both streams. The server writes its own diagnostics to stdout AND stderr;
+  # if either is invisible the whole point of this change is lost.
+  assert_contains "$whole" 'server: STUB_SERVER_STDOUT_MARKER_1' \
+    server-stdout-reaches-the-render-log
+  assert_contains "$whole" 'server: STUB_SERVER_STDERR_MARKER_1' \
+    server-stderr-reaches-the-render-log
+
+  # Prefixed, so a server line is never mistaken for a supervisor line and the
+  # two sources can be told apart when reading the dashboard.
+  assert_matches "$whole" '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z server: ' \
+    server-lines-are-prefixed-and-identifiable
+
+  # server.log is still written, so the existing "exited immediately; see
+  # $REPO_DIR/server.log" advice stays true and the file survives for later.
+  local onfile
+  onfile=$(cat "$clone/server.log" 2>/dev/null)
+  assert_contains "$onfile" 'STUB_SERVER_STDOUT_MARKER_1' server-log-file-still-written
+  assert_contains "$onfile" 'STUB_SERVER_STDERR_MARKER_1' server-log-file-also-has-stderr
+}
+
+test_server_log_burst_is_not_corrupted() {
+  new_sandbox || return 1
+  install_stubs
+  local server_port health_port sup_pid sup_log
+  server_port=$(free_port)
+  health_port=$(free_port)
+  sup_log="$sandbox/supervisor.log"
+
+  STUB_SERVER_SPEAK=1 STUB_SERVER_LINES=40 \
+    TCPUDP_STATE_DIR="$sandbox/state" \
+    TCPUDP_REPO_DIR="$clone" \
+    TCPUDP_SERVER_BIN="$sandbox/bin/server" \
+    TCPUDP_SERVER_PORT="$server_port" \
+    TCPUDP_INFO_DIR=github_run \
+    TCPUDP_RELEASE=v1.1.16 \
+    SUPERVISE_INTERVAL=1 \
+    TUNNEL_START_TIMEOUT=5 \
+    PUBLISH=false \
+    PORT="$health_port" \
+    KEEPALIVE_SCRIPT="$KEEPALIVE_SCRIPT_PATH" \
+    KEEPALIVE_BIND=127.0.0.1 \
+    GITHUB_REMOTE_URL="$origin" \
+    GITHUB_PUSH_URL="$origin" \
+    GITHUB_PUSH_BRANCH="$BRANCH" \
+    STUB_TUNNEL_HOST=render-stub.trycloudflare.com \
+    PATH="$sandbox/bin:$PATH" \
+    bash "$SUPERVISOR" >"$sup_log" 2>&1 &
+  sup_pid=$!
+  child_pids+=("$sup_pid")
+
+  local state="$sandbox/state/tunnel.json" tries=0
+  while [ "$tries" -lt 60 ]; do
+    [ -f "$state" ] && break
+    if ! kill -0 "$sup_pid" 2>/dev/null; then break; fi
+    sleep 0.5
+    tries=$((tries + 1))
+  done
+
+  kill -TERM "$sup_pid" 2>/dev/null
+  wait "$sup_pid" 2>/dev/null
+
+  # Every line of a 40-line burst must arrive whole. A pump that reads with a
+  # short buffer, or that lets the server's stdout and stderr interleave
+  # mid-line, would merge or truncate records - and a merged diagnostic is
+  # worse than a missing one, because it reads as real content.
+  local whole missing=0 i
+  whole=$(cat "$sup_log" 2>/dev/null)
+  for ((i = 1; i <= 40; i++)); do
+    if ! printf '%s' "$whole" | grep -q "server: STUB_SERVER_STDOUT_MARKER_${i}\$"; then
+      missing=$((missing + 1))
+    fi
+  done
+  assert_eq 0 "$missing" every-line-of-the-burst-arrived-intact
+
+  local stderr_missing=0
+  for ((i = 1; i <= 40; i++)); do
+    if ! printf '%s' "$whole" | grep -q "server: STUB_SERVER_STDERR_MARKER_${i}\$"; then
+      stderr_missing=$((stderr_missing + 1))
+    fi
+  done
+  assert_eq 0 "$stderr_missing" every-stderr-line-arrived-intact
+}
+
 run_test test_sigterm_reaps_children_and_exits_zero test_sigterm_reaps_children_and_exits_zero
+run_test test_wireguard_is_skipped_when_config_is_unset test_wireguard_is_skipped_when_config_is_unset
+run_test test_wireguard_failure_is_not_fatal_by_default test_wireguard_failure_is_not_fatal_by_default
+run_test test_wireguard_failure_is_fatal_when_required test_wireguard_failure_is_fatal_when_required
+run_test test_wireguard_up_and_carrying_the_default_route test_wireguard_up_and_carrying_the_default_route
+run_test test_wireguard_up_but_not_routed_is_flagged test_wireguard_up_but_not_routed_is_flagged
+run_test test_wireguard_private_key_never_leaks test_wireguard_private_key_never_leaks
+run_test test_wireguard_comes_up_before_the_server test_wireguard_comes_up_before_the_server
+run_test test_wireguard_reports_capabilities_honestly test_wireguard_reports_capabilities_honestly
 run_test test_dockerfile_provides_every_required_command test_dockerfile_provides_every_required_command
+run_test test_server_output_reaches_the_supervisor_log test_server_output_reaches_the_supervisor_log
+run_test test_server_log_burst_is_not_corrupted test_server_log_burst_is_not_corrupted
 
 printf '\n%s tests, %s failed\n' "$tests_run" "$tests_failed"
 if [ "$tests_failed" -gt 0 ]; then

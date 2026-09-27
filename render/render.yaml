@@ -36,3 +36,17 @@ services:
       # hostname to land in the repo. Fine-grained token, contents:write.
       - key: GITHUB_PAT
         sync: false
+      # The contents of a wg0.conf. Leave blank to skip WireGuard entirely.
+      # Set it to route the server's and cloudflared's egress through the
+      # tunnel - the whole config is needed, not just the keys, because
+      # wg-quick derives the routing from AllowedIPs. For 0.0.0.0/0 the default
+      # route moves onto the interface, which is what makes egress tunnelled.
+      # The supervisor reports in /healthz and the log whether the interface
+      # came up AND whether the default route actually traverses it.
+      - key: WIREGUARD_CONFIG
+        sync: false
+      # Set true to make a WireGuard failure fatal instead of a warning. Leave
+      # false so a host that cannot create a TUN device still serves /healthz
+      # and the failure stays diagnosable.
+      - key: WIREGUARD_REQUIRED
+        value: "false"

@@ -63,6 +63,22 @@ resolve_config() {
   KEEPALIVE_SCRIPT="${KEEPALIVE_SCRIPT:-/usr/local/bin/keepalive.py}"
   RENDER_INFO_URL="${RENDER_INFO_URL:-https://ipinfo.io/json}"
 
+  # WireGuard. WG_CONFIG holds a private key: never log it, never write it
+  # inside $REPO_DIR (publish pushes that tree), never echo wg-quick output
+  # without redacting.
+  WG_CONFIG="${WIREGUARD_CONFIG:-}"
+  WG_INTERFACE="${WIREGUARD_INTERFACE:-wg0}"
+  # wg-quick resolves a bare interface name to /etc/wireguard/<name>.conf, so
+  # the default has to be that exact path. The env override exists so tests can
+  # redirect it; start_wireguard passes the path to wg-quick explicitly, which
+  # wg-quick accepts in place of a name.
+  WG_CONFIG_PATH="${WIREGUARD_CONFIG_PATH:-/etc/wireguard/wg0.conf}"
+  WG_REQUIRED=$(truthy "${WIREGUARD_REQUIRED:-false}")
+  WG_STATUS='skipped'
+  # Test seam: /proc/self/status does not exist on macOS, so the capability
+  # check needs a path it can be pointed at.
+  WG_PROC_STATUS="${WIREGUARD_PROC_STATUS:-/proc/self/status}"
+
   # Derived paths.
   CLOUDFLARED_LOG="${CLOUDFLARED_LOG:-$STATE_DIR/cloudflared.log}"
   STATE_PIDFILE="${STATE_PIDFILE:-$STATE_DIR/supervisor.pid}"
@@ -127,8 +143,15 @@ write_state() {
   else
     published_json='false'
   fi
-  printf '{"hostname":%s,"port":%s,"published":%s,"source":"render","updated":"%s"}\n' \
-    "$host_json" "$SERVER_PORT" "$published_json" "$(utc_now)" >"$file.tmp" || return 1
+  # Coerced to a known token: this is interpolated into JSON, and a stray
+  # value from the environment must not be able to break the document.
+  local wg_json
+  case "$WG_STATUS" in
+    up | up-not-routed | failed | error | skipped) wg_json=$WG_STATUS ;;
+    *) wg_json='unknown' ;;
+  esac
+  printf '{"hostname":%s,"port":%s,"published":%s,"source":"render","wireguard":"%s","updated":"%s"}\n' \
+    "$host_json" "$SERVER_PORT" "$published_json" "$wg_json" "$(utc_now)" >"$file.tmp" || return 1
   mv "$file.tmp" "$file" || return 1
   return 0
 }
@@ -271,24 +294,164 @@ fetch_server() {
 }
 
 # --------------------------------------------------------------------------
+# wireguard
+# --------------------------------------------------------------------------
+
+# _wg_log_output - log wg-quick's output with anything key-shaped redacted.
+#
+# The real wg-quick does not echo the config, so this is defence in depth: a
+# private key in the log would be permanently exposed in Render's log viewer,
+# and there is no way to un-log it. Used for both the success and failure
+# paths, because on success it is the only record of the resolved endpoint.
+_wg_log_output() {
+  printf '%s\n' "$1" |
+    sed -E 's/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1<redacted>/; s/(private key:).*/\1 <redacted>/' |
+    sed 's/^/  /' | while IFS= read -r line; do log "$line"; done
+}
+
+# start_wireguard - bring up the WireGuard interface described by
+# $WIREGUARD_CONFIG. Must run before the server and the tunnel.
+#
+# Ordering is the whole point. wg-quick installs routing from the config's own
+# AllowedIPs, so with AllowedIPs = 0.0.0.0/0 the default route moves onto the
+# interface. Anything started before this point leaves on the container's
+# ordinary egress instead, which would look like it worked while quietly
+# bypassing the tunnel. This mirrors run.yml, where the interface comes up
+# before the server.
+#
+# Non-fatal by default: a host that cannot create a TUN device should still
+# serve /healthz, so the failure is diagnosable from outside. Set
+# WIREGUARD_REQUIRED=true to make it fatal instead.
+#
+# The config holds a private key, so it is written 0600, never logged, never
+# written inside $REPO_DIR, and any wg-quick output is redacted before logging.
+start_wireguard() {
+  if [ -z "$WG_CONFIG" ]; then
+    log "WIREGUARD_CONFIG is not set; skipping WireGuard"
+    WG_STATUS='skipped'
+    return 0
+  fi
+
+  # Report the two things that decide whether this can work at all, so one
+  # deploy tells us instead of a week of guessing.
+  # 'unknown' rather than 'missing' whenever /proc cannot be read: reporting a
+  # capability we never measured would be a claim we cannot back up.
+  local tun='absent' net_admin='unknown' capeff=''
+  [ -c /dev/net/tun ] && tun='present'
+  capeff=$(awk '/^CapEff:/ {print $2}' "$WG_PROC_STATUS" 2>/dev/null)
+  case "$capeff" in
+    [0-9a-fA-F][0-9a-fA-F]*)
+      # CAP_NET_ADMIN is capability bit 12.
+      net_admin=$(python3 -c "print('held' if (int('$capeff', 16) >> 12) & 1 else 'missing')" 2>/dev/null) ||
+        net_admin='unknown'
+      ;;
+  esac
+  log "wireguard preflight: /dev/net/tun=$tun CAP_NET_ADMIN=$net_admin"
+  if [ "$net_admin" = missing ]; then
+    # Predict the failure before it happens, and say what it means. Docker's
+    # *default* capability set is 0x00000000200425fb, which does not include
+    # CAP_NET_ADMIN - so a container without an explicit grant will hit
+    # "RTNETLINK answers: Operation not permitted" here. No userspace
+    # workaround exists: tunnelling a process's own traffic transparently
+    # requires a real TUN device, and creating one requires this capability.
+    log "  without CAP_NET_ADMIN a TUN device cannot be created, so wg-quick will"
+    log "  be refused. This host can only tunnel if the platform grants it."
+  fi
+
+  mkdir -p "$(dirname "$WG_CONFIG_PATH")" 2>/dev/null || true
+  if ! ( umask 077 && printf '%s\n' "$WG_CONFIG" >"$WG_CONFIG_PATH" ); then
+    log "ERROR: could not write $WG_CONFIG_PATH"
+    WG_STATUS='error'
+    [ "$WG_REQUIRED" = 1 ] && die "WireGuard is required but $WG_CONFIG_PATH is not writable"
+    return 1
+  fi
+
+  local out rc=0
+  out=$(wg-quick up "$WG_CONFIG_PATH" 2>&1) || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    log "ERROR: wg-quick up failed (rc=$rc). Verbatim output:"
+    _wg_log_output "$out"
+    WG_STATUS='failed'
+    if [ "$WG_REQUIRED" = 1 ]; then
+      die "WireGuard is required but wg-quick failed; see the error above"
+    fi
+    log "WARN: continuing without WireGuard. Egress is NOT tunnelled."
+    return 1
+  fi
+
+  WG_STATUS='up'
+  log "wireguard: $WG_INTERFACE is up"
+  _wg_log_output "$out"
+
+  # Prove the claim rather than assert it. This is the check that matters: an
+  # interface that is up but not in the default route tunnels nothing.
+  if command -v ip >/dev/null 2>&1; then
+    local addr default
+    addr=$(ip -4 addr show "$WG_INTERFACE" 2>/dev/null | awk '/inet /{print $2; exit}')
+    [ -n "$addr" ] && log "wireguard: $WG_INTERFACE address $addr"
+    default=$(ip route show default 2>/dev/null)
+    if printf '%s' "$default" | grep -q "$WG_INTERFACE"; then
+      log "wireguard: default route traverses $WG_INTERFACE (egress IS tunnelled)"
+    else
+      WG_STATUS='up-not-routed'
+      log "WARN: default route does NOT traverse $WG_INTERFACE."
+      log "  Egress is NOT tunnelled. Check AllowedIPs in the config -"
+      log "  0.0.0.0/0 is what makes wg-quick move the default route."
+      log "  current default route(s): ${default:-none}"
+    fi
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------
 # children
 # --------------------------------------------------------------------------
+
+# _server_log_pump - read the server's diagnostics one line at a time, append
+# each to $REPO_DIR/server.log and re-emit it on the supervisor's own stdout
+# with a "server: " prefix.
+#
+# This exists because the server's output used to go only to server.log, a file
+# inside the container. Render discards the container filesystem on every
+# free-tier sleep and offers no shell to read it, so a server that logged a
+# fatal error was indistinguishable from one with nothing to say. Both streams
+# are captured: the server writes some diagnostics to stderr, not just stdout.
+_server_log_pump() {
+  local line
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >>"$REPO_DIR/server.log"
+    log "server: $line"
+  done
+}
 
 # start_server - launch the server binary and wait for it to listen.
 start_server() {
   local pid attempt
   log "starting $SERVER_BIN"
   mkdir -p "$REPO_DIR" || return 1
-  nohup "$SERVER_BIN" >>"$REPO_DIR/server.log" 2>&1 </dev/null &
+  # Process substitution rather than a pipe, so $! stays the server's own pid
+  # and the pidfile and cleanup keep pointing at the right process. The pump
+  # exits on its own when the server closes the pipe, so nothing is orphaned.
+  nohup "$SERVER_BIN" > >(_server_log_pump) 2>&1 </dev/null &
   pid=$!
   printf '%s\n' "$pid" >"$SERVER_PIDFILE"
   for ((attempt = 1; attempt <= 10; attempt++)); do
     if port_listening; then
       log "server is accepting on 127.0.0.1:$SERVER_PORT (pid $pid)"
+      # Say up front what the server's own log is for, so reading it does not
+      # require knowing the protocol. Kept to the lines that actually decide
+      # whether traffic flows.
+      log "  the server's own diagnostics follow below, each prefixed 'server:'"
+      log "  it multiplexes 32 TCP connections per client, so its log shows"
+      log "  'Added socket to peer with client ID N. Total sockets: N' while"
+      log "  they accumulate, and 'Created virtual channel for peer with"
+      log "  client ID N' once 32 have arrived. It relays between two clients"
+      log "  sharing a clientId, so one client alone never receives data."
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
-      log "ERROR: $SERVER_BIN exited immediately; see $REPO_DIR/server.log"
+      log "ERROR: $SERVER_BIN exited immediately; its output is above and in $REPO_DIR/server.log"
       return 1
     fi
     sleep 1
@@ -531,6 +694,9 @@ preflight() {
   if [ ! -x "$SERVER_BIN" ]; then
     log "note: $SERVER_BIN is not executable yet; fetch_server will download it"
   fi
+  if [ -n "$WG_CONFIG" ] && ! command -v wg-quick >/dev/null 2>&1; then
+    log "WARN: WIREGUARD_CONFIG is set but wg-quick is not installed; WireGuard will not come up"
+  fi
   if [ -z "$PAT" ]; then
     log "WARN: GITHUB_PAT is not set; the tunnel and /healthz still work, but the hostname will not reach git"
   fi
@@ -575,6 +741,11 @@ cleanup() {
   kill_pidfile "$TUNNEL_PIDFILE" cloudflared
   kill_pidfile "$KEEPALIVE_PIDFILE" keepalive
   pkill -f '^cloudflared tunnel --url tcp://127.0.0.1:' 2>/dev/null || true
+  # Tear the interface down last: while the server and tunnel are still shutting
+  # down, tearing it down first would strand their in-flight packets.
+  if [ -n "${WG_CONFIG:-}" ] && command -v wg-quick >/dev/null 2>&1; then
+    wg-quick down "$WG_CONFIG_PATH" >/dev/null 2>&1 || true
+  fi
   log "shutdown complete"
   exit 0
 }
@@ -593,6 +764,9 @@ main() {
   if [ ! -x "$SERVER_BIN" ]; then
     fetch_server || die "could not install $SERVER_BIN from $RELEASE"
   fi
+
+  # Before the server and the tunnel, so their egress actually traverses it.
+  start_wireguard || true
 
   start_server || log "WARN: the server did not come up; supervise_loop keeps trying"
   start_keepalive

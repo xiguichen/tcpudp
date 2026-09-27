@@ -12,10 +12,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # tar      - unpacks the release
 # python3  - runs keepalive.py
 # procps   - provides pkill, used to reap the server and tunnel on restart
-# iproute2 - provides ss, used to confirm port 7001 is listening
+# iproute2 - provides ss (port check) and ip (WireGuard route verification)
+# wireguard-tools - provides wg-quick, for the optional WireGuard egress tunnel
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    ca-certificates git curl tar python3 procps iproute2 \
+    ca-certificates git curl tar python3 procps iproute2 wireguard-tools \
   && rm -rf /var/lib/apt/lists/*
 
 # Latest rather than a pinned version: a stale pin would turn into a surprise

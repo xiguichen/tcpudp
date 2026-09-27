@@ -27,8 +27,56 @@ also what wakes the instance, and it always answers `200` — with
 
 ```
 $ curl -fsS https://tcpudp.onrender.com/healthz
-{"status":"ok","hostname":"abc-def.trycloudflare.com","port":7001,"published":false,"source":"render","updated":"2026-09-27T12:34:56Z"}
+{"hostname": "abc-def.trycloudflare.com", "port": 7001, "published": false, "source": "render", "updated": "2026-09-27T12:34:56Z", "wireguard": "up", "status": "ok"}
 ```
+
+## WireGuard (optional)
+
+`run.yml` brings up a WireGuard interface before the server, so the server's and
+`cloudflared`'s egress leaves through the tunnel. This deployment can do the
+same. Set `WIREGUARD_CONFIG` to the **whole `wg0.conf`**, not just the keys:
+
+```
+[Interface]
+PrivateKey = ...
+Address = 10.7.0.2/32
+
+[Peer]
+PublicKey = ...
+Endpoint = host:51820
+AllowedIPs = 0.0.0.0/0
+```
+
+`AllowedIPs` is the part that matters. `wg-quick` derives routing from it, so
+`0.0.0.0/0` is what moves the default route onto the interface.
+
+**`wireguard` in `/healthz` is the verdict**, and the distinction is the point:
+
+| Value | Meaning |
+|---|---|
+| `skipped` | `WIREGUARD_CONFIG` is unset. |
+| `up` | Interface is up **and** the default route traverses it. Egress is tunnelled. |
+| `up-not-routed` | Interface is up but the default route does not touch it — it is tunnelling nothing. Check `AllowedIPs`. |
+| `failed` | `wg-quick` refused. The verbatim error is in the log. |
+| `error` | The config could not be written. |
+
+`up-not-routed` is the one that lies to you: every other line says WireGuard
+works. The log also prints `/dev/net/tun` presence and `CAP_NET_ADMIN`, because
+those two decide whether this can work on a PaaS container at all.
+
+A failure is **not** fatal by default — the service still serves `/healthz` so
+the failure is diagnosable without SSH. Set `WIREGUARD_REQUIRED=true` to make it
+fatal instead.
+
+The private key is written `0600` to `/etc/wireguard/wg0.conf`, is never logged,
+never enters the state file, and is never written inside the repo that
+`publish()` pushes. All `wg-quick` output is redacted before logging regardless
+of what the tool printed.
+
+**If `up-not-routed` or `failed` comes back, do not retry blindly.** A PaaS
+container usually can create a TUN device, but the platform may refuse it. That
+is the one thing this folder cannot determine ahead of time, and it takes a
+single deploy to find out.
 
 ## Do I need a GitHub token?
 
@@ -60,9 +108,40 @@ land in the repo — a second machine, or CI. Use a fine-grained token with
 ./render/run_tests.sh
 ```
 
-34 tests. No network, no sudo, no docker: git talks to a throwaway local repo,
-`/healthz` is a local python server on `127.0.0.1`, `ping` is stubbed on `PATH`,
-and hosts-file writes are redirected to a sandbox file.
+50 tests (9 keepalive, 25 supervisor, 16 trigger/net). No network, no sudo, no
+docker: git talks to a throwaway local repo, `/healthz` is a local python server
+on `127.0.0.1`, `ping` is stubbed on `PATH`, `wg-quick` and `ip` are stubbed on
+`PATH`, and hosts-file writes are redirected to a sandbox file.
+
+## Reading the server's own log
+
+The `server` binary is the part that actually carries traffic, and it is the
+part that used to be invisible: its stdout and stderr went only to
+`$REPO_DIR/server.log` inside the container, which Render discards on every
+free-tier sleep and gives no shell to read. A server that logged a fatal error
+was therefore indistinguishable from one that had nothing to say.
+
+The supervisor now pumps both streams onto its own output, one line per record,
+prefixed `server: `. So in the Render log:
+
+```
+2026-09-27T14:03:35Z server is accepting on 127.0.0.1:7001 (pid 44)
+2026-09-27T14:03:35Z   the server's own diagnostics follow below, each prefixed 'server:'
+...
+2026-09-27T14:07:02Z server: [INFO] Server listening on 7001
+2026-09-27T14:07:02Z server: [INFO] Accepted connection from 10.0.0.1:52344
+2026-09-27T14:07:02Z server: [INFO] Received client ID 4 from client 10.0.0.1
+2026-09-27T14:07:02Z server: [INFO] Added socket to peer with client ID 4. Total sockets: 1
+```
+
+Lines with no `server: ` prefix come from the supervisor; lines with it come
+from the release binary. `server.log` is still written as before.
+
+What to look for, in order: `Total sockets:` climbing toward 32,
+`Created virtual channel for peer with client ID N` once it gets there, and any
+`[ERROR]` line. The server multiplexes 32 TCP connections per client and relays
+between two clients that share a `clientId`, so a single client on its own will
+show sockets accumulating and no data returning.
 
 ## Configuration
 
@@ -82,6 +161,10 @@ All optional; the defaults are the working values.
 | `TUNNEL_START_TIMEOUT` | `60` | supervisor |
 | `PUBLISH` | `true` | supervisor |
 | `RENDER_HEALTH_URL` | `https://tcpudp.onrender.com/healthz` | trigger |
+| `WIREGUARD_CONFIG` | *(unset)* | supervisor — see above |
+| `WIREGUARD_REQUIRED` | `false` | supervisor |
+| `WIREGUARD_INTERFACE` | `wg0` | supervisor |
+| `WIREGUARD_CONFIG_PATH` | `/etc/wireguard/wg0.conf` | supervisor |
 
 Test seams, also defaulted: `POLL_INTERVAL`, `RECONCILE_TIMEOUT`,
 `HEALTH_TIMEOUT`, `HOSTS_FILE`, `CF_EDGE_IPS`, `PING_COUNT`,

@@ -92,6 +92,33 @@ if isinstance(data, dict):
 }
 
 # --------------------------------------------------------------------------
+# health_published URL
+#
+# Print "true" or "false" as /healthz reports the published flag, or nothing at
+# all when the service does not report one. Never fails and never writes to
+# stderr, for the same reasons as health_hostname.
+#
+# This is the difference between "the push has not landed yet" and "no push is
+# coming". Without it a service with GITHUB_PAT unset is polled for the full
+# reconcile timeout on every run, always ending in the same fallback.
+# --------------------------------------------------------------------------
+health_published() {
+  local body
+  body=$(curl -fsS --max-time "$HEALTH_TIMEOUT" "$1" 2>/dev/null) || return 0
+  [ -n "$body" ] || return 0
+  printf '%s' "$body" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if isinstance(data, dict) and isinstance(data.get("published"), bool):
+    print("true" if data["published"] else "false")
+' 2>/dev/null || true
+  return 0
+}
+
+# --------------------------------------------------------------------------
 # branch_has_hostname HOST
 #
 # True when the push branch already carries this hostname in the tunnel-info
@@ -168,15 +195,26 @@ if branch_has_hostname "$host"; then
   log "The $BRANCH branch already carries this hostname."
   git checkout "$BRANCH" -- "$INFO_DIR/cloudflare.sh" >/dev/null 2>&1 || true
 else
-  # The branch is behind. Give the supervisor a moment to publish, then take
-  # the live hostname as the truth and write it locally.
-  log "Branch does not have it yet; waiting up to ${RECONCILE_TIMEOUT}s for a publish..."
-  rdeadline=$((SECONDS + RECONCILE_TIMEOUT))
-  while [ "$SECONDS" -lt "$rdeadline" ]; do
-    git fetch --quiet origin "$BRANCH" >/dev/null 2>&1 || true
-    if branch_has_hostname "$host"; then break; fi
-    sleep "$POLL_INTERVAL"
-  done
+  # Only wait when a publish could still land. The service reports published=false
+  # when its own git write-back did not happen, and that is the normal state for
+  # a deployment without GITHUB_PAT - polling for a push that is never coming
+  # just costs the full timeout. An absent field (a service predating it) keeps
+  # the old behaviour, since a push may be in flight.
+  case "$(health_published "$HEALTH_URL")" in
+    false)
+      log "$BRANCH is stale and the service reports no publish, so there is"
+      log "nothing to wait for. Taking the live hostname."
+      ;;
+    *)
+      log "Branch does not have it yet; waiting up to ${RECONCILE_TIMEOUT}s for a publish..."
+      rdeadline=$((SECONDS + RECONCILE_TIMEOUT))
+      while [ "$SECONDS" -lt "$rdeadline" ]; do
+        git fetch --quiet origin "$BRANCH" >/dev/null 2>&1 || true
+        if branch_has_hostname "$host"; then break; fi
+        sleep "$POLL_INTERVAL"
+      done
+      ;;
+  esac
   if branch_has_hostname "$host"; then
     log "The supervisor published it; using the committed file."
     git checkout "$BRANCH" -- "$INFO_DIR/cloudflare.sh" >/dev/null 2>&1 || true

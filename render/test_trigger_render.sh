@@ -470,6 +470,68 @@ test_trigger_render_accepts_matching_branch() {
 }
 
 # The user has to be told what to run next.
+# published=false means the service's own git write-back did not land, so no
+# push is coming. Polling for one anyway costs the full reconcile timeout on
+# every single run and always ends at the same fallback - the exact waste this
+# test exists to prevent.
+test_trigger_render_does_not_wait_when_no_publish_is_expected() {
+  new_sandbox fast || return 1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"nopub.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+
+  # RECONCILE_TIMEOUT is 2s in run_trigger; allow a wide margin so a slow test
+  # machine cannot make a real wait look like no wait.
+  local started elapsed
+  started=$(date +%s)
+  run_trigger --timeout 30
+  elapsed=$(( $(date +%s) - started ))
+
+  assert_eq 0 "$trigger_rc" exits-0
+  assert_not_contains "$trigger_out" 'waiting up to' 'does-not-wait-for-a-publish'
+  assert_contains "$trigger_out" 'nothing to wait for' explains-why-it-skipped
+  # The behaviour itself, not just the wording.
+  if [ "$elapsed" -ge 2 ]; then
+    fail 'skips-the-wait-in-practice' "still took ${elapsed}s despite published=false"
+  fi
+  # It must still do the useful part: write the live hostname locally.
+  assert_eq \
+    'cloudflared access tcp --url tcp://localhost:7001 --hostname nopub.trycloudflare.com' \
+    "$(cat "$repo/github_run/cloudflare.sh")" still-writes-the-live-hostname
+}
+
+# published=true means a push may be in flight, so the wait must stay. Losing
+# this would make the script race a push that is about to succeed.
+test_trigger_render_still_waits_when_a_publish_is_in_flight() {
+  new_sandbox fast || return 1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"pub.trycloudflare.com\",\"port\":7001,\"published\":true,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+  run_trigger --timeout 30
+  assert_eq 0 "$trigger_rc" exits-0
+  assert_contains "$trigger_out" 'waiting up to' 'waits-when-a-push-may-be-landing'
+  assert_not_contains "$trigger_out" 'nothing to wait for' no-skip-when-published
+}
+
+# A published value we cannot interpret must not be trusted to skip the wait.
+# Only a real JSON false means "no push is coming"; anything else is unknown,
+# and unknown must keep the old behaviour.
+test_trigger_render_does_not_trust_a_non_boolean_published() {
+  local bad bad_in_body
+  for bad in '"false"' '""' '0' 'null' '"nope"'; do
+    new_sandbox fast || return 1
+    # $bad is a raw JSON fragment that goes *inside* the body string, so its
+    # own quotes must be escaped. Unescaped they terminate the string early and
+    # the health server silently falls back to "not json" - which looks like a
+    # trigger failure rather than a fixture bug.
+    bad_in_body=${bad//\"/\\\"}
+    start_health "[{\"status\":200,\"type\":\"application/json\",\"body\":\"{\\\"status\\\":\\\"ok\\\",\\\"hostname\\\":\\\"weird.trycloudflare.com\\\",\\\"port\\\":7001,\\\"published\\\":$bad_in_body,\\\"source\\\":\\\"render\\\"}\"}]" \
+      || return 1
+    run_trigger --timeout 30
+    assert_eq 0 "$trigger_rc" "exits-0-for-published=$bad"
+    assert_not_contains "$trigger_out" 'nothing to wait for' \
+      "does-not-skip-the-wait-on-published=$bad"
+  done
+}
+
 test_trigger_render_prints_handoff() {
   new_sandbox fast || return 1
   start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"handoff.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
@@ -504,6 +566,9 @@ run_test test_trigger_render_waits_through_a_non_json_loading_page test_trigger_
 run_test test_trigger_render_waits_for_null_hostname_then_succeeds test_trigger_render_waits_for_null_hostname_then_succeeds
 run_test test_trigger_render_times_out_with_clear_error test_trigger_render_times_out_with_clear_error
 run_test test_trigger_render_uses_live_hostname_when_branch_is_stale test_trigger_render_uses_live_hostname_when_branch_is_stale
+run_test test_trigger_render_does_not_wait_when_no_publish_is_expected test_trigger_render_does_not_wait_when_no_publish_is_expected
+run_test test_trigger_render_still_waits_when_a_publish_is_in_flight test_trigger_render_still_waits_when_a_publish_is_in_flight
+run_test test_trigger_render_does_not_trust_a_non_boolean_published test_trigger_render_does_not_trust_a_non_boolean_published
 run_test test_trigger_render_accepts_matching_branch test_trigger_render_accepts_matching_branch
 run_test test_trigger_render_prints_handoff test_trigger_render_prints_handoff
 
