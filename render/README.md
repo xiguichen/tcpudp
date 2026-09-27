@@ -163,6 +163,14 @@ All optional; the defaults are the working values.
 | `RENDER_HEALTH_URL` | `https://tcpudp.onrender.com/healthz` | trigger |
 | `WIREGUARD_CONFIG` | *(unset)* | supervisor — see above |
 | `WIREGUARD_REQUIRED` | `false` | supervisor |
+| `TCPUDP_UDP_TARGET_PORT` | WireGuard's `ListenPort` | supervisor |
+
+The server relays the virtual channel out over UDP, and WireGuard is the only
+thing on the host reading it. So the server is started with
+`--udp-target-port=<that port>`, derived from `WIREGUARD_CONFIG`'s `ListenPort`
+so the two cannot drift. Without this the server falls back to its own TCP port
+and every relayed packet is discarded without an error. Set
+`TCPUDP_UDP_TARGET_PORT` only if the two genuinely differ.
 | `WIREGUARD_INTERFACE` | `wg0` | supervisor |
 | `WIREGUARD_CONFIG_PATH` | `/etc/wireguard/wg0.conf` | supervisor |
 

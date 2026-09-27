@@ -193,7 +193,7 @@ new_sandbox() {
   # exported rather than prefixed onto a single command. Clearing them here
   # keeps tests independent of each other's leftovers.
   unset STUB_WG_FAIL STUB_WG_ROUTED STUB_WG_LEAK STUB_WG_KEY STUB_WG_ADDR
-  unset STUB_SERVER_SPEAK STUB_SERVER_LINES
+  unset STUB_SERVER_SPEAK STUB_SERVER_LINES STUB_SERVER_ARGV_LOG
   sandbox=$(mktemp -d "${TMPDIR:-/tmp}/tcpudp-supervisor-test.XXXXXX")
   # Physical path: ps reports resolved paths, so a relative TMPDIR would not
   # match the stubs' command lines.
@@ -286,6 +286,9 @@ install_stubs() {
 # Stands in for the release's server binary: holds 127.0.0.1:$TCPUDP_SERVER_PORT
 # open so the supervisor's readiness poll succeeds, then idles.
 [ -n "${STUB_ORDER_LOG:-}" ] && printf 'server\n' >>"$STUB_ORDER_LOG"
+# STUB_SERVER_ARGV_LOG records how the server was actually invoked, so a test can
+# assert on the flags the supervisor passes rather than on the source text.
+[ -n "${STUB_SERVER_ARGV_LOG:-}" ] && printf '%s\n' "$*" >>"$STUB_SERVER_ARGV_LOG"
 # STUB_SERVER_SPEAK makes the stub emit the lines the log-visibility tests look
 # for, on both streams, and STUB_SERVER_LINES of them in a burst. Nothing else
 # prints, so every other test is unaffected.
@@ -1217,8 +1220,125 @@ run_test test_wireguard_private_key_never_leaks test_wireguard_private_key_never
 run_test test_wireguard_comes_up_before_the_server test_wireguard_comes_up_before_the_server
 run_test test_wireguard_reports_capabilities_honestly test_wireguard_reports_capabilities_honestly
 run_test test_dockerfile_provides_every_required_command test_dockerfile_provides_every_required_command
+test_server_is_aimed_at_the_wireguard_listen_port() {
+  new_sandbox || return 1
+  install_stubs
+  local server_port health_port sup_pid sup_log argv_log
+  server_port=$(free_port)
+  health_port=$(free_port)
+  sup_log="$sandbox/supervisor.log"
+  argv_log="$sandbox/server-argv.log"
+
+  # A WireGuard config whose ListenPort is deliberately not 7001, so a default
+  # cannot accidentally satisfy the assertion.
+  local wgconf
+  wgconf=$'[Interface]\nPrivateKey = STUB_WG_KEY\nListenPort = 51899\n\n[Peer]\nPublicKey = peerkey\nAllowedIPs = 10.66.66.3/32\n'
+
+  STUB_SERVER_ARGV_LOG="$argv_log" \
+    STUB_WG_KEY=stubkey \
+    WIREGUARD_CONFIG="$wgconf" \
+    TCPUDP_STATE_DIR="$sandbox/state" \
+    TCPUDP_REPO_DIR="$clone" \
+    TCPUDP_SERVER_BIN="$sandbox/bin/server" \
+    TCPUDP_SERVER_PORT="$server_port" \
+    TCPUDP_INFO_DIR=github_run \
+    TCPUDP_RELEASE=v1.1.16 \
+    SUPERVISE_INTERVAL=1 \
+    TUNNEL_START_TIMEOUT=5 \
+    PUBLISH=false \
+    PORT="$health_port" \
+    KEEPALIVE_SCRIPT="$KEEPALIVE_SCRIPT_PATH" \
+    KEEPALIVE_BIND=127.0.0.1 \
+    GITHUB_REMOTE_URL="$origin" \
+    GITHUB_PUSH_URL="$origin" \
+    GITHUB_PUSH_BRANCH="$BRANCH" \
+    STUB_TUNNEL_HOST=render-stub.trycloudflare.com \
+    PATH="$sandbox/bin:$PATH" \
+    bash "$SUPERVISOR" >"$sup_log" 2>&1 &
+  sup_pid=$!
+  child_pids+=("$sup_pid")
+
+  local state="$sandbox/state/tunnel.json" tries=0
+  while [ "$tries" -lt 60 ]; do
+    [ -f "$state" ] && break
+    if ! kill -0 "$sup_pid" 2>/dev/null; then break; fi
+    sleep 0.5
+    tries=$((tries + 1))
+  done
+  kill -TERM "$sup_pid" 2>/dev/null
+  wait "$sup_pid" 2>/dev/null
+
+  local argv
+  argv=$(cat "$argv_log" 2>/dev/null)
+  assert_not_empty "$argv" the-server-was-invoked
+  # The whole point: the server relays the virtual channel out over UDP, and
+  # the only thing listening on that UDP port is the WireGuard interface. Aiming
+  # it at the default 7001 sends every packet nowhere.
+  assert_contains "$argv" '--udp-target-port=51899' \
+    the-server-is-aimed-at-the-wireguard-listen-port
+  assert_not_contains "$argv" '--udp-target-port=7001' \
+    the-server-is-not-aimed-at-its-own-default
+}
+
+test_explicit_udp_target_port_overrides_the_wireguard_config() {
+  new_sandbox || return 1
+  install_stubs
+  local server_port health_port sup_pid sup_log argv_log
+  server_port=$(free_port)
+  health_port=$(free_port)
+  sup_log="$sandbox/supervisor.log"
+  argv_log="$sandbox/server-argv.log"
+
+  local wgconf
+  wgconf=$'[Interface]\nPrivateKey = STUB_WG_KEY\nListenPort = 51899\n\n[Peer]\nPublicKey = peerkey\n'
+
+  STUB_SERVER_ARGV_LOG="$argv_log" \
+    STUB_WG_KEY=stubkey \
+    WIREGUARD_CONFIG="$wgconf" \
+    TCPUDP_UDP_TARGET_PORT=41777 \
+    TCPUDP_STATE_DIR="$sandbox/state" \
+    TCPUDP_REPO_DIR="$clone" \
+    TCPUDP_SERVER_BIN="$sandbox/bin/server" \
+    TCPUDP_SERVER_PORT="$server_port" \
+    TCPUDP_INFO_DIR=github_run \
+    TCPUDP_RELEASE=v1.1.16 \
+    SUPERVISE_INTERVAL=1 \
+    TUNNEL_START_TIMEOUT=5 \
+    PUBLISH=false \
+    PORT="$health_port" \
+    KEEPALIVE_SCRIPT="$KEEPALIVE_SCRIPT_PATH" \
+    KEEPALIVE_BIND=127.0.0.1 \
+    GITHUB_REMOTE_URL="$origin" \
+    GITHUB_PUSH_URL="$origin" \
+    GITHUB_PUSH_BRANCH="$BRANCH" \
+    STUB_TUNNEL_HOST=render-stub.trycloudflare.com \
+    PATH="$sandbox/bin:$PATH" \
+    bash "$SUPERVISOR" >"$sup_log" 2>&1 &
+  sup_pid=$!
+  child_pids+=("$sup_pid")
+
+  local state="$sandbox/state/tunnel.json" tries=0
+  while [ "$tries" -lt 60 ]; do
+    [ -f "$state" ] && break
+    if ! kill -0 "$sup_pid" 2>/dev/null; then break; fi
+    sleep 0.5
+    tries=$((tries + 1))
+  done
+  kill -TERM "$sup_pid" 2>/dev/null
+  wait "$sup_pid" 2>/dev/null
+
+  local argv
+  argv=$(cat "$argv_log" 2>/dev/null)
+  assert_contains "$argv" '--udp-target-port=41777' \
+    an-explicit-udp-target-port-wins-over-the-config
+  assert_not_contains "$argv" '--udp-target-port=51899' \
+    the-config-listen-port-is-not-also-passed
+}
+
 run_test test_server_output_reaches_the_supervisor_log test_server_output_reaches_the_supervisor_log
 run_test test_server_log_burst_is_not_corrupted test_server_log_burst_is_not_corrupted
+run_test test_server_is_aimed_at_the_wireguard_listen_port test_server_is_aimed_at_the_wireguard_listen_port
+run_test test_explicit_udp_target_port_overrides_the_wireguard_config test_explicit_udp_target_port_overrides_the_wireguard_config
 
 printf '\n%s tests, %s failed\n' "$tests_run" "$tests_failed"
 if [ "$tests_failed" -gt 0 ]; then

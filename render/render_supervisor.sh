@@ -79,6 +79,28 @@ resolve_config() {
   # check needs a path it can be pointed at.
   WG_PROC_STATUS="${WIREGUARD_PROC_STATUS:-/proc/self/status}"
 
+  # Where the server should relay the virtual channel out over UDP. That has to
+  # be the port the WireGuard interface listens on, because WireGuard is the
+  # only thing on this host reading that UDP. Left unset, the server defaults to
+  # its own TCP port and every relayed packet goes to a port nothing is bound
+  # to, which is silent: sendto() succeeds and the datagram is discarded.
+  # Derived from the config so the two cannot drift; TCPUDP_UDP_TARGET_PORT
+  # overrides for the case where they must differ.
+  UDP_TARGET_PORT="${TCPUDP_UDP_TARGET_PORT:-}"
+  if [ -z "$UDP_TARGET_PORT" ] && [ -n "$WG_CONFIG" ]; then
+    # Take everything after the '=', then keep only digits: WireGuard accepts
+    # both 'ListenPort=51899' and 'ListenPort = 51899', and the number lands in
+    # a different field for each.
+    UDP_TARGET_PORT=$(printf '%s\n' "$WG_CONFIG" |
+      awk '/^[[:space:]]*ListenPort[[:space:]]*=/ {
+             line = $0
+             sub(/^[^=]*=/, "", line)
+             gsub(/[^0-9]/, "", line)
+             print line
+             exit
+           }')
+  fi
+
   # Derived paths.
   CLOUDFLARED_LOG="${CLOUDFLARED_LOG:-$STATE_DIR/cloudflared.log}"
   STATE_PIDFILE="${STATE_PIDFILE:-$STATE_DIR/supervisor.pid}"
@@ -430,10 +452,22 @@ start_server() {
   local pid attempt
   log "starting $SERVER_BIN"
   mkdir -p "$REPO_DIR" || return 1
+  local -a server_args=(--port="$SERVER_PORT")
+  if [ -n "$UDP_TARGET_PORT" ]; then
+    server_args+=(--udp-target-port="$UDP_TARGET_PORT")
+    log "  relaying the virtual channel out over UDP 127.0.0.1:$UDP_TARGET_PORT"
+    if [ "$WG_STATUS" != up ]; then
+      log "  WARN: WireGuard is '$WG_STATUS', so nothing is listening on that UDP"
+      log "  port. Relayed traffic will be discarded without an error."
+    fi
+  else
+    log "  WARN: no UDP target port known; the server will default to $SERVER_PORT."
+    log "  Set TCPUDP_UDP_TARGET_PORT, or give the WireGuard config a ListenPort."
+  fi
   # Process substitution rather than a pipe, so $! stays the server's own pid
   # and the pidfile and cleanup keep pointing at the right process. The pump
   # exits on its own when the server closes the pipe, so nothing is orphaned.
-  nohup "$SERVER_BIN" > >(_server_log_pump) 2>&1 </dev/null &
+  nohup "$SERVER_BIN" "${server_args[@]}" > >(_server_log_pump) 2>&1 </dev/null &
   pid=$!
   printf '%s\n' "$pid" >"$SERVER_PIDFILE"
   for ((attempt = 1; attempt <= 10; attempt++)); do
