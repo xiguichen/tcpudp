@@ -31,6 +31,11 @@ DEFAULT_PORT = 10000
 DEFAULT_STATE_DIR = "/run/tcpudp"
 STATE_FILENAME = "tunnel.json"
 
+# Render's health check reaches the container from outside, so production must
+# bind all interfaces. Tests override this with 127.0.0.1, because binding a
+# non-loopback address on macOS raises an Application Firewall prompt.
+DEFAULT_BIND = "0.0.0.0"
+
 
 def state_path() -> str:
     return os.path.join(
@@ -84,7 +89,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     port = int(os.environ.get("PORT", DEFAULT_PORT))
-    httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    bind = os.environ.get("KEEPALIVE_BIND", DEFAULT_BIND)
+    httpd = ThreadingHTTPServer((bind, port), Handler)
     # Test hook: signal readiness once the socket is listening so tests can wait
     # on a file instead of sleeping. Production never sets this.
     ready = os.environ.get("KEEPALIVE_READY_FILE")

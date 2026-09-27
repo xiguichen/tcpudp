@@ -68,11 +68,15 @@ class KeepaliveTestCase(unittest.TestCase):
 
         Readiness is signalled through KEEPALIVE_READY_FILE so the test never
         has to sleep-and-hope; production does not set that variable.
+        KEEPALIVE_BIND is pinned to loopback so the test run does not trip
+        macOS's "accept incoming network connections" prompt; production binds
+        all interfaces because Render's health check comes from outside.
         """
         ready = os.path.join(state_dir, READY_FILENAME)
         env = dict(os.environ)
         env["TCPUDP_STATE_DIR"] = state_dir
         env["PORT"] = str(port)
+        env["KEEPALIVE_BIND"] = "127.0.0.1"
         env["KEEPALIVE_READY_FILE"] = ready
         proc = subprocess.Popen(
             [sys.executable, KEEPALIVE],
