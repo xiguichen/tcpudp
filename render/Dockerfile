@@ -1,0 +1,31 @@
+# Runtime image for the Render tunnel.
+#
+# Build context is render/ (set by rootDir in render.yaml), so the COPY paths
+# below are relative to this folder. Deliberately not copied: net.sh, which only
+# the Mac-side trigger script uses.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# curl  - fetches the server release and the ipinfo geo lookup
+# tar   - unpacks the release
+# python3 - runs keepalive.py
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar python3 iproute2 \
+  && rm -rf /var/lib/apt/lists/*
+
+# Latest rather than a pinned version: a stale pin would turn into a surprise
+# when cloudflared publishes a new release and the old tag is dropped.
+RUN curl -fsSL -o /usr/local/bin/cloudflared \
+      https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  && chmod +x /usr/local/bin/cloudflared
+
+COPY render_supervisor.sh /usr/local/bin/render_supervisor.sh
+COPY keepalive.py /usr/local/bin/keepalive.py
+RUN chmod +x /usr/local/bin/render_supervisor.sh
+
+# Render injects PORT (10000 by default); keepalive.py binds it.
+EXPOSE 10000
+
+CMD ["/usr/local/bin/render_supervisor.sh"]

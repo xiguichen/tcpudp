@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: tcpudp-render
+    runtime: docker
+    # Everything this service needs lives in render/. Render hides the rest of
+    # the repo from the build, which is what keeps the folder liftable.
+    rootDir: render
+    plan: free
+    # Immutable after creation. Oregon because run.yml blacklists Virginia.
+    region: oregon
+    branch: run
+    # Off is load-bearing. On, a supervisor publish would redeploy, which would
+    # wipe the filesystem, which would mint a new tunnel hostname, which would
+    # publish again - forever.
+    autoDeployTrigger: 'off'
+    healthCheckPath: /healthz
+    envVars:
+      - key: TCPUDP_RELEASE
+        value: v1.1.16
+      - key: TCPUDP_SERVER_PORT
+        value: "7001"
+      - key: TCPUDP_REPO_DIR
+        value: /app/repo
+      - key: TCPUDP_INFO_DIR
+        value: github_run
+      - key: SUPERVISE_INTERVAL
+        value: "5"
+      - key: TUNNEL_START_TIMEOUT
+        value: "60"
+      # Leave blank to run without it. The tunnel and /healthz still work;
+      # trigger_render.sh reads the live hostname from /healthz instead of
+      # from git. Set it only if something other than this Mac needs the
+      # hostname to land in the repo. Fine-grained token, contents:write.
+      - key: GITHUB_PAT
+        sync: false
