@@ -512,7 +512,11 @@ publish() {
 # it can degrade past.
 preflight() {
   local missing=0 tool
-  for tool in cloudflared python3 git; do
+  # Anything fatal here runs before the first request is served, so a missing
+  # tool is much cheaper to find now than as a silent failure later. tar is on
+  # the critical path: fetch_server downloads the release as a tarball and
+  # cannot unpack it without it.
+  for tool in cloudflared python3 git tar; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       log "ERROR: required command not found: $tool"
       missing=1
@@ -520,6 +524,9 @@ preflight() {
   done
   if ! command -v curl >/dev/null 2>&1; then
     log "WARN: curl not found; $INFO_DIR/render_info.json will carry no geo data"
+  fi
+  if ! command -v pkill >/dev/null 2>&1; then
+    log "WARN: pkill not found; a restarted supervisor may leave orphans behind"
   fi
   if [ ! -x "$SERVER_BIN" ]; then
     log "note: $SERVER_BIN is not executable yet; fetch_server will download it"

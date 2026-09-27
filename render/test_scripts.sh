@@ -17,6 +17,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 SUPERVISOR="$HERE/render_supervisor.sh"
 KEEPALIVE_SCRIPT_PATH="$HERE/keepalive.py"
+DOCKERFILE="$HERE/Dockerfile"
 
 # Keep git away from the developer's own identity: the suite asserts that
 # render_supervisor.sh configures one inside the clone, and that assertion is
@@ -683,6 +684,37 @@ teardown() {
   done
   return 0
 }
+
+# The Dockerfile and preflight are edited in different places, and they drift
+# apart silently. A tool that preflight treats as fatal but the image does not
+# install kills the container on the first boot with nothing but
+# "preflight failed" - which is exactly how the missing git package showed up
+# in production. Read the fatal list out of preflight rather than restating it
+# here, so this test cannot itself go stale.
+test_dockerfile_provides_every_required_command() {
+  local required providers missing=''
+
+  required=$(sed -n 's/^  for tool in \(.*\); do$/\1/p' "$SUPERVISOR")
+  assert_contains "$required" 'git' 'preflight-still-lists-git'
+
+  # Everything the image puts on PATH: the apt package names, plus cloudflared,
+  # which is downloaded from GitHub releases rather than installed. The final
+  # tr flattens the list to one space-separated line, because the membership
+  # test below matches on " word " boundaries.
+  providers=$(awk '/apt-get install/,/rm -rf \/var\/lib\/apt/' "$DOCKERFILE" |
+    tr -d '\\' | tr ' \t' '\n\n' | grep -E '^[a-z0-9.+-]+$' | tr '\n' ' ')
+  providers="$providers cloudflared"
+
+  local tool
+  for tool in $required; do
+    case " $providers " in
+      *" $tool "*) ;;
+      *) missing="$missing $tool" ;;
+    esac
+  done
+  assert_eq '' "$missing" 'every-fatal-tool-is-present-in-the-image'
+}
+
 trap teardown EXIT
 
 run_test test_resolve_config_defaults test_resolve_config_defaults
@@ -699,6 +731,7 @@ run_test test_publish_respects_publish_disabled test_publish_respects_publish_di
 run_test test_pat_never_appears_in_state_or_repo test_pat_never_appears_in_state_or_repo
 run_test test_is_alive_detects_dead_and_live_pids test_is_alive_detects_dead_and_live_pids
 run_test test_sigterm_reaps_children_and_exits_zero test_sigterm_reaps_children_and_exits_zero
+run_test test_dockerfile_provides_every_required_command test_dockerfile_provides_every_required_command
 
 printf '\n%s tests, %s failed\n' "$tests_run" "$tests_failed"
 if [ "$tests_failed" -gt 0 ]; then

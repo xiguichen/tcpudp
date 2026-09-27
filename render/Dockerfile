@@ -7,12 +7,15 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# curl  - fetches the server release and the ipinfo geo lookup
-# tar   - unpacks the release
-# python3 - runs keepalive.py
+# git      - clones the repo at startup and publishes the tunnel hostname back
+# curl     - fetches the server release and the ipinfo geo lookup
+# tar      - unpacks the release
+# python3  - runs keepalive.py
+# procps   - provides pkill, used to reap the server and tunnel on restart
+# iproute2 - provides ss, used to confirm port 7001 is listening
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    ca-certificates curl tar python3 iproute2 \
+    ca-certificates git curl tar python3 procps iproute2 \
   && rm -rf /var/lib/apt/lists/*
 
 # Latest rather than a pinned version: a stale pin would turn into a surprise
