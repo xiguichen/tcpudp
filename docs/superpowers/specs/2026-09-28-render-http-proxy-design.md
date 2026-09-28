@@ -201,6 +201,8 @@ is set on Render's dashboard; all are set on the Mac script and passed through.
 | `PROXY_IDLE_TIMEOUT` | `30` | Render | Seconds a connection may go without a frame before the adapter resets it |
 | `MAC_PROXY_PORT` | `8889` | Mac | `mac_proxy_bridge.py`'s loopback listen port; the port clients are pointed at |
 | `MAC_PROXY_UPSTREAM_PORT` | `5003` | Mac | UDP port the bridge sends datagrams to, where `udp_client` listens |
+| `MAC_PROXY_MAX_CONNS` | `128` | Mac | Concurrent connections the bridge will carry |
+| `MAC_PROXY_IDLE_TIMEOUT` | `30` | Mac | Seconds a browser connection may go unanswered before the bridge closes it |
 | `MAC_PROXY_PING_INTERVAL` | `60` | Mac | Seconds between `/healthz` pings that hold the container warm |
 
 `PROXY_IDLE_TIMEOUT` is a Render-side variable but governs a Mac-side symptom: the
