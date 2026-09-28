@@ -357,9 +357,18 @@ _wg_reason() {
     sed -E 's/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1<redacted>/;
             s/(private key:).*/\1 <redacted>/;
             s/[A-Za-z0-9+\/]{40,}={0,2}/<redacted>/g')
-  text=$(printf '%s\n' "$text" |
-    grep -v '^[[:space:]]*$' | grep -v '^[[:space:]]*#' |
-    grep -v '^[[:space:]]*Usage:' | head -1)
+  # wg-quick's cmd() is `echo "[#] $*" >&2` followed by the command itself, so
+  # every traced command is logged *before* it runs and its error lands on a
+  # later line. Taking the first line therefore publishes the command, not the
+  # complaint. Prefer the first line that is not a trace; if everything was
+  # traced, the last non-empty line is the closest thing to an error.
+  local body
+  body=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$')
+  text=$(printf '%s\n' "$body" |
+    grep -v '^[[:space:]]*\[#\]' |
+    grep -v '^[[:space:]]*Usage:' |
+    grep -v '^[[:space:]]*#' | head -1)
+  [ -n "$text" ] || text=$(printf '%s\n' "$body" | tail -1)
   [ -n "$text" ] || text='wg-quick failed without saying why'
   # One line, bounded: this lands in a JSON document served to anyone who asks.
   printf 'tun=%s net_admin=%s: %s' \
