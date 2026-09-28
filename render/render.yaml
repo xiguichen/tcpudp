@@ -12,10 +12,13 @@ services:
     # Immutable after creation. Oregon because run.yml blacklists Virginia.
     region: oregon
     branch: run
-    # Off is load-bearing. On, a supervisor publish would redeploy, which would
-    # wipe the filesystem, which would mint a new tunnel hostname, which would
-    # publish again - forever.
-    autoDeployTrigger: 'off'
+    # On, so every push to `run` deploys and the new instance is live a few
+    # minutes later. Safe only while GITHUB_PAT is blank: publish() then writes
+    # the info files but never commits, so nothing but our own pushes can
+    # trigger a build. Set a PAT and the loop returns - a publish would
+    # redeploy, wipe the filesystem, mint a new hostname, and publish again,
+    # forever.
+    autoDeployTrigger: 'on'
     healthCheckPath: /healthz
     envVars:
       - key: TCPUDP_PROXY_PORT

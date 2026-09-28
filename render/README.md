@@ -164,9 +164,12 @@ Test seams, also defaulted: `POLL_INTERVAL`, `RECONCILE_TIMEOUT`,
 
 ## Gotchas
 
-- **`autoDeployTrigger: 'off'` is load-bearing.** Left on, each publish triggers
-  a redeploy, which wipes the filesystem, which mints a new hostname, which
-  publishes again — forever.
+- **`autoDeployTrigger: 'on'` — every push to `run` builds**, and the new
+  instance is live a few minutes later. Safe only while `GITHUB_PAT` stays
+  blank: a blank PAT makes the supervisor write the info files locally without
+  ever committing or pushing them, so nothing but our pushes can trigger a
+  build. Setting a PAT brings the loop back — each publish would redeploy, wipe
+  the filesystem, mint a new hostname, and publish again, forever.
 - **Region cannot be changed after creation.** It is set to Oregon because
   `run.yml` blacklists Virginia. Pick deliberately.
 - **`rootDir: render`** hides the rest of the repo from the build. That is what
