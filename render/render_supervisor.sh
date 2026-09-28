@@ -75,6 +75,13 @@ resolve_config() {
   WG_CONFIG_PATH="${WIREGUARD_CONFIG_PATH:-/etc/wireguard/wg0.conf}"
   WG_REQUIRED=$(truthy "${WIREGUARD_REQUIRED:-false}")
   WG_STATUS='skipped'
+  # Why WireGuard is in whatever state it is in, as one line. "failed" on its
+  # own tells you nothing from outside the container, and the only other copy of
+  # the reason is in a log Render discards every time the free tier sleeps.
+  WG_REASON='not started'
+  # Preflight verdicts, globals so they can be folded into WG_REASON.
+  WG_TUN='unknown'
+  WG_NET_ADMIN='unknown'
   # Test seam: /proc/self/status does not exist on macOS, so the capability
   # check needs a path it can be pointed at.
   WG_PROC_STATUS="${WIREGUARD_PROC_STATUS:-/proc/self/status}"
@@ -172,8 +179,13 @@ write_state() {
     up | up-not-routed | failed | error | skipped) wg_json=$WG_STATUS ;;
     *) wg_json='unknown' ;;
   esac
-  printf '{"hostname":%s,"port":%s,"published":%s,"source":"render","wireguard":"%s","updated":"%s"}\n' \
-    "$host_json" "$SERVER_PORT" "$published_json" "$wg_json" "$(utc_now)" >"$file.tmp" || return 1
+  # Free text, so it goes through json_escape rather than a token whitelist -
+  # any character wg-quick emitted has to survive the trip without breaking the
+  # document. _wg_reason has already stripped keys and bounded the length.
+  local reason_json
+  reason_json=$(json_escape "$WG_REASON")
+  printf '{"hostname":%s,"port":%s,"published":%s,"source":"render","wireguard":"%s","wireguard_reason":%s,"updated":"%s"}\n' \
+    "$host_json" "$SERVER_PORT" "$published_json" "$wg_json" "$reason_json" "$(utc_now)" >"$file.tmp" || return 1
   mv "$file.tmp" "$file" || return 1
   return 0
 }
@@ -331,6 +343,29 @@ _wg_log_output() {
     sed 's/^/  /' | while IFS= read -r line; do log "$line"; done
 }
 
+# Condense wg-quick's output into one line that is safe to publish over
+# /healthz. The first meaningful line is the actual complaint; the rest is
+# wg-quick's usage banner, which repeats on every failure and says nothing.
+#
+# This string is served over unauthenticated HTTP, so redaction is not optional.
+# A malformed PrivateKey makes wg-quick echo the offending line straight back,
+# so the named-field rule is not enough on its own: any run of 40+ base64
+# characters is scrubbed regardless of what it is labelled.
+_wg_reason() {
+  local text
+  text=$(printf '%s\n' "${1-}" |
+    sed -E 's/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1<redacted>/;
+            s/(private key:).*/\1 <redacted>/;
+            s/[A-Za-z0-9+\/]{40,}={0,2}/<redacted>/g')
+  text=$(printf '%s\n' "$text" |
+    grep -v '^[[:space:]]*$' | grep -v '^[[:space:]]*#' |
+    grep -v '^[[:space:]]*Usage:' | head -1)
+  [ -n "$text" ] || text='wg-quick failed without saying why'
+  # One line, bounded: this lands in a JSON document served to anyone who asks.
+  printf 'tun=%s net_admin=%s: %s' \
+    "$WG_TUN" "$WG_NET_ADMIN" "$(printf '%s' "$text" | tr -d '\r\n' | cut -c1-180)"
+}
+
 # start_wireguard - bring up the WireGuard interface described by
 # $WIREGUARD_CONFIG. Must run before the server and the tunnel.
 #
@@ -351,6 +386,7 @@ start_wireguard() {
   if [ -z "$WG_CONFIG" ]; then
     log "WIREGUARD_CONFIG is not set; skipping WireGuard"
     WG_STATUS='skipped'
+    WG_REASON='WIREGUARD_CONFIG is not set'
     return 0
   fi
 
@@ -368,6 +404,8 @@ start_wireguard() {
         net_admin='unknown'
       ;;
   esac
+  WG_TUN=$tun
+  WG_NET_ADMIN=$net_admin
   log "wireguard preflight: /dev/net/tun=$tun CAP_NET_ADMIN=$net_admin"
   if [ "$net_admin" = missing ]; then
     # Predict the failure before it happens, and say what it means. Docker's
@@ -384,6 +422,7 @@ start_wireguard() {
   if ! ( umask 077 && printf '%s\n' "$WG_CONFIG" >"$WG_CONFIG_PATH" ); then
     log "ERROR: could not write $WG_CONFIG_PATH"
     WG_STATUS='error'
+    WG_REASON="could not write $WG_CONFIG_PATH"
     [ "$WG_REQUIRED" = 1 ] && die "WireGuard is required but $WG_CONFIG_PATH is not writable"
     return 1
   fi
@@ -395,6 +434,8 @@ start_wireguard() {
     log "ERROR: wg-quick up failed (rc=$rc). Verbatim output:"
     _wg_log_output "$out"
     WG_STATUS='failed'
+    # The one line that tells us whether this host can ever be the exit.
+    WG_REASON=$(_wg_reason "$out")
     if [ "$WG_REQUIRED" = 1 ]; then
       die "WireGuard is required but wg-quick failed; see the error above"
     fi
@@ -405,6 +446,7 @@ start_wireguard() {
   WG_STATUS='up'
   log "wireguard: $WG_INTERFACE is up"
   _wg_log_output "$out"
+  WG_REASON="tun=$WG_TUN net_admin=$WG_NET_ADMIN: wg-quick up succeeded"
 
   # Prove the claim rather than assert it. This is the check that matters: an
   # interface that is up but not in the default route tunnels nothing.
@@ -417,6 +459,7 @@ start_wireguard() {
       log "wireguard: default route traverses $WG_INTERFACE (egress IS tunnelled)"
     else
       WG_STATUS='up-not-routed'
+      WG_REASON="wg-quick up succeeded but the default route does not traverse $WG_INTERFACE"
       log "WARN: default route does NOT traverse $WG_INTERFACE."
       log "  Egress is NOT tunnelled. Check AllowedIPs in the config -"
       log "  0.0.0.0/0 is what makes wg-quick move the default route."

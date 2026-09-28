@@ -409,14 +409,14 @@ test_resolve_config_defaults() {
   assert_eq '/app/repo/server' "${SERVER_BIN:-}" SERVER_BIN
 }
 
-test_write_state_writes_all_six_keys() {
+test_write_state_writes_all_keys() {
   new_sandbox || return 1
   write_state 'h.trycloudflare.com' 1
   local file
   file=$(state_file)
   assert_parses "$file" state-file-is-an-object
-  assert_eq "['hostname', 'port', 'published', 'source', 'updated', 'wireguard']" \
-    "$(json_eval "$file" 'sorted(d.keys())')" six-keys
+  assert_eq "['hostname', 'port', 'published', 'source', 'updated', 'wireguard', 'wireguard_reason']" \
+    "$(json_eval "$file" 'sorted(d.keys())')" seven-keys
   assert_eq "'h.trycloudflare.com'" "$(json_eval "$file" 'd["hostname"]')" hostname
   assert_eq '7001' "$(json_eval "$file" 'd["port"]')" port
   assert_eq 'True' "$(json_eval "$file" 'd["published"]')" published
@@ -425,6 +425,7 @@ test_write_state_writes_all_six_keys() {
   # Must be a known token. WG_STATUS is interpolated into this JSON, so an
   # unexpected value must not be able to break the document.
   assert_eq "'skipped'" "$(json_eval "$file" 'd["wireguard"]')" wireguard-default
+  assert_eq "'not started'" "$(json_eval "$file" 'd["wireguard_reason"]')" wireguard-reason-default
 }
 
 test_write_state_empty_hostname_is_json_null() {
@@ -1071,7 +1072,7 @@ test_dockerfile_provides_every_required_command() {
 trap teardown EXIT
 
 run_test test_resolve_config_defaults test_resolve_config_defaults
-run_test test_write_state_writes_all_six_keys test_write_state_writes_all_six_keys
+run_test test_write_state_writes_all_keys test_write_state_writes_all_keys
 run_test test_write_state_empty_hostname_is_json_null test_write_state_empty_hostname_is_json_null
 run_test test_write_state_is_atomic test_write_state_is_atomic
 run_test test_publish_writes_run_yml_compatible_files test_publish_writes_run_yml_compatible_files

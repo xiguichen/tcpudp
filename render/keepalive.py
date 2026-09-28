@@ -30,6 +30,10 @@ DEFAULTS = {
     # interface that came up but is not in the default route, which is the
     # failure worth noticing.
     "wireguard": "skipped",
+    # Why, in one line. "failed" alone says nothing from outside the container,
+    # and Render discards its log every time the free tier sleeps - so without
+    # this there is no way to tell a missing capability from a bad config.
+    "wireguard_reason": "",
 }
 
 DEFAULT_PORT = 10000
