@@ -18,22 +18,16 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Contract A, minus status. A state file that omits a key falls back to the
-# value here, so /healthz always reports all five keys.
+# value here, so /healthz always reports all six keys.
 DEFAULTS = {
     "hostname": None,
     "port": 7001,
     "published": False,
     "source": "render",
     "updated": "",
-    # One of: skipped, up, up-not-routed, failed, error, unknown.
-    # "up" alone does not mean egress is tunnelled - "up-not-routed" is an
-    # interface that came up but is not in the default route, which is the
-    # failure worth noticing.
-    "wireguard": "skipped",
-    # Why, in one line. "failed" alone says nothing from outside the container,
-    # and Render discards its log every time the free tier sleeps - so without
-    # this there is no way to tell a missing capability from a bad config.
-    "wireguard_reason": "",
+    # One of: starting, ready, down, unknown. "ready" means the proxy port is
+    # answering, which is what the Mac side checks before bothering to connect.
+    "proxy": "starting",
 }
 
 DEFAULT_PORT = 10000

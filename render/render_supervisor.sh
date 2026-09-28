@@ -2,7 +2,7 @@
 #
 # render_supervisor.sh - PID 1 inside the Render container.
 #
-# Owns three children - the release's `server` binary, keepalive.py on $PORT,
+# Owns three children - tinyproxy on $TCPUDP_PROXY_PORT, keepalive.py on $PORT,
 # and a cloudflared quick tunnel - writes $TCPUDP_STATE_DIR/tunnel.json for
 # keepalive.py to serve, and publishes the discovered tunnel hostname to the
 # push branch so the Mac side can hand off to the unmodified run_github.sh.
@@ -47,12 +47,19 @@ truthy() {
 # resolve_config - set every global from the environment. The env names are the
 # ones the Render dashboard sets, passed through verbatim.
 resolve_config() {
-  RELEASE="${TCPUDP_RELEASE:-v1.1.16}"
-  SERVER_PORT="${TCPUDP_SERVER_PORT:-7001}"
+  # The port the proxy listens on. This is also the port the Mac's
+  # `cloudflared access tcp` forwards to, so it has to be the one Render
+  # publishes - see start_tunnel, which reads it back out of the log.
+  PROXY_PORT="${TCPUDP_PROXY_PORT:-7001}"
+  # 0.0.0.0, not loopback: the tunnel reaches this container from outside, and
+  # Render only routes to a port bound on all interfaces.
+  PROXY_BIND="${TCPUDP_PROXY_BIND:-0.0.0.0}"
+  # Run unprivileged. This proxy is reachable by anyone who learns the tunnel
+  # hostname, so a tinyproxy bug should not hand out root.
+  PROXY_USER="${TCPUDP_PROXY_USER:-tinyproxy}"
   REPO_DIR="${TCPUDP_REPO_DIR:-/app/repo}"
   INFO_DIR="${TCPUDP_INFO_DIR:-github_run}"
   STATE_DIR="${TCPUDP_STATE_DIR:-/run/tcpudp}"
-  SERVER_BIN="${TCPUDP_SERVER_BIN:-$REPO_DIR/server}"
   SUPERVISE_INTERVAL="${SUPERVISE_INTERVAL:-5}"
   TUNNEL_START_TIMEOUT="${TUNNEL_START_TIMEOUT:-60}"
   PAT="${GITHUB_PAT:-}"
@@ -62,58 +69,20 @@ resolve_config() {
   PORT="${PORT:-10000}"
   KEEPALIVE_SCRIPT="${KEEPALIVE_SCRIPT:-/usr/local/bin/keepalive.py}"
   RENDER_INFO_URL="${RENDER_INFO_URL:-https://ipinfo.io/json}"
+  # Surfaced through /healthz. "ready" means the port is answering, not just
+  # that the process was spawned.
+  PROXY_STATUS='starting'
 
-  # WireGuard. WG_CONFIG holds a private key: never log it, never write it
-  # inside $REPO_DIR (publish pushes that tree), never echo wg-quick output
-  # without redacting.
-  WG_CONFIG="${WIREGUARD_CONFIG:-}"
-  WG_INTERFACE="${WIREGUARD_INTERFACE:-wg0}"
-  # wg-quick resolves a bare interface name to /etc/wireguard/<name>.conf, so
-  # the default has to be that exact path. The env override exists so tests can
-  # redirect it; start_wireguard passes the path to wg-quick explicitly, which
-  # wg-quick accepts in place of a name.
-  WG_CONFIG_PATH="${WIREGUARD_CONFIG_PATH:-/etc/wireguard/wg0.conf}"
-  WG_REQUIRED=$(truthy "${WIREGUARD_REQUIRED:-false}")
-  WG_STATUS='skipped'
-  # Why WireGuard is in whatever state it is in, as one line. "failed" on its
-  # own tells you nothing from outside the container, and the only other copy of
-  # the reason is in a log Render discards every time the free tier sleeps.
-  WG_REASON='not started'
-  # Preflight verdicts, globals so they can be folded into WG_REASON.
-  WG_TUN='unknown'
-  WG_NET_ADMIN='unknown'
-  # Test seam: /proc/self/status does not exist on macOS, so the capability
-  # check needs a path it can be pointed at.
-  WG_PROC_STATUS="${WIREGUARD_PROC_STATUS:-/proc/self/status}"
-
-  # Where the server should relay the virtual channel out over UDP. That has to
-  # be the port the WireGuard interface listens on, because WireGuard is the
-  # only thing on this host reading that UDP. Left unset, the server defaults to
-  # its own TCP port and every relayed packet goes to a port nothing is bound
-  # to, which is silent: sendto() succeeds and the datagram is discarded.
-  # Derived from the config so the two cannot drift; TCPUDP_UDP_TARGET_PORT
-  # overrides for the case where they must differ.
-  UDP_TARGET_PORT="${TCPUDP_UDP_TARGET_PORT:-}"
-  if [ -z "$UDP_TARGET_PORT" ] && [ -n "$WG_CONFIG" ]; then
-    # Take everything after the '=', then keep only digits: WireGuard accepts
-    # both 'ListenPort=51899' and 'ListenPort = 51899', and the number lands in
-    # a different field for each.
-    UDP_TARGET_PORT=$(printf '%s\n' "$WG_CONFIG" |
-      awk '/^[[:space:]]*ListenPort[[:space:]]*=/ {
-             line = $0
-             sub(/^[^=]*=/, "", line)
-             gsub(/[^0-9]/, "", line)
-             print line
-             exit
-           }')
-  fi
-
-  # Derived paths.
-  CLOUDFLARED_LOG="${CLOUDFLARED_LOG:-$STATE_DIR/cloudflared.log}"
-  STATE_PIDFILE="${STATE_PIDFILE:-$STATE_DIR/supervisor.pid}"
-  SERVER_PIDFILE="${SERVER_PIDFILE:-$STATE_DIR/server.pid}"
-  KEEPALIVE_PIDFILE="${KEEPALIVE_PIDFILE:-$STATE_DIR/keepalive.pid}"
-  TUNNEL_PIDFILE="${TUNNEL_PIDFILE:-$STATE_DIR/tunnel.pid}"
+  # Derived paths. Keyed off the env-var name, not the previous global: this
+  # function can run more than once in one process (the test suite sources the
+  # supervisor repeatedly against fresh sandboxes), and ${VAR:-default} against
+  # the old global would freeze the first run's path forever.
+  CLOUDFLARED_LOG="${TCPUDP_CLOUDFLARED_LOG:-$STATE_DIR/cloudflared.log}"
+  STATE_PIDFILE="${TCPUDP_STATE_PIDFILE:-$STATE_DIR/supervisor.pid}"
+  PROXY_PIDFILE="${TCPUDP_PROXY_PIDFILE:-$STATE_DIR/proxy.pid}"
+  PROXY_CONF="${TCPUDP_PROXY_CONF:-$STATE_DIR/tinyproxy.conf}"
+  KEEPALIVE_PIDFILE="${TCPUDP_KEEPALIVE_PIDFILE:-$STATE_DIR/keepalive.pid}"
+  TUNNEL_PIDFILE="${TCPUDP_TUNNEL_PIDFILE:-$STATE_DIR/tunnel.pid}"
 
   # Existing commit-polling logic matches on "Auto-update".
   GIT_COMMIT_SUBJECT="Auto-update cloudflare tunnel info (render)"
@@ -174,18 +143,13 @@ write_state() {
   fi
   # Coerced to a known token: this is interpolated into JSON, and a stray
   # value from the environment must not be able to break the document.
-  local wg_json
-  case "$WG_STATUS" in
-    up | up-not-routed | failed | error | skipped) wg_json=$WG_STATUS ;;
-    *) wg_json='unknown' ;;
+  local proxy_json
+  case "$PROXY_STATUS" in
+    ready | starting | down) proxy_json=$PROXY_STATUS ;;
+    *) proxy_json='unknown' ;;
   esac
-  # Free text, so it goes through json_escape rather than a token whitelist -
-  # any character wg-quick emitted has to survive the trip without breaking the
-  # document. _wg_reason has already stripped keys and bounded the length.
-  local reason_json
-  reason_json=$(json_escape "$WG_REASON")
-  printf '{"hostname":%s,"port":%s,"published":%s,"source":"render","wireguard":"%s","wireguard_reason":%s,"updated":"%s"}\n' \
-    "$host_json" "$SERVER_PORT" "$published_json" "$wg_json" "$reason_json" "$(utc_now)" >"$file.tmp" || return 1
+  printf '{"hostname":%s,"port":%s,"published":%s,"source":"render","proxy":"%s","updated":"%s"}\n' \
+    "$host_json" "$PROXY_PORT" "$published_json" "$proxy_json" "$(utc_now)" >"$file.tmp" || return 1
   mv "$file.tmp" "$file" || return 1
   return 0
 }
@@ -242,16 +206,20 @@ kill_pidfile() {
   return 0
 }
 
-# port_listening - is anything accepting on 127.0.0.1:$SERVER_PORT?
+# port_listening - is the proxy accepting on $PROXY_PORT?
+#
+# Probed over loopback even when the proxy binds 0.0.0.0: a wildcard bind
+# answers on 127.0.0.1 too, so this works for both, and it does not depend on
+# the container having a route to its own external address.
 port_listening() {
   if command -v ss >/dev/null 2>&1; then
     local listing=''
     listing=$(ss -ltn 2>/dev/null) || listing=''
     case "$listing" in
-      *":$SERVER_PORT "* | *":$SERVER_PORT"$'\n'*) return 0 ;;
+      *":$PROXY_PORT "* | *":$PROXY_PORT"$'\n'*) return 0 ;;
     esac
   fi
-  (exec 3<>"/dev/tcp/127.0.0.1/$SERVER_PORT") 2>/dev/null && return 0
+  (exec 3<>"/dev/tcp/127.0.0.1/$PROXY_PORT") 2>/dev/null && return 0
   return 1
 }
 
@@ -295,254 +263,109 @@ ensure_repo() {
   return 0
 }
 
-# fetch_server - download the release tarball and install the server binary.
-fetch_server() {
-  local url tarball extracted
-  url="https://github.com/$GITHUB_REPO/releases/download/$RELEASE/tcpudp-ubuntu-latest.tar.gz"
-  tarball="$REPO_DIR/tcpudp-ubuntu-latest.tar.gz"
-  extracted="$REPO_DIR/tcpudp-ubuntu-latest"
-  log "downloading $url"
-  if ! curl -fsSL --retry 3 --retry-delay 2 -o "$tarball" "$url"; then
-    log "ERROR: could not download $url"
-    return 1
-  fi
-  if ! tar -xzf "$tarball" -C "$REPO_DIR"; then
-    log "ERROR: could not unpack $tarball"
-    return 1
-  fi
-  if [ ! -f "$extracted/server" ]; then
-    log "ERROR: $extracted/server is not in the release tarball"
-    return 1
-  fi
-  if ! mv "$extracted/server" "$SERVER_BIN"; then
-    log "ERROR: could not install $SERVER_BIN"
-    return 1
-  fi
-  if ! chmod +x "$SERVER_BIN"; then
-    log "ERROR: could not make $SERVER_BIN executable"
-    return 1
-  fi
-  rm -rf "$extracted" "$tarball"
-  log "installed $SERVER_BIN from $RELEASE"
+# --------------------------------------------------------------------------
+# proxy
+# --------------------------------------------------------------------------
+
+# write_proxy_conf - render the tinyproxy config.
+#
+# Generated rather than baked into the image so the port and bind address stay
+# configurable, and so the file that decides what this container exposes is
+# readable in one place.
+write_proxy_conf() {
+  cat >"$PROXY_CONF" <<CONF || return 1
+## Generated by render_supervisor.sh. Edits are lost on restart.
+User $PROXY_USER
+Group $PROXY_USER
+Listen $PROXY_BIND
+Port $PROXY_PORT
+Timeout 600
+
+## A browser opens several connections per page, and a session opens several
+## pages, so this is sized for a real session rather than a single request.
+StartServers 10
+MinSpareServers 5
+MaxSpareServers 20
+MaxClients 200
+
+## Web only. Without this the instance relays whatever anyone asks it to fetch,
+## to anyone who learns the tunnel hostname.
+ConnectPort 80
+ConnectPort 443
+
+## Do not advertise the proxy in the Via header.
+DisableViaHeader Yes
+
+## Log to the container's stdout, so connections are visible in Render's log.
+## Render discards the container filesystem on every free-tier sleep, so a log
+## written to a file is a log nobody can read after the fact.
+Syslog Off
+LogFile "/dev/stdout"
+LogLevel Info
+CONF
   return 0
 }
 
-# --------------------------------------------------------------------------
-# wireguard
-# --------------------------------------------------------------------------
-
-# _wg_log_output - log wg-quick's output with anything key-shaped redacted.
+# _proxy_log_pump - read tinyproxy's output one line at a time, append each to
+# $STATE_DIR/proxy.log and re-emit it on the supervisor's own stdout with a
+# "proxy: " prefix.
 #
-# The real wg-quick does not echo the config, so this is defence in depth: a
-# private key in the log would be permanently exposed in Render's log viewer,
-# and there is no way to un-log it. Used for both the success and failure
-# paths, because on success it is the only record of the resolved endpoint.
-_wg_log_output() {
-  printf '%s\n' "$1" |
-    sed -E 's/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1<redacted>/; s/(private key:).*/\1 <redacted>/' |
-    sed 's/^/  /' | while IFS= read -r line; do log "$line"; done
-}
-
-# Condense wg-quick's output into one line that is safe to publish over
-# /healthz. The first meaningful line is the actual complaint; the rest is
-# wg-quick's usage banner, which repeats on every failure and says nothing.
-#
-# This string is served over unauthenticated HTTP, so redaction is not optional.
-# A malformed PrivateKey makes wg-quick echo the offending line straight back,
-# so the named-field rule is not enough on its own: any run of 40+ base64
-# characters is scrubbed regardless of what it is labelled.
-_wg_reason() {
-  local text
-  text=$(printf '%s\n' "${1-}" |
-    sed -E 's/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1<redacted>/;
-            s/(private key:).*/\1 <redacted>/;
-            s/[A-Za-z0-9+\/]{40,}={0,2}/<redacted>/g')
-  # wg-quick's cmd() is `echo "[#] $*" >&2` followed by the command itself, so
-  # every traced command is logged *before* it runs and its error lands on a
-  # later line. Taking the first line therefore publishes the command, not the
-  # complaint. Prefer the first line that is not a trace; if everything was
-  # traced, the last non-empty line is the closest thing to an error.
-  local body
-  body=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$')
-  text=$(printf '%s\n' "$body" |
-    grep -v '^[[:space:]]*\[#\]' |
-    grep -v '^[[:space:]]*Usage:' |
-    grep -v '^[[:space:]]*#' | head -1)
-  [ -n "$text" ] || text=$(printf '%s\n' "$body" | tail -1)
-  [ -n "$text" ] || text='wg-quick failed without saying why'
-  # One line, bounded: this lands in a JSON document served to anyone who asks.
-  printf 'tun=%s net_admin=%s: %s' \
-    "$WG_TUN" "$WG_NET_ADMIN" "$(printf '%s' "$text" | tr -d '\r\n' | cut -c1-180)"
-}
-
-# start_wireguard - bring up the WireGuard interface described by
-# $WIREGUARD_CONFIG. Must run before the server and the tunnel.
-#
-# Ordering is the whole point. wg-quick installs routing from the config's own
-# AllowedIPs, so with AllowedIPs = 0.0.0.0/0 the default route moves onto the
-# interface. Anything started before this point leaves on the container's
-# ordinary egress instead, which would look like it worked while quietly
-# bypassing the tunnel. This mirrors run.yml, where the interface comes up
-# before the server.
-#
-# Non-fatal by default: a host that cannot create a TUN device should still
-# serve /healthz, so the failure is diagnosable from outside. Set
-# WIREGUARD_REQUIRED=true to make it fatal instead.
-#
-# The config holds a private key, so it is written 0600, never logged, never
-# written inside $REPO_DIR, and any wg-quick output is redacted before logging.
-start_wireguard() {
-  if [ -z "$WG_CONFIG" ]; then
-    log "WIREGUARD_CONFIG is not set; skipping WireGuard"
-    WG_STATUS='skipped'
-    WG_REASON='WIREGUARD_CONFIG is not set'
-    return 0
-  fi
-
-  # Report the two things that decide whether this can work at all, so one
-  # deploy tells us instead of a week of guessing.
-  # 'unknown' rather than 'missing' whenever /proc cannot be read: reporting a
-  # capability we never measured would be a claim we cannot back up.
-  local tun='absent' net_admin='unknown' capeff=''
-  [ -c /dev/net/tun ] && tun='present'
-  capeff=$(awk '/^CapEff:/ {print $2}' "$WG_PROC_STATUS" 2>/dev/null)
-  case "$capeff" in
-    [0-9a-fA-F][0-9a-fA-F]*)
-      # CAP_NET_ADMIN is capability bit 12.
-      net_admin=$(python3 -c "print('held' if (int('$capeff', 16) >> 12) & 1 else 'missing')" 2>/dev/null) ||
-        net_admin='unknown'
-      ;;
-  esac
-  WG_TUN=$tun
-  WG_NET_ADMIN=$net_admin
-  log "wireguard preflight: /dev/net/tun=$tun CAP_NET_ADMIN=$net_admin"
-  if [ "$net_admin" = missing ]; then
-    # Predict the failure before it happens, and say what it means. Docker's
-    # *default* capability set is 0x00000000200425fb, which does not include
-    # CAP_NET_ADMIN - so a container without an explicit grant will hit
-    # "RTNETLINK answers: Operation not permitted" here. No userspace
-    # workaround exists: tunnelling a process's own traffic transparently
-    # requires a real TUN device, and creating one requires this capability.
-    log "  without CAP_NET_ADMIN a TUN device cannot be created, so wg-quick will"
-    log "  be refused. This host can only tunnel if the platform grants it."
-  fi
-
-  mkdir -p "$(dirname "$WG_CONFIG_PATH")" 2>/dev/null || true
-  if ! ( umask 077 && printf '%s\n' "$WG_CONFIG" >"$WG_CONFIG_PATH" ); then
-    log "ERROR: could not write $WG_CONFIG_PATH"
-    WG_STATUS='error'
-    WG_REASON="could not write $WG_CONFIG_PATH"
-    [ "$WG_REQUIRED" = 1 ] && die "WireGuard is required but $WG_CONFIG_PATH is not writable"
-    return 1
-  fi
-
-  local out rc=0
-  out=$(wg-quick up "$WG_CONFIG_PATH" 2>&1) || rc=$?
-
-  if [ "$rc" -ne 0 ]; then
-    log "ERROR: wg-quick up failed (rc=$rc). Verbatim output:"
-    _wg_log_output "$out"
-    WG_STATUS='failed'
-    # The one line that tells us whether this host can ever be the exit.
-    WG_REASON=$(_wg_reason "$out")
-    if [ "$WG_REQUIRED" = 1 ]; then
-      die "WireGuard is required but wg-quick failed; see the error above"
-    fi
-    log "WARN: continuing without WireGuard. Egress is NOT tunnelled."
-    return 1
-  fi
-
-  WG_STATUS='up'
-  log "wireguard: $WG_INTERFACE is up"
-  _wg_log_output "$out"
-  WG_REASON="tun=$WG_TUN net_admin=$WG_NET_ADMIN: wg-quick up succeeded"
-
-  # Prove the claim rather than assert it. This is the check that matters: an
-  # interface that is up but not in the default route tunnels nothing.
-  if command -v ip >/dev/null 2>&1; then
-    local addr default
-    addr=$(ip -4 addr show "$WG_INTERFACE" 2>/dev/null | awk '/inet /{print $2; exit}')
-    [ -n "$addr" ] && log "wireguard: $WG_INTERFACE address $addr"
-    default=$(ip route show default 2>/dev/null)
-    if printf '%s' "$default" | grep -q "$WG_INTERFACE"; then
-      log "wireguard: default route traverses $WG_INTERFACE (egress IS tunnelled)"
-    else
-      WG_STATUS='up-not-routed'
-      WG_REASON="wg-quick up succeeded but the default route does not traverse $WG_INTERFACE"
-      log "WARN: default route does NOT traverse $WG_INTERFACE."
-      log "  Egress is NOT tunnelled. Check AllowedIPs in the config -"
-      log "  0.0.0.0/0 is what makes wg-quick move the default route."
-      log "  current default route(s): ${default:-none}"
-    fi
-  fi
-  return 0
-}
-
-# --------------------------------------------------------------------------
-# children
-# --------------------------------------------------------------------------
-
-# _server_log_pump - read the server's diagnostics one line at a time, append
-# each to $REPO_DIR/server.log and re-emit it on the supervisor's own stdout
-# with a "server: " prefix.
-#
-# This exists because the server's output used to go only to server.log, a file
-# inside the container. Render discards the container filesystem on every
-# free-tier sleep and offers no shell to read it, so a server that logged a
-# fatal error was indistinguishable from one with nothing to say. Both streams
-# are captured: the server writes some diagnostics to stderr, not just stdout.
-_server_log_pump() {
+# This mirrors the fix for the server's invisible log: Render discards the
+# container filesystem on every free-tier sleep and offers no shell to read it,
+# so a log written only to a file is a log nobody can read after the fact.
+# Process substitution rather than a pipe, so $! stays tinyproxy's own pid and
+# cleanup keeps pointing at the right process.
+_proxy_log_pump() {
   local line
   while IFS= read -r line; do
-    printf '%s\n' "$line" >>"$REPO_DIR/server.log"
-    log "server: $line"
+    printf '%s\n' "$line" >>"$STATE_DIR/proxy.log"
+    log "proxy: $line"
   done
 }
 
-# start_server - launch the server binary and wait for it to listen.
-start_server() {
+# start_proxy - run tinyproxy and wait for it to listen.
+start_proxy() {
   local pid attempt
-  log "starting $SERVER_BIN"
-  mkdir -p "$REPO_DIR" || return 1
-  local -a server_args=(--port="$SERVER_PORT")
-  if [ -n "$UDP_TARGET_PORT" ]; then
-    server_args+=(--udp-target-port="$UDP_TARGET_PORT")
-    log "  relaying the virtual channel out over UDP 127.0.0.1:$UDP_TARGET_PORT"
-    if [ "$WG_STATUS" != up ]; then
-      log "  WARN: WireGuard is '$WG_STATUS', so nothing is listening on that UDP"
-      log "  port. Relayed traffic will be discarded without an error."
-    fi
-  else
-    log "  WARN: no UDP target port known; the server will default to $SERVER_PORT."
-    log "  Set TCPUDP_UDP_TARGET_PORT, or give the WireGuard config a ListenPort."
+  if ! command -v tinyproxy >/dev/null 2>&1; then
+    log "ERROR: tinyproxy is not installed; the image should provide it"
+    return 1
   fi
-  # Process substitution rather than a pipe, so $! stays the server's own pid
-  # and the pidfile and cleanup keep pointing at the right process. The pump
-  # exits on its own when the server closes the pipe, so nothing is orphaned.
-  nohup "$SERVER_BIN" "${server_args[@]}" > >(_server_log_pump) 2>&1 </dev/null &
+  write_proxy_conf || return 1
+  log "starting tinyproxy on $PROXY_BIND:$PROXY_PORT"
+  # -d keeps it in the foreground so $! is tinyproxy's own pid and the pidfile
+  # and cleanup keep pointing at the right process. Without it tinyproxy forks
+  # and the recorded pid is the parent that has already exited.
+  nohup tinyproxy -d -c "$PROXY_CONF" > >(_proxy_log_pump) 2>&1 </dev/null &
   pid=$!
-  printf '%s\n' "$pid" >"$SERVER_PIDFILE"
+  # Record it only once it is confirmed alive: a proxy that dies (or fails to
+  # start, as the stub can) must leave no pidfile for supervise_loop or cleanup
+  # to act on, and a stale pidfile would look like a healthy proxy.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    PROXY_STATUS='down'
+    log "ERROR: tinyproxy fell over before its readiness poll; output above and in $STATE_DIR/proxy.log"
+    return 1
+  fi
+  printf '%s\n' "$pid" >"$PROXY_PIDFILE"
   for ((attempt = 1; attempt <= 10; attempt++)); do
     if port_listening; then
-      log "server is accepting on 127.0.0.1:$SERVER_PORT (pid $pid)"
-      # Say up front what the server's own log is for, so reading it does not
-      # require knowing the protocol. Kept to the lines that actually decide
-      # whether traffic flows.
-      log "  the server's own diagnostics follow below, each prefixed 'server:'"
-      log "  it multiplexes 32 TCP connections per client, so its log shows"
-      log "  'Added socket to peer with client ID N. Total sockets: N' while"
-      log "  they accumulate, and 'Created virtual channel for peer with"
-      log "  client ID N' once 32 have arrived. It relays between two clients"
-      log "  sharing a clientId, so one client alone never receives data."
+      PROXY_STATUS='ready'
+      log "proxy is accepting on $PROXY_BIND:$PROXY_PORT (pid $pid)"
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
-      log "ERROR: $SERVER_BIN exited immediately; its output is above and in $REPO_DIR/server.log"
+      PROXY_STATUS='down'
+      # The initial confirmation above can race a process that dies a moment
+      # after spawning, so remove the pidfile here too - the pidfile means
+      # "alive and being supervised", and a written-but-dead entry reads as
+      # healthy to is_alive.
+      rm -f "$PROXY_PIDFILE"
+      log "ERROR: tinyproxy exited immediately; its output is above and in $STATE_DIR/proxy.log"
       return 1
     fi
     sleep 1
   done
-  log "WARN: nothing is listening on 127.0.0.1:$SERVER_PORT after 10s; supervise_loop will retry"
+  PROXY_STATUS='down'
+  log "WARN: nothing is listening on $PROXY_BIND:$PROXY_PORT after 10s; supervise_loop will retry"
   return 1
 }
 
@@ -581,13 +404,13 @@ tunnel_hostname_from_log() {
 # function's stdout carries only the hostname and `$(start_tunnel)` is safe.
 start_tunnel() {
   local pid waited host
-  log "starting a cloudflared quick tunnel to 127.0.0.1:$SERVER_PORT" >&2
+  log "starting a cloudflared quick tunnel to 127.0.0.1:$PROXY_PORT" >&2
   kill_pidfile "$TUNNEL_PIDFILE" cloudflared
   # Anchored, so this can never match the supervisor's own command line.
   pkill -f '^cloudflared tunnel --url tcp://127.0.0.1:' 2>/dev/null || true
   mkdir -p "$(dirname "$CLOUDFLARED_LOG")" 2>/dev/null || true
   : >"$CLOUDFLARED_LOG" 2>/dev/null || true
-  nohup cloudflared tunnel --url "tcp://127.0.0.1:$SERVER_PORT" --no-autoupdate \
+  nohup cloudflared tunnel --url "tcp://127.0.0.1:$PROXY_PORT" --no-autoupdate \
     --logfile "$CLOUDFLARED_LOG" >>"$CLOUDFLARED_LOG" 2>&1 </dev/null &
   pid=$!
   printf '%s\n' "$pid" >"$TUNNEL_PIDFILE"
@@ -646,7 +469,7 @@ write_run_info() {
     url="https://$hostname"
   fi
   printf '{"hostname":%s,"timestamp":"%s","port":%s,"source":"render"}\n' \
-    "$(json_escape "$url")" "$(utc_now)" "$SERVER_PORT" >"$path" || return 1
+    "$(json_escape "$url")" "$(utc_now)" "$PROXY_PORT" >"$path" || return 1
   return 0
 }
 
@@ -677,7 +500,7 @@ write_info_files() {
   local hostname=${1:-} line dir
   dir="$REPO_DIR/$INFO_DIR"
   mkdir -p "$dir" || return 1
-  line="cloudflared access tcp --url tcp://localhost:$SERVER_PORT --hostname $hostname"
+  line="cloudflared access tcp --url tcp://localhost:$PROXY_PORT --hostname $hostname"
   printf '%s\n' "$line" >"$dir/cloudflare.sh" || return 1
   cp "$dir/cloudflare.sh" "$dir/cloudflare.bat" || return 1
   printf '%s\n' "$line" >"$REPO_DIR/cloudflare.sh" || return 1
@@ -762,10 +585,8 @@ publish() {
 preflight() {
   local missing=0 tool
   # Anything fatal here runs before the first request is served, so a missing
-  # tool is much cheaper to find now than as a silent failure later. tar is on
-  # the critical path: fetch_server downloads the release as a tarball and
-  # cannot unpack it without it.
-  for tool in cloudflared python3 git tar; do
+  # tool is much cheaper to find now than as a silent failure later.
+  for tool in cloudflared python3 git tinyproxy; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       log "ERROR: required command not found: $tool"
       missing=1
@@ -777,11 +598,17 @@ preflight() {
   if ! command -v pkill >/dev/null 2>&1; then
     log "WARN: pkill not found; a restarted supervisor may leave orphans behind"
   fi
-  if [ ! -x "$SERVER_BIN" ]; then
-    log "note: $SERVER_BIN is not executable yet; fetch_server will download it"
-  fi
-  if [ -n "$WG_CONFIG" ] && ! command -v wg-quick >/dev/null 2>&1; then
-    log "WARN: WIREGUARD_CONFIG is set but wg-quick is not installed; WireGuard will not come up"
+  # The proxy drops to root if this user is missing, because the config names it
+  # and tinyproxy will not start without it. Say so here, where the log is still
+  # being read, rather than as a bare "exited immediately" from start_proxy.
+  # Only meaningful to a root supervisor - the image's apt package creates the
+  # user - and running as root is exactly what the container does, so that is
+  # the condition that gates it. A non-root run (local tests) skips it, because
+  # there is no tinyproxy user on a developer machine either.
+  if [ "$(id -u)" = 0 ] && \
+     command -v tinyproxy >/dev/null 2>&1 && ! id "$PROXY_USER" >/dev/null 2>&1; then
+    log "ERROR: user '$PROXY_USER' does not exist; tinyproxy will refuse to start"
+    missing=1
   fi
   if [ -z "$PAT" ]; then
     log "WARN: GITHUB_PAT is not set; the tunnel and /healthz still work, but the hostname will not reach git"
@@ -796,11 +623,24 @@ preflight() {
 # supervise_loop - never returns. Restart whatever died; publish whenever the
 # live hostname differs from the published one.
 supervise_loop() {
+  local reported='' live=''
   log "supervising every ${SUPERVISE_INTERVAL}s"
   while :; do
-    if ! is_alive "$SERVER_PIDFILE"; then
-      log "server is not running; restarting it"
-      start_server || true
+    if ! is_alive "$PROXY_PIDFILE"; then
+      log "proxy is not running; restarting it"
+      start_proxy || true
+    fi
+    # Rewrite the state only when the proxy status actually moved. The file
+    # carries "proxy":"ready", and a status that goes stale in either direction
+    # is worse than no status at all.
+    if [ "$PROXY_STATUS" != "$reported" ]; then
+      live=$(tunnel_hostname_from_log)
+      if [ -n "$live" ] && [ "$live" = "$(published_hostname)" ]; then
+        write_state "$live" 1 || true
+      else
+        write_state "$live" 0 || true
+      fi
+      reported=$PROXY_STATUS
     fi
 
     local host=''
@@ -823,15 +663,10 @@ supervise_loop() {
 cleanup() {
   trap - TERM INT
   log "SIGTERM/SIGINT received; stopping children"
-  kill_pidfile "$SERVER_PIDFILE" server
+  kill_pidfile "$PROXY_PIDFILE" proxy
   kill_pidfile "$TUNNEL_PIDFILE" cloudflared
   kill_pidfile "$KEEPALIVE_PIDFILE" keepalive
   pkill -f '^cloudflared tunnel --url tcp://127.0.0.1:' 2>/dev/null || true
-  # Tear the interface down last: while the server and tunnel are still shutting
-  # down, tearing it down first would strand their in-flight packets.
-  if [ -n "${WG_CONFIG:-}" ] && command -v wg-quick >/dev/null 2>&1; then
-    wg-quick down "$WG_CONFIG_PATH" >/dev/null 2>&1 || true
-  fi
   log "shutdown complete"
   exit 0
 }
@@ -843,18 +678,14 @@ main() {
   printf '%s\n' "$$" >"$STATE_PIDFILE" 2>/dev/null || true
   trap cleanup TERM INT
   log "render_supervisor.sh starting as pid $$"
-  log "repo=$REPO_DIR branch=$PUSH_BRANCH release=$RELEASE server_port=$SERVER_PORT health_port=$PORT"
+  log "repo=$REPO_DIR branch=$PUSH_BRANCH proxy_port=$PROXY_PORT health_port=$PORT"
 
   preflight
   ensure_repo || die "no usable repository checkout at $REPO_DIR"
-  if [ ! -x "$SERVER_BIN" ]; then
-    fetch_server || die "could not install $SERVER_BIN from $RELEASE"
-  fi
 
-  # Before the server and the tunnel, so their egress actually traverses it.
-  start_wireguard || true
-
-  start_server || log "WARN: the server did not come up; supervise_loop keeps trying"
+  # Before the tunnel, so the proxy is already answering when the tunnel
+  # starts pointing at it. The tunnel is useless without a listener behind it.
+  start_proxy || log "WARN: the proxy did not come up; supervise_loop keeps trying"
   start_keepalive
   host=$(start_tunnel) || true
   if [ -n "$host" ]; then
