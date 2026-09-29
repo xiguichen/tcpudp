@@ -287,7 +287,7 @@ install_stubs() {
 #!/bin/bash
 # Stands in for the real tinyproxy: reads the Port out of the config the
 # supervisor hands it with -c, holds that port open, and idles.
-port=7001
+port=8080
 conf=''
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -297,7 +297,7 @@ while [ $# -gt 0 ]; do
 done
 if [ -n "$conf" ]; then
   port=$(sed -n 's/^Port[[:space:]]*//p' "$conf" | head -1)
-  [ -n "$port" ] || port=7001
+  [ -n "$port" ] || port=8080
 fi
 # STUB_TINYPROXY_DIE makes the stub fail on startup, the way a bad config or a
 # missing user does.
@@ -362,7 +362,7 @@ test_resolve_config_defaults() {
   SUPERVISE_INTERVAL=1 TUNNEL_START_TIMEOUT=2 source "$SUPERVISOR"
   resolve_config
 
-  assert_eq 7001 "${PROXY_PORT:-}" PROXY_PORT
+  assert_eq 8080 "${PROXY_PORT:-}" PROXY_PORT
   assert_eq 0.0.0.0 "${PROXY_BIND:-}" PROXY_BIND
   assert_eq tinyproxy "${PROXY_USER:-}" PROXY_USER
   assert_eq github_run "${INFO_DIR:-}" INFO_DIR
@@ -389,7 +389,7 @@ test_write_state_writes_all_keys() {
   assert_eq "['hostname', 'port', 'proxy', 'published', 'source', 'updated']" \
     "$(json_eval "$file" 'sorted(d.keys())')" six-keys
   assert_eq "'h.trycloudflare.com'" "$(json_eval "$file" 'd["hostname"]')" hostname
-  assert_eq '7001' "$(json_eval "$file" 'd["port"]')" port
+  assert_eq '8080' "$(json_eval "$file" 'd["port"]')" port
   assert_eq 'True' "$(json_eval "$file" 'd["published"]')" published
   assert_eq "'render'" "$(json_eval "$file" 'd["source"]')" source
   assert_matches "$(json_text "$file" 'd["updated"]')" "$UPDATED_RE" updated
@@ -420,7 +420,7 @@ test_publish_writes_run_yml_compatible_files() {
   publish_quiet 'h.trycloudflare.com' 1
   assert_eq 0 "$publish_rc" publish-returns-0
 
-  local line='cloudflared access tcp --url tcp://localhost:7001 --hostname h.trycloudflare.com'
+  local line='cloudflared access tcp --url tcp://localhost:8080 --hostname h.trycloudflare.com'
   assert_file_bytes "$line" "$REPO_DIR/$INFO_DIR/cloudflare.sh" info-dir-sh
   assert_file_bytes "$line" "$clone/cloudflare.sh" clone-root-sh
   if cmp -s "$REPO_DIR/$INFO_DIR/cloudflare.sh" "$REPO_DIR/$INFO_DIR/cloudflare.bat"; then
@@ -438,7 +438,7 @@ test_publish_writes_run_yml_compatible_files() {
   assert_parses "$info" run_info-parses
   assert_eq "'https://h.trycloudflare.com'" \
     "$(json_eval "$info" 'd["hostname"]')" run_info-hostname
-  assert_eq '7001' "$(json_eval "$info" 'd["port"]')" run_info-port
+  assert_eq '8080' "$(json_eval "$info" 'd["port"]')" run_info-port
   assert_eq "'render'" "$(json_eval "$info" 'd["source"]')" run_info-source
   assert_matches "$(json_text "$info" 'd["timestamp"]')" "$UPDATED_RE" run_info-timestamp
 
@@ -748,7 +748,7 @@ test_proxy_conf_is_generated() {
   local conf
   write_proxy_conf || return 1
   conf=$(cat "$PROXY_CONF")
-  assert_contains "$conf" 'Port 7001' config-has-the-port
+  assert_contains "$conf" 'Port 8080' config-has-the-port
   assert_contains "$conf" 'Listen 0.0.0.0' config-binds-all-interfaces
   assert_contains "$conf" 'User tinyproxy' config-runs-unprivileged
   assert_contains "$conf" 'ConnectPort 80' web-destinations-http
@@ -855,6 +855,62 @@ test_proxy_output_reaches_the_render_log() {
   assert_contains "$onfile" 'STUB_TINYPROXY_STDERR_MARKER_1' proxy-log-file-also-has-stderr
 }
 
+# A blank PAT makes publish() write the info files into the clone but never
+# commit or push. The state's published flag must stay false - trigger_render.sh
+# relies on it to skip the 120s wait for a push that can never come. Regression:
+# the supervise_loop refresh used to recompute published from the clone's info
+# files (which publish had just overwritten locally), inventing published=true.
+test_state_published_stays_false_without_a_pat() {
+  new_sandbox || return 1
+  install_stubs
+  local port health_port sup_pid sup_log
+  port=$(free_port)
+  health_port=$(free_port)
+  sup_log="$sandbox/supervisor.log"
+
+  GITHUB_PAT='' \
+    TCPUDP_STATE_DIR="$sandbox/state" \
+    TCPUDP_REPO_DIR="$clone" \
+    TCPUDP_PROXY_PORT="$port" \
+    TCPUDP_INFO_DIR=github_run \
+    SUPERVISE_INTERVAL=1 \
+    TUNNEL_START_TIMEOUT=5 \
+    PORT="$health_port" \
+    KEEPALIVE_SCRIPT="$KEEPALIVE_SCRIPT_PATH" \
+    KEEPALIVE_BIND=127.0.0.1 \
+    GITHUB_REMOTE_URL="$origin" \
+    GITHUB_PUSH_URL="$origin" \
+    GITHUB_PUSH_BRANCH="$BRANCH" \
+    STUB_TUNNEL_HOST=render-stub.trycloudflare.com \
+    PATH="$sandbox/bin:$PATH" \
+    bash "$SUPERVISOR" >"$sup_log" 2>&1 &
+  sup_pid=$!
+  child_pids+=("$sup_pid")
+
+  # Wait for the proxy to reach "ready" on the state file - the supervise_loop
+  # refresh is what used to flip published, so it must have run for this to
+  # exercise the regression.
+  local state="$sandbox/state/tunnel.json" tries=0 ready=''
+  while [ "$tries" -lt 60 ]; do
+    if [ -f "$state" ]; then
+      ready=$(json_text "$state" 'd["proxy"]')
+      [ "$ready" = ready ] && break
+    fi
+    if ! kill -0 "$sup_pid" 2>/dev/null; then break; fi
+    sleep 0.5
+    tries=$((tries + 1))
+  done
+
+  local published='' log_hint
+  [ -f "$state" ] && published=$(json_text "$state" 'd["published"]')
+  log_hint=$(tail -n 8 "$sup_log" 2>/dev/null | tr '\n' '|')
+  assert_eq 'False' "$published" \
+    "state-published-stays-false-without-a-pat -- log: $log_hint"
+
+  kill -TERM "$sup_pid" 2>/dev/null
+  wait "$sup_pid" 2>/dev/null
+}
+
 test_dockerfile_provides_every_required_command() {
   local required providers missing=''
 
@@ -899,6 +955,7 @@ run_test test_proxy_conf_is_generated test_proxy_conf_is_generated
 run_test test_start_proxy_marks_ready_when_the_port_answers test_start_proxy_marks_ready_when_the_port_answers
 run_test test_start_proxy_marks_down_when_the_proxy_dies test_start_proxy_marks_down_when_the_proxy_dies
 run_test test_proxy_output_reaches_the_render_log test_proxy_output_reaches_the_render_log
+run_test test_state_published_stays_false_without_a_pat test_state_published_stays_false_without_a_pat
 run_test test_dockerfile_provides_every_required_command test_dockerfile_provides_every_required_command
 
 printf '\n%s tests, %s failed\n' "$tests_run" "$tests_failed"

@@ -50,7 +50,7 @@ resolve_config() {
   # The port the proxy listens on. This is also the port the Mac's
   # `cloudflared access tcp` forwards to, so it has to be the one Render
   # publishes - see start_tunnel, which reads it back out of the log.
-  PROXY_PORT="${TCPUDP_PROXY_PORT:-7001}"
+  PROXY_PORT="${TCPUDP_PROXY_PORT:-8080}"
   # 0.0.0.0, not loopback: the tunnel reaches this container from outside, and
   # Render only routes to a port bound on all interfaces.
   PROXY_BIND="${TCPUDP_PROXY_BIND:-0.0.0.0}"
@@ -170,6 +170,26 @@ except Exception:
 if isinstance(data, dict) and isinstance(data.get("hostname"), str):
     sys.stdout.write(data["hostname"])
 ' "$file" 2>/dev/null
+}
+
+# read_state_published - the published flag publish() last recorded in the
+# state file: 1 only when it actually committed and pushed, else 0. Deliberately
+# NOT the clone's info files - publish() overwrites those locally even when it
+# skips the push (blank GITHUB_PAT) - so an info-file comparison would report
+# "published" for something that never reached the branch.
+read_state_published() {
+  local file
+  file=$(state_file)
+  [ -f "$file" ] || { printf '0'; return 0; }
+  python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception:
+    sys.exit(0)
+print(1 if isinstance(data, dict) and data.get("published") is True else 0)
+' "$file" 2>/dev/null || printf '0'
 }
 
 # --------------------------------------------------------------------------
@@ -623,7 +643,7 @@ preflight() {
 # supervise_loop - never returns. Restart whatever died; publish whenever the
 # live hostname differs from the published one.
 supervise_loop() {
-  local reported='' live=''
+  local reported=''
   log "supervising every ${SUPERVISE_INTERVAL}s"
   while :; do
     if ! is_alive "$PROXY_PIDFILE"; then
@@ -632,14 +652,10 @@ supervise_loop() {
     fi
     # Rewrite the state only when the proxy status actually moved. The file
     # carries "proxy":"ready", and a status that goes stale in either direction
-    # is worse than no status at all.
+    # is worse than no status at all. published carries over from what publish()
+    # last recorded - refreshing the proxy status must not invent a push.
     if [ "$PROXY_STATUS" != "$reported" ]; then
-      live=$(tunnel_hostname_from_log)
-      if [ -n "$live" ] && [ "$live" = "$(published_hostname)" ]; then
-        write_state "$live" 1 || true
-      else
-        write_state "$live" 0 || true
-      fi
+      write_state "$(tunnel_hostname_from_log)" "$(read_state_published)" || true
       reported=$PROXY_STATUS
     fi
 

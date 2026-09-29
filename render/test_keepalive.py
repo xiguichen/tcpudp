@@ -136,7 +136,7 @@ class HealthzContractTest(KeepaliveTestCase):
         self.write_state(
             {
                 "hostname": "abc-def.trycloudflare.com",
-                "port": 7001,
+                "port": 8080,
                 "published": True,
                 "source": "render",
                 "updated": "2026-09-27T12:34:56Z",
@@ -152,7 +152,7 @@ class HealthzContractTest(KeepaliveTestCase):
         self.write_state(
             {
                 "hostname": "abc-def.trycloudflare.com",
-                "port": 7001,
+                "port": 8080,
                 "published": True,
                 "source": "render",
                 "updated": "2026-09-27T12:34:56Z",
@@ -197,7 +197,7 @@ class HealthzContractTest(KeepaliveTestCase):
         self.write_state({"hostname": "abc-def.trycloudflare.com"})
         status, body = get("/healthz", self.port)
         self.assertEqual(200, status)
-        self.assertEqual(7001, body["port"])
+        self.assertEqual(8080, body["port"])
         self.assertEqual("render", body["source"])
         self.assertIs(False, body["published"])
         self.assertIsInstance(body["updated"], str)

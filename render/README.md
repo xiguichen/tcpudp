@@ -13,13 +13,13 @@ and change `GITHUB_REPO`.
 
 ```bash
 ./render/trigger_render.sh    # wake the instance; prints the hostname
-cloudflared access tcp --url tcp://localhost:7001 --hostname <printed hostname>
+cloudflared access tcp --url tcp://localhost:8080 --hostname <printed hostname>
 ```
 
 Then point your browser (or curl) at the HTTP proxy
 
 ```
-http://127.0.0.1:7001
+http://127.0.0.1:8080
 ```
 
 and requests exit the internet from Render's IP. The hostname changes on every
@@ -39,7 +39,7 @@ registering — so a caller can tell "still waking" from "broken".
 
 ```
 $ curl -fsS https://tcpudp.onrender.com/healthz
-{"hostname": "abc-def.trycloudflare.com", "port": 7001, "published": false, "source": "render", "proxy": "ready", "updated": "2026-09-28T12:34:56Z", "status": "ok"}
+{"hostname": "abc-def.trycloudflare.com", "port": 8080, "published": false, "source": "render", "proxy": "ready", "updated": "2026-09-28T12:34:56Z", "status": "ok"}
 ```
 
 `proxy` is the verdict on the port, and the distinction matters:
@@ -53,14 +53,14 @@ $ curl -fsS https://tcpudp.onrender.com/healthz
 ## How it works
 
 ```
-browser ─ HTTP proxy ─> 127.0.0.1:7001 (Mac)
+browser ─ HTTP proxy ─> 127.0.0.1:8080 (Mac)
                           │  cloudflared access tcp (raw TCP)
                           ▼
                     Cloudflare edge
                           │
                           ▼
-                    Render:7001
-                   tinyproxy (0.0.0.0:7001)
+                    Render:8080
+                   tinyproxy (0.0.0.0:8080)
                           │
                           ▼
                      the internet
@@ -116,7 +116,7 @@ land in the repo — a second machine, or CI. Use a fine-grained token with
 ./render/run_tests.sh
 ```
 
-44 tests (9 keepalive, 19 supervisor, 16 trigger/net). No network, no sudo, no
+45 tests (9 keepalive, 20 supervisor, 16 trigger/net). No network, no sudo, no
 docker: git talks to a throwaway local repo, `/healthz` is a local python server
 on `127.0.0.1`, `ping` is stubbed on `PATH`, `tinyproxy` and `cloudflared` are
 stubbed on `PATH`, and hosts-file writes are redirected to a sandbox file.
@@ -129,7 +129,7 @@ nobody can read after the fact. The supervisor therefore pumps tinyproxy's
 output onto its own stdout, one line per record, prefixed `proxy: `:
 
 ```
-2026-09-28T14:03:35Z proxy is accepting on 0.0.0.0:7001 (pid 44)
+2026-09-28T14:03:35Z proxy is accepting on 0.0.0.0:8080 (pid 44)
 2026-09-28T14:07:02Z proxy: CONNECT   example.com:443
 2026-09-28T14:07:03Z proxy: CONNECT   cdn.example.com:443
 ```
@@ -147,7 +147,7 @@ All optional; the defaults are the working values.
 | `GITHUB_REPO` | `xiguichen/tcpudp` | supervisor |
 | `GITHUB_PUSH_BRANCH` | `run` | supervisor, trigger |
 | `GITHUB_PAT` | *(unset)* | supervisor — optional, see above |
-| `TCPUDP_PROXY_PORT` | `7001` | supervisor, trigger |
+| `TCPUDP_PROXY_PORT` | `8080` | supervisor, trigger |
 | `TCPUDP_PROXY_BIND` | `0.0.0.0` | supervisor |
 | `TCPUDP_PROXY_USER` | `tinyproxy` | supervisor |
 | `TCPUDP_REPO_DIR` | `/app/repo` | supervisor |
@@ -182,5 +182,5 @@ Test seams, also defaulted: `POLL_INTERVAL`, `RECONCILE_TIMEOUT`,
   sources it, so it must stay a single `cloudflared access tcp ...` line.
 - **The proxy is unauthenticated.** The tunnel hostname is printed by
   `trigger_render.sh` and lives in `render/`-generated files on the `run`
-  branch, so treat `http://127.0.0.1:7001` as private to this machine, and don't
+  branch, so treat `http://127.0.0.1:8080` as private to this machine, and don't
   stand the tunnel up in public for long.

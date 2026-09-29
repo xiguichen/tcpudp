@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # value here, so /healthz always reports all six keys.
 DEFAULTS = {
     "hostname": None,
-    "port": 7001,
+    "port": 8080,
     "published": False,
     "source": "render",
     "updated": "",

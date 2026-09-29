@@ -214,7 +214,7 @@ new_sandbox() {
     git config user.name sandbox
     git config user.email sandbox@example.invalid
     mkdir -p github_run
-    printf 'cloudflared access tcp --url tcp://localhost:7001 --hostname seed.trycloudflare.com\n' \
+    printf 'cloudflared access tcp --url tcp://localhost:8080 --hostname seed.trycloudflare.com\n' \
       >github_run/cloudflare.sh
     git add README.md 2>/dev/null || true
     printf 'seed\n' >README.md
@@ -404,7 +404,7 @@ test_trigger_render_waits_through_a_non_json_loading_page() {
     {"status":200,"type":"text/html","body":"<html><body>Loading...</body></html>"},
     {"status":200,"type":"text/html","body":"<html><body>Loading...</body></html>"},
     {"status":200,"type":"text/html","body":"<html><body>Loading...</body></html>"},
-    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"woke.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"woke.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
   ]' || return 1
   run_trigger --timeout 30
   assert_eq 0 "$trigger_rc" exits-0-after-the-loading-page
@@ -416,10 +416,10 @@ test_trigger_render_waits_through_a_non_json_loading_page() {
 test_trigger_render_waits_for_null_hostname_then_succeeds() {
   new_sandbox fast || return 1
   start_health '[
-    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
-    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
-    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
-    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"up.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"up.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
   ]' || return 1
   run_trigger --timeout 30
   assert_eq 0 "$trigger_rc" exits-0-once-the-hostname-appears
@@ -429,7 +429,7 @@ test_trigger_render_waits_for_null_hostname_then_succeeds() {
 # A service that never reports a hostname must fail loudly, not hang forever.
 test_trigger_render_times_out_with_clear_error() {
   new_sandbox fast || return 1
-  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":null,\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
   run_trigger --timeout 6
   assert_not_empty "$trigger_rc" 'times-out-with-non-zero-status'
@@ -440,7 +440,7 @@ test_trigger_render_times_out_with_clear_error() {
 # hostname. The live one must win locally so run_github.sh keeps working.
 test_trigger_render_uses_live_hostname_when_branch_is_stale() {
   new_sandbox fast || return 1
-  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"new.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"new.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
   run_trigger --timeout 30
   assert_eq 0 "$trigger_rc" exits-0-even-when-git-is-stale
@@ -448,21 +448,21 @@ test_trigger_render_uses_live_hostname_when_branch_is_stale() {
   # Ruling 1: the local file must keep the exact one-line command format that
   # run_github.sh sources, never a bare hostname.
   assert_eq \
-    'cloudflared access tcp --url tcp://localhost:7001 --hostname new.trycloudflare.com' \
+    'cloudflared access tcp --url tcp://localhost:8080 --hostname new.trycloudflare.com' \
     "$(cat "$repo/github_run/cloudflare.sh")" local-file-holds-the-live-hostname
 }
 
 # When git already agrees, there is nothing to warn about.
 test_trigger_render_accepts_matching_branch() {
   new_sandbox fast || return 1
-  printf 'cloudflared access tcp --url tcp://localhost:7001 --hostname match.trycloudflare.com\n' \
+  printf 'cloudflared access tcp --url tcp://localhost:8080 --hostname match.trycloudflare.com\n' \
     >"$repo/github_run/cloudflare.sh"
   # Must reach origin: the script checks origin/$BRANCH, so a purely local
   # commit would look stale and the assertion below would pass for the wrong
   # reason.
   ( cd "$repo" && git add -A && git commit --quiet -m 'matching hostname' &&
     git push --quiet origin "$BRANCH" ) >/dev/null 2>&1
-  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"match.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"match.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
   run_trigger --timeout 30
   assert_eq 0 "$trigger_rc" exits-0-when-git-already-matches
@@ -476,7 +476,7 @@ test_trigger_render_accepts_matching_branch() {
 # test exists to prevent.
 test_trigger_render_does_not_wait_when_no_publish_is_expected() {
   new_sandbox fast || return 1
-  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"nopub.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"nopub.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
 
   # Make the reconcile timeout far larger than the ceiling below. If the wait
@@ -497,7 +497,7 @@ test_trigger_render_does_not_wait_when_no_publish_is_expected() {
   fi
   # It must still do the useful part: write the live hostname locally.
   assert_eq \
-    'cloudflared access tcp --url tcp://localhost:7001 --hostname nopub.trycloudflare.com' \
+    'cloudflared access tcp --url tcp://localhost:8080 --hostname nopub.trycloudflare.com' \
     "$(cat "$repo/github_run/cloudflare.sh")" still-writes-the-live-hostname
 }
 
@@ -505,7 +505,7 @@ test_trigger_render_does_not_wait_when_no_publish_is_expected() {
 # this would make the script race a push that is about to succeed.
 test_trigger_render_still_waits_when_a_publish_is_in_flight() {
   new_sandbox fast || return 1
-  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"pub.trycloudflare.com\",\"port\":7001,\"published\":true,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"pub.trycloudflare.com\",\"port\":8080,\"published\":true,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
   run_trigger --timeout 30
   assert_eq 0 "$trigger_rc" exits-0
@@ -525,7 +525,7 @@ test_trigger_render_does_not_trust_a_non_boolean_published() {
     # the health server silently falls back to "not json" - which looks like a
     # trigger failure rather than a fixture bug.
     bad_in_body=${bad//\"/\\\"}
-    start_health "[{\"status\":200,\"type\":\"application/json\",\"body\":\"{\\\"status\\\":\\\"ok\\\",\\\"hostname\\\":\\\"weird.trycloudflare.com\\\",\\\"port\\\":7001,\\\"published\\\":$bad_in_body,\\\"source\\\":\\\"render\\\"}\"}]" \
+    start_health "[{\"status\":200,\"type\":\"application/json\",\"body\":\"{\\\"status\\\":\\\"ok\\\",\\\"hostname\\\":\\\"weird.trycloudflare.com\\\",\\\"port\\\":8080,\\\"published\\\":$bad_in_body,\\\"source\\\":\\\"render\\\"}\"}]" \
       || return 1
     run_trigger --timeout 30
     assert_eq 0 "$trigger_rc" "exits-0-for-published=$bad"
@@ -536,7 +536,7 @@ test_trigger_render_does_not_trust_a_non_boolean_published() {
 
 test_trigger_render_prints_handoff() {
   new_sandbox fast || return 1
-  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"handoff.trycloudflare.com\",\"port\":7001,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"handoff.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
   run_trigger --timeout 30
   assert_contains "$trigger_out" './run_github.sh' prints-the-next-command

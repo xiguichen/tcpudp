@@ -30,7 +30,7 @@ COPY keepalive.py /usr/local/bin/keepalive.py
 RUN chmod +x /usr/local/bin/render_supervisor.sh
 
 # Render injects PORT (10000 by default); keepalive.py binds it. The proxy port
-# (7001) is published by tinyproxy at runtime, and Render routes to it once it
+# (8080) is published by tinyproxy at runtime, and Render routes to it once it
 # sees the port listening.
 EXPOSE 10000
 
