@@ -12,19 +12,27 @@ and change `GITHUB_REPO`.
 ## Using it
 
 ```bash
-./render/trigger_render.sh    # wake the instance; prints the hostname
-cloudflared access tcp --url tcp://localhost:8080 --hostname <printed hostname>
+./render/trigger_render.sh
 ```
 
-Then point your browser (or curl) at the HTTP proxy
+One command does everything: wake the instance, pin the hostname to a fast
+Cloudflare edge IP in `/etc/hosts`, start `cloudflared` in the background
+(listening on `0.0.0.0`), and start a keepalive that keeps `/healthz` warm so a
+free-tier sleep cannot kill the tunnel mid-browse. It prints the addresses
+when it is done:
 
 ```
-http://127.0.0.1:8080
+this Mac:       http://127.0.0.1:8080
+other machines: http://192.168.1.23:8080
 ```
 
-and requests exit the internet from Render's IP. The hostname changes on every
-free-tier spindown, so re-run `trigger_render.sh` first whenever the instance
-has been asleep.
+Point your browser (or curl) at the HTTP proxy. On this Mac use the loopback
+address; on any other machine on the same LAN use this Mac's IP. Requests exit
+the internet from Render's IP either way.
+
+The hostname changes on every free-tier sleep, so re-run `trigger_render.sh`
+first whenever the instance has been asleep. The keepalive makes that rare,
+but a new hostname on a wake is still guaranteed.
 
 ## Why `/healthz` exists
 
@@ -53,7 +61,7 @@ $ curl -fsS https://tcpudp.onrender.com/healthz
 ## How it works
 
 ```
-browser ─ HTTP proxy ─> 127.0.0.1:8080 (Mac)
+browser ─ HTTP proxy ─> 0.0.0.0:8080 (Mac — LAN reachable)
                           │  cloudflared access tcp (raw TCP)
                           ▼
                     Cloudflare edge
@@ -104,7 +112,7 @@ land in the repo — a second machine, or CI. Use a fine-grained token with
 |---|---|
 | `render_supervisor.sh` | Container PID 1. Owns the proxy, the health endpoint and the tunnel; publishes the hostname. |
 | `keepalive.py` | Stdlib HTTP server on `$PORT`. Serves the state file as JSON. |
-| `trigger_render.sh` | Mac entry point: wake, reconcile, pin DNS, hand off. |
+| `trigger_render.sh` | Mac entry point: wake, reconcile, pin DNS, start the tunnel + keepalive on `0.0.0.0`, print the proxy URLs. |
 | `net.sh` | Sourced library: edge-IP probing and hosts-file pinning. |
 | `render.yaml` | Render Blueprint. |
 | `Dockerfile` | Runtime image. |
@@ -116,10 +124,11 @@ land in the repo — a second machine, or CI. Use a fine-grained token with
 ./render/run_tests.sh
 ```
 
-45 tests (9 keepalive, 20 supervisor, 16 trigger/net). No network, no sudo, no
+48 tests (9 keepalive, 20 supervisor, 19 trigger/net). No network, no sudo, no
 docker: git talks to a throwaway local repo, `/healthz` is a local python server
-on `127.0.0.1`, `ping` is stubbed on `PATH`, `tinyproxy` and `cloudflared` are
-stubbed on `PATH`, and hosts-file writes are redirected to a sandbox file.
+on `127.0.0.1`, `ping`, `cloudflared` and `pkill` are stubbed on `PATH`,
+`tinyproxy` is stubbed on `PATH`, and hosts-file writes are redirected to a
+sandbox file.
 
 ## Reading the proxy's log
 
@@ -150,6 +159,10 @@ All optional; the defaults are the working values.
 | `TCPUDP_PROXY_PORT` | `8080` | supervisor, trigger |
 | `TCPUDP_PROXY_BIND` | `0.0.0.0` | supervisor |
 | `TCPUDP_PROXY_USER` | `tinyproxy` | supervisor |
+| `TCPUDP_LAN_IP` | *(auto-detected)* | trigger — address printed for other machines |
+| `TCPUDP_RUN_DIR` | `~/.tcpudp` | trigger — runtime pids (`cloudflared.pid`, `keepalive.pid`) and logs (`cloudflared.log`, `keepalive.log`), so re-running replaces rather than stacks daemons |
+| `KEEPALIVE_INTERVAL` | `180` | trigger — seconds between `/healthz` keepalive hits; `0` disables |
+| `START_TIMEOUT` | `20` | trigger — half-seconds to wait for the tunnel listener |
 | `TCPUDP_REPO_DIR` | `/app/repo` | supervisor |
 | `TCPUDP_INFO_DIR` | `github_run` | both |
 | `TCPUDP_STATE_DIR` | `/run/tcpudp` | supervisor |
@@ -179,8 +192,19 @@ Test seams, also defaulted: `POLL_INTERVAL`, `RECONCILE_TIMEOUT`,
   write `github_run/cloudflare.sh`; last writer wins. The `source` field in
   `run_info.json` says which one wrote it.
 - **`github_run/cloudflare.sh` is a command, not a config file.** `run_github.sh`
-  sources it, so it must stay a single `cloudflared access tcp ...` line.
+  sources it, so it must stay a single `cloudflared access tcp ...` line. The
+  script writes it with `--url tcp://0.0.0.0:8080`, and that is also exactly
+  what it runs, so the tunnel listener binds every interface. **Any machine on
+  the same LAN can then use the proxy** with this Mac's IP as the server;
+  macOS prompts to allow `cloudflared` incoming connections the first time
+  (needed for the LAN address, not for `127.0.0.1`).
+- **The instance is kept awake for as long as the tunnel runs.** Render's free
+  tier sleeps after ~15 minutes idle and a wake wipes the filesystem + mints a
+  new hostname. `trigger_render.sh` therefore runs a background keepalive that
+  hits `/healthz` every `KEEPALIVE_INTERVAL` (default 180 s) and stops the
+  moment the tunnel process dies.
 - **The proxy is unauthenticated.** The tunnel hostname is printed by
   `trigger_render.sh` and lives in `render/`-generated files on the `run`
-  branch, so treat `http://127.0.0.1:8080` as private to this machine, and don't
+  branch, and the listener binds `0.0.0.0` so the whole LAN could point its
+  browsers at it. Treat it as private to your machine and network, and don't
   stand the tunnel up in public for long.

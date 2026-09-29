@@ -7,7 +7,8 @@
 # Plain bash, no test framework, no real network:
 #   - git talks to a throwaway bare repo, never to github.com
 #   - /healthz is served by a local python server on 127.0.0.1
-#   - `ping` is stubbed on PATH, so no ICMP leaves the machine
+#   - `ping`, `cloudflared` and `pkill` are stubbed on PATH, so no ICMP leaves
+#     the machine and no real tunnel daemon is ever started
 #   - /etc/hosts is redirected to a sandbox file via HOSTS_FILE, so no sudo
 #
 # Deliberately `set -uo pipefail` without `-e`, so a failing assertion is
@@ -27,6 +28,9 @@ export GIT_TERMINAL_PROMPT=0
 BRANCH=run
 FAST_IP=162.159.38.209
 SLOW_IP=104.17.213.97
+# Fixed non-default port for every trigger test, so the stub daemons never
+# collide with anything a developer has running on 8080.
+TEST_PORT=18080
 
 tests_run=0
 tests_failed=0
@@ -105,6 +109,12 @@ run_test() { # fn name
   tests_run=$((tests_run + 1))
   local before=${#failures[@]}
   "$1" || true
+  # One tunnel at a time, like production: stop whatever daemons this test
+  # (and any earlier failed one) left running, so the next test gets a free
+  # port. Without this the suite's first spawned fake cloudflared keeps
+  # holding $TEST_PORT for the whole run and every later daemon dies with
+  # EADDRINUSE - which flakes any assertion that needs live traffic.
+  kill_sandbox_daemons
   if [ "${#failures[@]}" -gt "$before" ]; then
     tests_failed=$((tests_failed + 1))
     printf 'FAIL  %s\n' "$2"
@@ -141,6 +151,51 @@ STUB
   chmod +x "$1/ping"
 }
 
+# A cloudflared(1) stub. Records its full command line to CF_STUB_LOG (append),
+# then binds the port from --url and stays alive, standing in for the real
+# daemon so the script's "listening on" probe really runs. Treated like the real
+# thing afterwards: killed with TERM.
+make_cloudflared_stub() { # dir
+  cat >"$1/cloudflared" <<'STUB'
+#!/usr/bin/env bash
+[ -n "${CF_STUB_LOG:-}" ] || exit 1
+# $* omits argv[0]; a real ps-shaped command line includes the binary name.
+printf 'cloudflared %s\n' "$*" >>"$CF_STUB_LOG"
+want=0
+url=''
+for arg in "$@"; do
+  if [ "$want" = 1 ]; then url=$arg; want=0; fi
+  [ "$arg" = --url ] && want=1
+done
+port=${url##*:}
+case "$port" in
+  '' | *[!0-9]*) exit 1 ;;
+esac
+exec python3 -c '
+import socket, sys, time
+port = int(sys.argv[1])
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", port))
+s.listen(16)
+while True:
+    time.sleep(60)
+' "$port"
+STUB
+  chmod +x "$1/cloudflared"
+}
+
+# A pkill(1) stub: records its invocation so tests can assert the always-restart
+# cleanup ran, then does nothing - stopping the fake daemon is the pidfile's job.
+make_pkill_stub() { # dir
+  cat >"$1/pkill" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${CF_PKILL_LOG:-/dev/null}"
+exit 0
+STUB
+  chmod +x "$1/pkill"
+}
+
 # A local /healthz that walks a list of canned responses, one per request, and
 # then repeats the last one forever. Lets a test change what the caller sees
 # between polls without racing it.
@@ -154,6 +209,13 @@ state = {"n": 0}
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        try:
+            # Every request lands here - the keepalive tests use this to
+            # observe background traffic without touching the network.
+            with open(os.path.join(docroot, "hits.log"), "a") as fh:
+                fh.write("hit\n")
+        except Exception:
+            pass
         try:
             with open(os.path.join(docroot, "responses.json")) as fh:
                 responses = json.load(fh)
@@ -200,6 +262,8 @@ new_sandbox() {
   : >"$hosts"
 
   make_ping_stub "$sandbox/bin" "$mode"
+  make_cloudflared_stub "$sandbox/bin"
+  make_pkill_stub "$sandbox/bin"
   # The stub has to be on PATH for the net.sh library tests too, not only for
   # run_trigger: probe_best_edge_ip calls a bare `ping`, so without this the
   # suite would send real ICMP and measure the user's real network.
@@ -214,7 +278,7 @@ new_sandbox() {
     git config user.name sandbox
     git config user.email sandbox@example.invalid
     mkdir -p github_run
-    printf 'cloudflared access tcp --url tcp://localhost:8080 --hostname seed.trycloudflare.com\n' \
+    printf 'cloudflared access tcp --url tcp://0.0.0.0:%s --hostname seed.trycloudflare.com\n' "$TEST_PORT" \
       >github_run/cloudflare.sh
     git add README.md 2>/dev/null || true
     printf 'seed\n' >README.md
@@ -259,6 +323,12 @@ run_trigger() {
     GITHUB_PUSH_BRANCH="$BRANCH" \
     GITHUB_REMOTE_URL="$origin" \
     TCPUDP_INFO_DIR=github_run \
+    TCPUDP_RUN_DIR="$sandbox/runstate" \
+    TCPUDP_PROXY_PORT="$TEST_PORT" \
+    TCPUDP_LAN_IP="10.0.0.99" \
+    KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL_OVERRIDE:-180}" \
+    CF_STUB_LOG="$sandbox/cf-argv.log" \
+    CF_PKILL_LOG="$sandbox/cf-pkill.log" \
     RENDER_HEALTH_URL="http://127.0.0.1:$health_port/healthz" \
     "$repo/render/trigger_render.sh" --health-url "http://127.0.0.1:$health_port/healthz" \
     "$@" 2>&1)
@@ -272,11 +342,27 @@ load_net() {
   . "$NET"
 }
 
+# kill_sandbox_daemons - stop fake cloudflared/keepalive that any sandbox left
+# running (their pids live in each sandbox's runstate pidfiles). Safe to call
+# repeatedly: missing pidfiles and already-dead pids are ignored.
+kill_sandbox_daemons() {
+  local dir pidfile pid
+  for dir in "${sandboxes[@]:-}"; do
+    [ -n "$dir" ] || continue
+    for pidfile in cloudflared.pid keepalive.pid; do
+      pid=$(cat "$dir/runstate/$pidfile" 2>/dev/null || true)
+      [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true
+    done
+  done
+  return 0
+}
+
 teardown() {
   local pid dir
   for pid in "${health_pids[@]:-}"; do
     [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null
   done
+  kill_sandbox_daemons
   for dir in "${sandboxes[@]:-}"; do
     [ -n "$dir" ] || continue
     rm -rf "$dir"
@@ -448,14 +534,14 @@ test_trigger_render_uses_live_hostname_when_branch_is_stale() {
   # Ruling 1: the local file must keep the exact one-line command format that
   # run_github.sh sources, never a bare hostname.
   assert_eq \
-    'cloudflared access tcp --url tcp://localhost:8080 --hostname new.trycloudflare.com' \
+    'cloudflared access tcp --url tcp://0.0.0.0:18080 --hostname new.trycloudflare.com' \
     "$(cat "$repo/github_run/cloudflare.sh")" local-file-holds-the-live-hostname
 }
 
 # When git already agrees, there is nothing to warn about.
 test_trigger_render_accepts_matching_branch() {
   new_sandbox fast || return 1
-  printf 'cloudflared access tcp --url tcp://localhost:8080 --hostname match.trycloudflare.com\n' \
+  printf 'cloudflared access tcp --url tcp://0.0.0.0:18080 --hostname match.trycloudflare.com\n' \
     >"$repo/github_run/cloudflare.sh"
   # Must reach origin: the script checks origin/$BRANCH, so a purely local
   # commit would look stale and the assertion below would pass for the wrong
@@ -497,7 +583,7 @@ test_trigger_render_does_not_wait_when_no_publish_is_expected() {
   fi
   # It must still do the useful part: write the live hostname locally.
   assert_eq \
-    'cloudflared access tcp --url tcp://localhost:8080 --hostname nopub.trycloudflare.com' \
+    'cloudflared access tcp --url tcp://0.0.0.0:18080 --hostname nopub.trycloudflare.com' \
     "$(cat "$repo/github_run/cloudflare.sh")" still-writes-the-live-hostname
 }
 
@@ -536,14 +622,123 @@ test_trigger_render_does_not_trust_a_non_boolean_published() {
 
 test_trigger_render_prints_handoff() {
   new_sandbox fast || return 1
-  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"handoff.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"handoff.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
   run_trigger --timeout 30
-  assert_contains "$trigger_out" 'HTTP proxy:    http://127.0.0.1:8080' \
-    prints-the-proxy-url
+  assert_contains "$trigger_out" 'this Mac:       http://127.0.0.1:18080' \
+    prints-the-local-proxy-url
+  assert_contains "$trigger_out" 'other machines: http://10.0.0.99:18080' \
+    prints-the-lan-proxy-url
   assert_contains "$trigger_out" \
-    'cloudflared access tcp --url tcp://localhost:8080 --hostname handoff.trycloudflare.com' \
+    'cloudflared --no-autoupdate access tcp --url tcp://0.0.0.0:18080 --hostname handoff.trycloudflare.com' \
     prints-the-tunnel-command
+}
+
+# The script starts the tunnel itself now: pidfile + log, on 0.0.0.0 so other
+# machines can proxy through it, and a real listener probe.
+test_trigger_render_starts_the_tunnel_itself() {
+  new_sandbox fast || return 1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"auto.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+  run_trigger --timeout 30
+
+  assert_eq 0 "$trigger_rc" exits-0-with-a-started-tunnel
+  assert_eq \
+    'cloudflared --no-autoupdate access tcp --url tcp://0.0.0.0:18080 --hostname auto.trycloudflare.com' \
+    "$(cat "$sandbox/cf-argv.log")" spawns-the-0-0-0-0-command
+  assert_contains "$trigger_out" 'started pid' reports-the-start
+  assert_contains "$trigger_out" 'listening on 0.0.0.0:18080' reports-the-listener
+  assert_contains "$(cat "$sandbox/cf-pkill.log")" ':18080' pkill-scoped-to-our-port
+
+  local pid
+  pid=$(cat "$sandbox/runstate/cloudflared.pid")
+  [ -n "$pid" ] || fail 'has-a-pidfile'
+  if ! kill -0 "$pid" 2>/dev/null; then
+    fail 'the-spawned-tunnel-is-alive'
+  fi
+}
+
+# Render sleeps after ~15 idle minutes, and a wake wipes the filesystem and
+# mints a new hostname. While the tunnel is up, the script must keep /healthz
+# warm from the background - and the keepalive must stop when the tunnel dies,
+# so it never points traffic at a dead hostname.
+test_trigger_render_keepalive_hits_render_until_tunnel_dies() {
+  new_sandbox fast || return 1
+  start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
+    || return 1
+  KEEPALIVE_INTERVAL_OVERRIDE=1 run_trigger --timeout 30
+
+  local kpid tpid base after
+  kpid=$(cat "$sandbox/runstate/keepalive.pid" 2>/dev/null)
+  [ -n "$kpid" ] || fail 'keepalive-has-a-pidfile'
+  if ! kill -0 "$kpid" 2>/dev/null; then
+    fail 'keepalive-is-alive'
+  fi
+  assert_contains "$trigger_out" 'keepalive' reports-the-keepalive
+
+  # With a 1s interval the keepalive visibly generates traffic of its own.
+  base=$(awk 'END{print NR}' "$sandbox/health/hits.log" 2>/dev/null)
+  base=${base:-0}
+  sleep 3
+  after=$(awk 'END{print NR}' "$sandbox/health/hits.log" 2>/dev/null)
+  [ "${after:-0}" -gt "$base" ] || fail 'keepalive-generates-traffic' \
+    "hits before=$base after=$after"
+
+  # The keepalive dies with its tunnel.
+  tpid=$(cat "$sandbox/runstate/cloudflared.pid" 2>/dev/null)
+  kill -TERM "$tpid" 2>/dev/null
+  sleep 3
+  if kill -0 "$kpid" 2>/dev/null; then
+    fail 'keepalive-stops-when-the-tunnel-dies'
+  fi
+}
+
+# Always restart: a second run with a changed hostname must stop the previous
+# daemon and spawn a fresh one that binds the new --hostname.
+test_trigger_render_restarts_tunnel_when_hostname_changes() {
+  new_sandbox fast || return 1
+  start_health '[
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"boot1.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"boot2.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
+  ]' || return 1
+
+  run_trigger --timeout 30
+  local pid1 pid2 n kpid1 kpid2
+  pid1=$(cat "$sandbox/runstate/cloudflared.pid")
+  kpid1=$(cat "$sandbox/runstate/keepalive.pid" 2>/dev/null)
+  n=$(awk 'END{print NR}' "$sandbox/cf-argv.log")
+  assert_eq 1 "$n" spawns-once-on-the-first-run
+
+  run_trigger --timeout 30
+  pid2=$(cat "$sandbox/runstate/cloudflared.pid")
+  kpid2=$(cat "$sandbox/runstate/keepalive.pid" 2>/dev/null)
+  n=$(awk 'END{print NR}' "$sandbox/cf-argv.log")
+  assert_eq 2 "$n" spawns-again-on-the-second-run
+
+  if [ "$pid1" = "$pid2" ]; then
+    fail 'restart-spawns-a-fresh-process' "pid was reused: $pid1"
+  fi
+  if kill -0 "$pid1" 2>/dev/null; then
+    fail 'the-old-tunnel-was-killed'
+  fi
+  if ! kill -0 "$pid2" 2>/dev/null; then
+    fail 'the-new-tunnel-is-alive'
+  fi
+  # The keepalive follows the same lifecycle as the tunnel it watches.
+  if [ -z "$kpid1" ] || [ -z "$kpid2" ] || [ "$kpid1" = "$kpid2" ]; then
+    fail 'keepalive-replaced-on-restart' "keepalive pid1=[$kpid1] pid2=[$kpid2]"
+  fi
+  if kill -0 "$kpid1" 2>/dev/null; then
+    fail 'the-old-keepalive-was-killed'
+  fi
+  if ! kill -0 "$kpid2" 2>/dev/null; then
+    fail 'the-new-keepalive-is-alive'
+  fi
+  assert_contains "$(sed -n '2p' "$sandbox/cf-argv.log")" \
+    '--hostname boot2.trycloudflare.com' second-spawn-targets-the-new-hostname
+  assert_eq \
+    'cloudflared access tcp --url tcp://0.0.0.0:18080 --hostname boot2.trycloudflare.com' \
+    "$(cat "$repo/github_run/cloudflare.sh")" local-file-tracks-the-new-hostname
 }
 
 run_test test_probe_best_edge_ip_picks_lowest_rtt test_probe_best_edge_ip_picks_lowest_rtt
@@ -577,6 +772,9 @@ run_test test_trigger_render_still_waits_when_a_publish_is_in_flight test_trigge
 run_test test_trigger_render_does_not_trust_a_non_boolean_published test_trigger_render_does_not_trust_a_non_boolean_published
 run_test test_trigger_render_accepts_matching_branch test_trigger_render_accepts_matching_branch
 run_test test_trigger_render_prints_handoff test_trigger_render_prints_handoff
+run_test test_trigger_render_starts_the_tunnel_itself test_trigger_render_starts_the_tunnel_itself
+run_test test_trigger_render_keepalive_hits_render_until_tunnel_dies test_trigger_render_keepalive_hits_render_until_tunnel_dies
+run_test test_trigger_render_restarts_tunnel_when_hostname_changes test_trigger_render_restarts_tunnel_when_hostname_changes
 
 printf '\n%s tests, %s failed\n' "$tests_run" "$tests_failed"
 if [ "$tests_failed" -gt 0 ]; then
