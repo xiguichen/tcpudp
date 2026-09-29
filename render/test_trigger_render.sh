@@ -539,7 +539,11 @@ test_trigger_render_prints_handoff() {
   start_health '[{"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"handoff.trycloudflare.com\",\"port\":8080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}]' \
     || return 1
   run_trigger --timeout 30
-  assert_contains "$trigger_out" './run_github.sh' prints-the-next-command
+  assert_contains "$trigger_out" 'HTTP proxy:    http://127.0.0.1:8080' \
+    prints-the-proxy-url
+  assert_contains "$trigger_out" \
+    'cloudflared access tcp --url tcp://localhost:8080 --hostname handoff.trycloudflare.com' \
+    prints-the-tunnel-command
 }
 
 run_test test_probe_best_edge_ip_picks_lowest_rtt test_probe_best_edge_ip_picks_lowest_rtt

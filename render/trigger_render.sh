@@ -252,4 +252,6 @@ else
 fi
 
 log ""
-log "Next step:  ./run_github.sh"
+log "Next step:  start the tunnel, then point your proxy at it:"
+log "  $(cat "$INFO_DIR/cloudflare.sh" 2>/dev/null)"
+log "  browser/curl HTTP proxy:    http://127.0.0.1:${SERVER_PORT}"
