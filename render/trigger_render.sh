@@ -12,7 +12,9 @@
 #   5. starts the tunnel in the background (listening on 0.0.0.0, so other
 #      machines on the LAN can proxy through it) and prints the proxy URLs
 #   6. starts a keepalive that keeps hitting /healthz so Render cannot fall
-#      asleep mid-browse and take the tunnel's hostname down with it
+#      asleep mid-browse and take the tunnel's hostname down with it; if the
+#      hostname rotates anyway (a redeploy), it restarts the tunnel against
+#      the new one without a re-run
 #
 # Why step 3 exists: Render's free tier sleeps after ~15 minutes idle and wipes
 # its filesystem, so the tunnel gets a brand-new hostname every time. The
@@ -238,19 +240,26 @@ start_tunnel() {
 }
 
 # --------------------------------------------------------------------------
-# start_keepalive TUNNEL_PID
+# start_keepalive TUNNEL_PID HOSTNAME
 #
 # Render's free tier sleeps after ~15 minutes with no traffic, and a wake wipes
 # the filesystem and mints a new hostname - killing whatever tunnel pointed at
 # the old one. While the tunnel is up this spawns a detached loop that keeps
 # hitting /healthz so the instance cannot fall asleep mid-browse.
 #
+# The same /healthz poll also carries the hostname, which can rotate without
+# the instance sleeping (a redeploy, for example). When that happens the loop
+# restarts the tunnel against the new hostname (and rewrites the local
+# tunnel-info file) so the client keeps working without a re-run of this
+# script. An empty answer - a cold start still spinning up - is "not yet", not
+# "changed", and is ignored.
+#
 # The loop watches the tunnel pid and stops when the tunnel dies, so it never
 # keeps warming a dead hostname. KEEPALIVE_INTERVAL=0 disables it entirely.
 # Replaced on every run like the tunnel, via its own pidfile.
 # --------------------------------------------------------------------------
 start_keepalive() {
-  local tpid=$1 pidfile="$RUN_DIR/keepalive.pid" logfile="$RUN_DIR/keepalive.log"
+  local tpid=$1 host=$2 pidfile="$RUN_DIR/keepalive.pid" logfile="$RUN_DIR/keepalive.log"
   local prev
   mkdir -p "$RUN_DIR" || return 1
   if [ -f "$pidfile" ]; then
@@ -263,9 +272,22 @@ start_keepalive() {
     return 0
   fi
   (
+    # Sleep first: a keepalive must not judge the hostname on the instant it
+    # starts - one interval of "seen it, it's fine" is what makes re-runs and
+    # cold starts deterministic.
+    local wanted=$host seen
     while kill -0 "$tpid" 2>/dev/null; do
-      curl -fsS --max-time "$HEALTH_TIMEOUT" "$HEALTH_URL" >/dev/null 2>&1 || true
       sleep "$KEEPALIVE_INTERVAL"
+      seen=$(health_hostname "$HEALTH_URL")
+      if [ -n "$seen" ] && [ "$seen" != "$wanted" ]; then
+        log "  hostname rotated: $wanted -> $seen; restarting tunnel"
+        wanted=$seen
+        write_local_tunnel_info "$seen"
+        start_tunnel "$seen"
+        # The tunnel was replaced by start_tunnel; watch the fresh pid so the
+        # loop keeps running until THAT tunnel dies.
+        tpid=$(cat "$RUN_DIR/cloudflared.pid" 2>/dev/null || true)
+      fi
     done
   ) >"$logfile" 2>&1 &
   printf '%s\n' "$!" >"$pidfile"
@@ -384,7 +406,7 @@ tunnel_pid=$(cat "$RUN_DIR/cloudflared.pid" 2>/dev/null || true)
 if [ -n "$tunnel_pid" ]; then
   log ""
   log "=== Keeping the instance awake ==="
-  start_keepalive "$tunnel_pid"
+  start_keepalive "$tunnel_pid" "$host"
 fi
 
 log ""

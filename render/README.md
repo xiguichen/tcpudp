@@ -124,7 +124,7 @@ land in the repo — a second machine, or CI. Use a fine-grained token with
 ./render/run_tests.sh
 ```
 
-48 tests (9 keepalive, 20 supervisor, 19 trigger/net). No network, no sudo, no
+50 tests (9 keepalive, 20 supervisor, 21 trigger/net). No network, no sudo, no
 docker: git talks to a throwaway local repo, `/healthz` is a local python server
 on `127.0.0.1`, `ping`, `cloudflared` and `pkill` are stubbed on `PATH`,
 `tinyproxy` is stubbed on `PATH`, and hosts-file writes are redirected to a
@@ -202,7 +202,11 @@ Test seams, also defaulted: `POLL_INTERVAL`, `RECONCILE_TIMEOUT`,
   tier sleeps after ~15 minutes idle and a wake wipes the filesystem + mints a
   new hostname. `trigger_render.sh` therefore runs a background keepalive that
   hits `/healthz` every `KEEPALIVE_INTERVAL` (default 180 s) and stops the
-  moment the tunnel process dies.
+  moment the tunnel process dies. Each poll also carries the hostname: if it
+  rotates without the instance sleeping (a redeploy), the keepalive restarts
+  the tunnel against the new hostname and rewrites `cloudflare.sh` itself, so
+  the client keeps working without re-running the script. Empty "cold start"
+  answers are ignored - they mean "not ready yet", not "changed".
 - **The proxy is unauthenticated.** The tunnel hostname is printed by
   `trigger_render.sh` and lives in `render/`-generated files on the `run`
   branch, and the listener binds `0.0.0.0` so the whole LAN could point its

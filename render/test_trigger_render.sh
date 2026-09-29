@@ -693,8 +693,81 @@ test_trigger_render_keepalive_hits_render_until_tunnel_dies() {
   fi
 }
 
+# The tunnel hostname can rotate while the keepalive is running: a deploy or a
+# sleep-wake mints a new one, and the old tunnel dies. The keepalive must notice
+# the new hostname in /healthz and restart the tunnel against it by itself -
+# the user should not have to re-run the trigger.
+test_trigger_render_keepalive_restarts_tunnel_on_hostname_rotation() {
+  new_sandbox fast || return 1
+  # Three keep1 answers (one consumed by the wake poll, one by the published
+  # probe, one by the keepalive's first poll), then the rotated hostname forever.
+  start_health '[
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep1.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep1.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep1.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"rot2.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
+  ]' || return 1
+  KEEPALIVE_INTERVAL_OVERRIDE=1 run_trigger --timeout 30
+
+  local pid1 pid2 kpid
+  pid1=$(cat "$sandbox/runstate/cloudflared.pid")
+  kpid=$(cat "$sandbox/runstate/keepalive.pid" 2>/dev/null)
+  assert_eq 1 "$(awk 'END{print NR}' "$sandbox/cf-argv.log")" spawns-once-before-rotation
+
+  # Give the keepalive time to poll the rotated hostname and restart the tunnel.
+  sleep 5
+
+  pid2=$(cat "$sandbox/runstate/cloudflared.pid")
+  assert_eq 2 "$(awk 'END{print NR}' "$sandbox/cf-argv.log")" respawns-on-hostname-rotation
+  if [ "$pid1" = "$pid2" ]; then
+    fail 'rotation-restarts-with-a-fresh-process' "pid was reused: $pid1"
+  fi
+  if kill -0 "$pid1" 2>/dev/null; then
+    fail 'the-rotated-out-tunnel-was-killed'
+  fi
+  if ! kill -0 "$pid2" 2>/dev/null; then
+    fail 'the-rotated-tunnel-is-alive'
+  fi
+  assert_contains "$(sed -n '2p' "$sandbox/cf-argv.log")" \
+    '--hostname rot2.trycloudflare.com' rotation-targets-the-new-hostname
+  # The local tunnel-info file follows the running tunnel, since run_github.sh
+  # sources it.
+  assert_contains "$(cat "$repo/github_run/cloudflare.sh")" \
+    '--hostname rot2.trycloudflare.com' local-file-tracks-the-rotated-hostname
+  # The keepalive itself survives and keeps watching the new tunnel pid.
+  if ! kill -0 "$kpid" 2>/dev/null; then
+    fail 'keepalive-survives-rotation'
+  fi
+}
+
+# A wake is not a rotation: a cold start answers with HTML or hostname:null,
+# which health_hostname reports as empty. The keepalive must ignore empty
+# answers, or the tunnel would thrash every time Render spins up a new pod.
+test_trigger_render_keepalive_ignores_empty_answers() {
+  new_sandbox fast || return 1
+  start_health '[
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep2.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep2.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep2.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"},
+    {"status":200,"type":"text/html","body":"spinning up"},
+    {"status":200,"type":"application/json","body":"{\"status\":\"ok\",\"hostname\":\"keep2.trycloudflare.com\",\"port\":18080,\"published\":false,\"source\":\"render\",\"updated\":\"2026-09-27T00:00:00Z\"}"}
+  ]' || return 1
+  KEEPALIVE_INTERVAL_OVERRIDE=1 run_trigger --timeout 30
+
+  local kpid
+  kpid=$(cat "$sandbox/runstate/keepalive.pid" 2>/dev/null)
+  sleep 5
+  assert_eq 1 "$(awk 'END{print NR}' "$sandbox/cf-argv.log")" no-restart-on-an-empty-answer
+  if ! kill -0 "$kpid" 2>/dev/null; then
+    fail 'keepalive-still-running-after-an-empty-answer'
+  fi
+}
+
 # Always restart: a second run with a changed hostname must stop the previous
-# daemon and spawn a fresh one that binds the new --hostname.
+# daemon and spawn a fresh one that binds the new --hostname. Two answers, one
+# per request; the keepalive sleeps a full interval before its first hostname
+# poll, so run 1 makes exactly two requests (wake + published probe) and run 2
+# (wake + probe) sees boot2 on its wake.
 test_trigger_render_restarts_tunnel_when_hostname_changes() {
   new_sandbox fast || return 1
   start_health '[
@@ -774,6 +847,8 @@ run_test test_trigger_render_accepts_matching_branch test_trigger_render_accepts
 run_test test_trigger_render_prints_handoff test_trigger_render_prints_handoff
 run_test test_trigger_render_starts_the_tunnel_itself test_trigger_render_starts_the_tunnel_itself
 run_test test_trigger_render_keepalive_hits_render_until_tunnel_dies test_trigger_render_keepalive_hits_render_until_tunnel_dies
+run_test test_trigger_render_keepalive_restarts_tunnel_on_hostname_rotation test_trigger_render_keepalive_restarts_tunnel_on_hostname_rotation
+run_test test_trigger_render_keepalive_ignores_empty_answers test_trigger_render_keepalive_ignores_empty_answers
 run_test test_trigger_render_restarts_tunnel_when_hostname_changes test_trigger_render_restarts_tunnel_when_hostname_changes
 
 printf '\n%s tests, %s failed\n' "$tests_run" "$tests_failed"
