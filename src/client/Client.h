@@ -23,6 +23,10 @@ class Client
     // </Summary>
     void Stop();
 
+    // Async-signal-friendly: sets the stop flag and shuts the UDP socket down
+    // (no logging/locking/joins). The main thread then calls Stop() normally.
+    void requestStop();
+
     // <Summary>
     // Check if the client is running
     // </Summary>
@@ -34,13 +38,18 @@ class Client
     bool PrepareUdpSocket();
 
   private:
-    bool running = false;
+    std::atomic<bool> running{false};
     std::vector<SocketFd> tcpSockets;
     std::vector<uint32_t> tcpConnectionIds; // maps slotIndex → unique connectionId
-    uint32_t nextConnectionId = 1;          // incrementing counter for unique IDs
-    SocketFd udpSocket = -1;
+    std::atomic<uint32_t> nextConnectionId{1}; // incrementing counter for unique IDs
+    std::atomic<SocketFd> udpSocket{-1};
     struct sockaddr_in udpAddr{};
     struct sockaddr_in remoteUdpAddr{};
+    // Serialises UDP recv/send/close. Without it, Stop()/requestStop() closing
+    // the socket concurrently with the receive loop could recv() on a recycled FD
+    // (on macOS close() does not wake a blocked recv() either).
+    std::mutex udpMutex;
+    std::mutex remoteUdpMutex;
 
     VirtualChannelSp vc = nullptr;
     std::mutex vcMutex;

@@ -107,6 +107,14 @@ int SocketSetReceiveBufferSize(SocketFd socketFd, int size);
 // are best-effort per platform. Returns 0 on success, non-zero on failure.
 int SocketSetKeepAlive(SocketFd socketFd, bool enable, int idleSec, int intervalSec, int count);
 
+// Bound blocking recv()/send() calls. A timeout is essential for the server's
+// handshake read: without it a single silent client can stall the single-threaded
+// accept loop indefinitely (and on macOS a close() from another thread does not
+// reliably wake a blocked recv()). A timeout of 0 disables it (restores blocking
+// behaviour). Returns 0 on success.
+int SocketSetReceiveTimeout(SocketFd socketFd, int timeoutMs);
+int SocketSetSendTimeout(SocketFd socketFd, int timeoutMs);
+
 // Shared VC keepalive timing (client + server). Tuned for flaky last-mile networks
 // (macOS WiFi/VPN, power-management stalls): probes start after 15s idle and repeat
 // every 15s, declaring a connection dead only after 8 unacked probes (~135s total).

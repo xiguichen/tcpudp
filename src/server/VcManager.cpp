@@ -1,4 +1,5 @@
 #include "VcManager.h"
+#include <vector>
 
 void VcManager::Add(uint32_t clientId, VirtualChannelSp vc)
 {
@@ -27,5 +28,25 @@ VirtualChannelSp VcManager::Get(uint32_t clientId)
     if (it != vcs.end())
         return it->second;
     return nullptr;
+}
+
+void VcManager::CloseAll()
+{
+    std::vector<VirtualChannelSp> toClose;
+    {
+        std::lock_guard<std::mutex> lock(vcsMutex);
+        toClose.reserve(vcs.size());
+        for (auto &pair : vcs)
+            toClose.push_back(pair.second);
+        vcs.clear();
+    }
+
+    // Close outside the lock: virtual channel teardown joins threads and its
+    // disconnect callback calls back into VcManager::Exists()/Remove().
+    for (auto &vc : toClose)
+    {
+        if (vc)
+            vc->close();
+    }
 }
 

@@ -71,6 +71,13 @@ def run_echo_server(port, stop_event):
     """Simple UDP echo server. Runs until stop_event is set."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # A default-sized receive buffer overflows when the test bursts several
+    # thousand 1400-byte packets; the resulting loss is the kernel's, not the
+    # proxy's, and would corrupt the benchmark. Ask for a large buffer.
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 32 * 1024 * 1024)
+    except OSError:
+        pass
     sock.bind(("0.0.0.0", port))
     sock.settimeout(0.5)
     while not stop_event.is_set():
@@ -106,11 +113,58 @@ def run_perf_test(test_sock, server_addr, client_port,
     print(f"{'='*60}")
 
     latencies = []
-    lost = 0
     corrupted = 0
+    send_errors = 0
     sent_packets = {}
 
-    test_sock.settimeout(0.001)  # non-blocking sends
+    # Receive concurrently with the send phase. If the test sends N packets and
+    # only starts reading afterwards, the kernel receive buffer overflows and the
+    # resulting "loss" is a benchmark artifact (~70% with default macOS buffers),
+    # not proxy loss. The receiver also validates every payload byte.
+    received_seqs = set()
+    rx_lock = threading.Lock()
+    stop_rx = threading.Event()
+    last_rx = [time.monotonic()]
+
+    test_sock.settimeout(0.5)
+
+    def rx_worker():
+        nonlocal corrupted
+        while not stop_rx.is_set():
+            try:
+                data, _addr = test_sock.recvfrom(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            last_rx[0] = time.monotonic()
+
+            if len(data) < 12:
+                with rx_lock:
+                    corrupted += 1
+                continue
+
+            send_ts, seq = struct.unpack(">dI", data[:12])
+            if seq >= packet_count:
+                with rx_lock:
+                    corrupted += 1
+                continue
+
+            expected = sent_packets.get(seq)
+            if expected is not None and data == expected:
+                rtt = (time.monotonic() - send_ts) * 1000.0  # ms
+                # Sanity check: ignore negative/impossible RTTs (clock skew or
+                # packet misdelivery, which is rare on localhost but possible).
+                with rx_lock:
+                    if 0.0 <= rtt < 600_000.0:
+                        latencies.append(rtt)
+                    received_seqs.add(seq)
+            else:
+                with rx_lock:
+                    corrupted += 1
+
+    rx_thread = threading.Thread(target=rx_worker, daemon=True)
+    rx_thread.start()
 
     # ---- Send phase ----
     send_start = time.monotonic()
@@ -121,7 +175,10 @@ def run_perf_test(test_sock, server_addr, client_port,
         fill_byte = (seq % 251).to_bytes(1, "big")
         payload = header + fill_byte * (packet_size - len(header))
         sent_packets[seq] = payload
-        test_sock.sendto(payload, (server_addr, client_port))
+        try:
+            test_sock.sendto(payload, (server_addr, client_port))
+        except OSError:
+            send_errors += 1
         # Pace: configurable delay every N packets to avoid overwhelming the VC.
         # For high-RTT WAN links, increase --pace-ms (e.g. 50-100ms).
         # Skip pacing entirely in pressure-test mode (--no-pacing).
@@ -129,56 +186,36 @@ def run_perf_test(test_sock, server_addr, client_port,
             time.sleep(pace_ms / 1000.0)
     send_end = time.monotonic()
     send_duration = send_end - send_start
-    print(f"Sent {packet_count} packets in {send_duration:.2f}s "
-          f"({packet_count / send_duration:.0f} pkt/s, "
-          f"{packet_count * packet_size * 8 / send_duration / 1e6:.2f} Mbps send rate)")
+    print(f"Sent {packet_count - send_errors} packets in {send_duration:.2f}s "
+          f"({(packet_count - send_errors) / send_duration:.0f} pkt/s, "
+          f"{(packet_count - send_errors) * packet_size * 8 / send_duration / 1e6:.2f} Mbps send rate)"
+          + (f" ({send_errors} local send errors)" if send_errors else ""))
 
     # ---- Receive phase ----
-    # Timeout scales with packet count: min 30s, max 600s
+    # Completed when every sent packet has been seen, or when the stream has
+    # been quiet for a while (the remainder is genuinely lost), or on timeout.
     recv_timeout = max(30.0, min(packet_count * 2.0, 600.0))
     print(f"Waiting for echoes (timeout={recv_timeout:.0f}s)...")
-    test_sock.settimeout(2.0)
-    received_seqs = set()
-    deadline = time.monotonic() + recv_timeout
     recv_start = time.monotonic()
+    deadline = recv_start + recv_timeout
 
-    while len(received_seqs) + corrupted < packet_count and time.monotonic() < deadline:
-        try:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            test_sock.settimeout(min(remaining, 5.0))
-            data, _addr = test_sock.recvfrom(65536)
+    while time.monotonic() < deadline:
+        with rx_lock:
+            accounted = len(received_seqs) + corrupted
+        if accounted >= packet_count - send_errors:
+            break
+        if time.monotonic() - last_rx[0] > 3.0:
+            break
+        time.sleep(0.02)
 
-            if len(data) < 12:
-                corrupted += 1
-                continue
-
-            send_ts, seq = struct.unpack(">dI", data[:12])
-
-            if seq >= packet_count:
-                corrupted += 1
-                continue
-
-            expected = sent_packets.get(seq)
-            if expected and data == expected:
-                rtt = (time.monotonic() - send_ts) * 1000.0  # ms
-                # Sanity check: ignore negative/impossible RTTs (clock skew or
-                # packet misdelivery, which is rare on localhost but possible).
-                if 0.0 <= rtt < 600_000.0:
-                    latencies.append(rtt)
-                received_seqs.add(seq)
-            else:
-                corrupted += 1
-        except socket.timeout:
-            continue
-
+    stop_rx.set()
+    rx_thread.join(timeout=1.0)
     recv_end = time.monotonic()
     recv_duration = recv_end - recv_start
 
     # ---- Results ----
     recv_count = len(latencies)
-    lost = packet_count - recv_count - corrupted
+    lost = max(0, packet_count - recv_count - corrupted - send_errors)
 
     print(f"\n--- Performance Results ---")
     print(f"  Packets: sent={packet_count} received={recv_count} "
@@ -274,54 +311,83 @@ def run_stress_test(test_sock, server_addr, client_port,
     print(f"\n--- Stress Test ({packet_count} packets × {packet_size} bytes) ---")
 
     packets_sent = {}
-    test_sock.settimeout(0.001)
+    send_errors = 0
+
+    # Receive concurrently with the burst (see run_perf_test): reading only after
+    # the send phase makes the kernel receive buffer overflow, which shows up as
+    # bogus "packet loss" that has nothing to do with the proxy.
+    received = {}
+    corrupted = []
+    rx_lock = threading.Lock()
+    stop_rx = threading.Event()
+    last_rx = [time.monotonic()]
+    test_sock.settimeout(0.5)
+
+    def rx_worker():
+        while not stop_rx.is_set():
+            try:
+                data, _addr = test_sock.recvfrom(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            last_rx[0] = time.monotonic()
+
+            if len(data) < 4:
+                with rx_lock:
+                    corrupted.append(("too_short", data))
+                continue
+
+            seq = struct.unpack(">I", data[:4])[0]
+
+            if seq >= packet_count:
+                with rx_lock:
+                    corrupted.append(("bad_seq", data))
+                continue
+
+            expected = packets_sent.get(seq)
+            if expected is not None and data == expected:
+                with rx_lock:
+                    received[seq] = True
+            else:
+                with rx_lock:
+                    corrupted.append(("content_mismatch", seq, len(data),
+                                      len(expected) if expected else 0))
+
+    rx_thread = threading.Thread(target=rx_worker, daemon=True)
+    rx_thread.start()
 
     for seq in range(packet_count):
         header = struct.pack(">I", seq)
         fill_byte = (seq % 251).to_bytes(1, "big")
         payload = header + fill_byte * (packet_size - 4)
         packets_sent[seq] = payload
-        test_sock.sendto(payload, (server_addr, client_port))
+        try:
+            test_sock.sendto(payload, (server_addr, client_port))
+        except OSError:
+            send_errors += 1
         if seq % 5 == 4:
             time.sleep(0.005)
 
-    print(f"Sent {packet_count} packets, waiting for echoes...")
+    print(f"Sent {packet_count - send_errors} packets, waiting for echoes..."
+          + (f" ({send_errors} local send errors)" if send_errors else ""))
 
-    test_sock.settimeout(30)
-    received = {}
-    corrupted = []
     deadline = time.monotonic() + 30
-
-    while len(received) + len(corrupted) < packet_count and time.monotonic() < deadline:
-        try:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            test_sock.settimeout(min(remaining, 5.0))
-            data, _addr = test_sock.recvfrom(65536)
-
-            if len(data) < 4:
-                corrupted.append(("too_short", data))
-                continue
-
-            seq = struct.unpack(">I", data[:4])[0]
-
-            if seq >= packet_count:
-                corrupted.append(("bad_seq", data))
-                continue
-
-            expected = packets_sent.get(seq)
-            if expected and data == expected:
-                received[seq] = True
-            else:
-                corrupted.append(("content_mismatch", seq, len(data),
-                                  len(expected) if expected else 0))
-        except socket.timeout:
+    while time.monotonic() < deadline:
+        with rx_lock:
+            accounted = len(received) + len(corrupted)
+        if accounted >= packet_count - send_errors:
             break
+        if time.monotonic() - last_rx[0] > 3.0:
+            break
+        time.sleep(0.02)
+
+    stop_rx.set()
+    rx_thread.join(timeout=1.0)
 
     recv_count = len(received)
     corrupt_count = len(corrupted)
-    lost_count = packet_count - recv_count - corrupt_count
+    lost_count = max(0, packet_count - recv_count - corrupt_count - send_errors)
 
     print(f"Results: {recv_count} received OK, {corrupt_count} corrupted, {lost_count} lost/timeout")
 
@@ -440,6 +506,13 @@ def main():
         time.sleep(STARTUP_WAIT)
 
         test_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Large receive buffer so a burst cannot overflow the *test's* socket and
+        # be misreported as proxy packet loss.
+        try:
+            test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
+                                 32 * 1024 * 1024)
+        except OSError:
+            pass
         test_sock.settimeout(RECV_TIMEOUT)
 
         all_passed = True

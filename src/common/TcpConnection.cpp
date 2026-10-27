@@ -6,13 +6,15 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 TcpConnection::~TcpConnection()
 {
-    if (socketFd != -1)
+    SocketFd fd = socketFd.exchange(-1);
+    if (fd != -1)
     {
-        SocketClose(socketFd);
-        socketFd = -1;
+        SocketShutdown(fd, SHUT_RDWR);
+        SocketClose(fd);
     }
 }
 
@@ -42,19 +44,28 @@ void TcpConnection::disconnect()
     {
         std::lock_guard<std::mutex> lock(disconnectMutex);
 
-        // Check if already disconnected
-        if (!connected.load())
+        // Publish the dead state FIRST. Any thread that already snapshotted the FD
+        // but has not yet issued its syscall will re-check isConnected()/the FD
+        // (under fdMutex) and back off instead of writing into a recycled FD.
+        if (!connected.exchange(false))
         {
             return;
         }
 
-        if (socketFd != -1)
         {
-            SocketShutdown(socketFd, SHUT_RDWR);
-            SocketClose(socketFd);
-            socketFd = -1;
+            // Serialise against in-flight sendDirect()/recvDirect()/waitWritable()
+            // so close() cannot recycle this FD number while another thread is
+            // still using it.
+            std::lock_guard<std::mutex> fdLock(fdMutex);
+            SocketFd fd = socketFd.exchange(-1);
+            if (fd != -1)
+            {
+                // shutdown() first: on macOS/BSD close() alone does not reliably
+                // wake a thread blocked in recv()/send() on this socket.
+                SocketShutdown(fd, SHUT_RDWR);
+                SocketClose(fd);
+            }
         }
-        connected.store(false);
         log_debug("Resetting BlockingQueue post-disconnect.");
         // Capture callback to invoke outside the lock to prevent deadlock
         callbackToInvoke = disconnectCallback;
@@ -69,9 +80,10 @@ void TcpConnection::disconnect()
 
 size_t TcpConnection::receive(char *buffer, size_t bufferSize)
 {
-    if (connected.load() && socketFd != -1)
+    SocketFd fd = socketFd.load();
+    if (connected.load() && fd != -1)
     {
-        auto bytesReceived = RecvTcpData(socketFd, buffer, bufferSize, 0);
+        auto bytesReceived = RecvTcpData(fd, buffer, bufferSize, 0);
         if (bytesReceived == -1)
         {
             // Handle receive error
@@ -95,31 +107,62 @@ size_t TcpConnection::receive(char *buffer, size_t bufferSize)
 
 void TcpConnection::send(const char *data, size_t size)
 {
-    if (connected.load() && socketFd != -1)
-    {
-        size_t totalSent = 0;
-        while (totalSent < size)
-        {
-            auto bytesSent = SendTcpData(socketFd, data + totalSent, size - totalSent, 0);
-            if (bytesSent <= 0)
-            {
-                log_error("Failed to send data over TCP connection");
-                SocketLogLastError();
-                disconnect();
-                return;
-            }
-            totalSent += bytesSent;
-        }
-    }
-    else
+    if (!connected.load())
     {
         log_error("Attempted to send data on a disconnected TCP connection");
+        return;
+    }
+
+    size_t totalSent = 0;
+    while (totalSent < size)
+    {
+        auto bytesSent = sendDirect(data + totalSent, size - totalSent);
+        if (bytesSent <= 0)
+        {
+            if (bytesSent == SOCKET_ERROR_WOULD_BLOCK || bytesSent == SOCKET_ERROR_INTERRUPTED)
+            {
+                // Non-blocking caller: let the owner retry/queue the remainder.
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            log_error("Failed to send data over TCP connection");
+            disconnect();
+            return;
+        }
+        totalSent += static_cast<size_t>(bytesSent);
     }
 }
 
 SocketFd TcpConnection::getSocketFd() const
 {
-    return socketFd;
+    return socketFd.load();
+}
+
+ssize_t TcpConnection::sendDirect(const void *data, size_t length, int flags)
+{
+    std::lock_guard<std::mutex> lock(fdMutex);
+    SocketFd fd = socketFd.load();
+    if (!connected.load() || fd == -1)
+        return SOCKET_ERROR_CLOSED;
+    return SendTcpDirect(fd, data, length, flags);
+}
+
+ssize_t TcpConnection::recvDirect(void *buffer, size_t bufferSize, int flags)
+{
+    std::lock_guard<std::mutex> lock(fdMutex);
+    SocketFd fd = socketFd.load();
+    if (!connected.load() || fd == -1)
+        return SOCKET_ERROR_CLOSED;
+    return RecvTcpDirect(fd, buffer, bufferSize, flags);
+}
+
+bool TcpConnection::waitWritable(int timeoutMs)
+{
+    std::lock_guard<std::mutex> lock(fdMutex);
+    SocketFd fd = socketFd.load();
+    if (!connected.load() || fd == -1)
+        return false;
+    return IsSocketWritable(fd, timeoutMs);
 }
 
 TcpConnection::TcpConnectionRuntimeInfo TcpConnection::sampleRuntimeInfo()

@@ -110,8 +110,18 @@ void TcpVCIoThread::run()
         {
             if (pollfds[i].fd == (SocketFd)-1) continue;
 
-            if (pollfds[i].revents & (POLLIN | POLLERR | POLLHUP))
+            if (pollfds[i].revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL))
             {
+                // Revalidate after poll(): the slot may have been disconnected
+                // (and its FD closed/recycled by the OS) while we were blocked.
+                // recv()-ing on a recycled FD would steal another connection's
+                // bytes and corrupt both streams. readFromConnection() re-checks
+                // liveness under the connection's fd mutex as well.
+                if (!snapshot[i] || !snapshot[i]->isConnected() ||
+                    snapshot[i]->getSocketFd() != pollfds[i].fd)
+                {
+                    continue;
+                }
                 readFromConnection(static_cast<int>(i), snapshot[i]);
                 if (!this->isRunning()) return;
             }
@@ -132,9 +142,11 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
     char temp[4096];
 
     // Drain socket using direct recv (socket is already non-blocking; poll() already confirmed POLLIN).
+    // conn->recvDirect() holds the FD lock so disconnect() cannot close/recycle
+    // the descriptor between the liveness check and recv().
     while (this->isRunning())
     {
-        ssize_t n = RecvTcpDirect(conn->getSocketFd(), temp, sizeof(temp), 0);
+        ssize_t n = conn->recvDirect(temp, sizeof(temp), 0);
         if (n > 0)
         {
             buf.data.insert(buf.data.end(), temp, temp + n);
@@ -177,7 +189,17 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
                 return;
             VCDataPacket *pkt = reinterpret_cast<VCDataPacket *>(buf.begin());
             if (pkt->dataLength > VC_MAX_DATA_PAYLOAD_SIZE)
+            {
+                // Impossible length: the stream is corrupt/desynchronised.
+                log_error(std::format("DATA length {} exceeds max {}, dropping connection", pkt->dataLength,
+                                      VC_MAX_DATA_PAYLOAD_SIZE));
+                buf.data.clear();
+                buf.readOffset = 0;
+                conn->disconnect();
+                if (disconnectCallback)
+                    disconnectCallback(conn);
                 return;
+            }
             size_t totalSize = sizeof(VCDataPacket) + pkt->dataLength;
             if (buf.available() < totalSize)
                 return;
@@ -208,10 +230,16 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
             // Without this check, notify->count > 64 causes an out-of-bounds read (UB / CVE risk).
             if (notify->count > VC_MAX_MISSING_IDS_PER_NOTIFY)
             {
+                // A desynchronised peer would otherwise keep feeding us a stream
+                // we cannot frame. Tear this connection down so the watchdog can
+                // rebuild it instead of silently discarding bytes forever.
                 log_error(std::format("MISSING_NOTIFY count {} exceeds max {}, dropping connection",
                                       notify->count, VC_MAX_MISSING_IDS_PER_NOTIFY));
                 buf.data.clear();
                 buf.readOffset = 0;
+                conn->disconnect();
+                if (disconnectCallback)
+                    disconnectCallback(conn);
                 return;
             }
 
@@ -226,9 +254,14 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
             break;
         }
         default:
-            log_error(std::format("Unknown packet type: {}", packetType));
+            log_error(std::format("Unknown packet type: {}, dropping connection", packetType));
+            // Never try to resynchronise by skipping bytes: every subsequent byte
+            // boundary is unknown, so the connection would stay permanently wedged.
             buf.data.clear();
             buf.readOffset = 0;
+            conn->disconnect();
+            if (disconnectCallback)
+                disconnectCallback(conn);
             return;
         }
     }

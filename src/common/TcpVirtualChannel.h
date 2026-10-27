@@ -125,7 +125,11 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     std::vector<std::shared_ptr<ConnSendStats>> connSendStats;
 
-    std::vector<std::unique_ptr<SpscQueue<DeliveryItem>>> connReceiveQueues;
+    // Capacity is a safety margin, not the normal operating point: the reorder
+    // thread drains these continuously. 1024 slots overflowed when a callback
+    // stalled for a few hundred ms on a busy 1 Gbps link; 4096 absorbs that.
+    static constexpr size_t CONN_RECEIVE_QUEUE_CAPACITY = 4096;
+    std::vector<std::unique_ptr<SpscQueue<DeliveryItem, CONN_RECEIVE_QUEUE_CAPACITY>>> connReceiveQueues;
     std::atomic<uint64_t> reorderEnqueueSeq{0};
     std::mutex reorderMutex;
     std::condition_variable reorderCv;
@@ -139,6 +143,10 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     void reorderThreadFunc();
 
     std::atomic<bool> opened{false};
+    // close() may be reached concurrently from the owner and the VC-wide
+    // disconnect callback. Joining the same std::thread twice is undefined
+    // behaviour (std::system_error/terminate), so the teardown runs exactly once.
+    std::once_flag closeOnce;
     std::atomic<uint64_t> lastSendMessageId{0}; // uint64_t: long is 32-bit on Windows (MSVC)
     std::atomic<uint64_t> nextMessageId{0};
     std::chrono::steady_clock::time_point gapFirstSeen;

@@ -12,9 +12,13 @@ void BlockingQueue::enqueue(const std::shared_ptr<std::vector<char>> &data)
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         queue.push(data);
+        // Keep the approximate size in lock-step with the queue. Updating it after
+        // releasing the lock allowed a consumer to dequeue the item first, making
+        // the counter underflow (size_t wrap-around) and permanently tripping the
+        // send-queue drop threshold.
+        approxQueueSize.fetch_add(1, std::memory_order_relaxed);
         notifier = enqueueNotifier; // copy under lock so it can't be torn by setEnqueueNotifier
     }
-    approxQueueSize.fetch_add(1, std::memory_order_relaxed);
     queueCondVar.notify_one();
     // Invoke the external notifier outside the queue lock to avoid lock-order
     // coupling between this queue's mutex and the consumer's wait mutex.
@@ -32,8 +36,8 @@ std::shared_ptr<std::vector<char>> BlockingQueue::dequeue()
     }
     auto result = std::move(queue.front());
     queue.pop();
-    lock.unlock();
     approxQueueSize.fetch_sub(1, std::memory_order_relaxed);
+    lock.unlock();
     return result;
 }
 

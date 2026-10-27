@@ -104,6 +104,15 @@ void StopableThread::joinThread()
 {
     if (_thread.joinable())
     {
+        // Never join ourselves: std::thread::join() on the current thread throws
+        // std::system_error (EDEADLK) and can terminate. This happens when a
+        // callback running on the thread triggers owner teardown.
+        if (_thread.get_id() == std::this_thread::get_id())
+        {
+            log_debug("joinThread called from owning thread; detaching instead");
+            _thread.detach();
+            return;
+        }
         _thread.join();
     }
 }

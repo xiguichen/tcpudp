@@ -28,6 +28,11 @@ public:
     // Returns the VC for the given client, or nullptr if not found.
     VirtualChannelSp Get(uint32_t clientId);
 
+    // Remove every VC from the registry and close each one (joins its threads).
+    // Use during shutdown so sockets/UDP receive threads are torn down cleanly
+    // instead of racing static destruction as the process exits.
+    void CloseAll();
+
 private:
     VcManager() = default;
     ~VcManager() = default;

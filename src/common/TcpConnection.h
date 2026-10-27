@@ -104,13 +104,27 @@ class TcpConnection
     // Method to close the TCP connection
     void disconnect();
 
-    // Get the socket file descriptor
+    // Get the socket file descriptor. The value is advisory: it may become -1
+    // concurrently (disconnect()). Callers that actually perform I/O must use
+    // sendDirect()/recvDirect()/waitWritable(), which hold fdMutex across the
+    // syscall so the FD cannot be closed and recycled underneath them.
     SocketFd getSocketFd() const;
+
+    // Non-blocking I/O helpers. They serialise with disconnect() so another
+    // thread can never close (and the OS reuse) the descriptor between our
+    // liveness check and the actual send()/recv(). This is the close-vs-I/O
+    // race that otherwise lets one dead slot silently write into an unrelated
+    // connection after its FD number is recycled.
+    ssize_t sendDirect(const void *data, size_t length, int flags = 0);
+    ssize_t recvDirect(void *buffer, size_t bufferSize, int flags = 0);
+    // Wait until the socket is writable, using a snapshot taken under fdMutex.
+    bool waitWritable(int timeoutMs);
 
   private:
     std::mutex disconnectMutex; // Per-instance mutex for disconnect (not static — avoids cross-instance deadlock)
+    std::mutex fdMutex;         // Serialises syscalls against disconnect()/close()
     std::atomic<bool> connected{false}; // Connection state (atomic for thread safety)
-    SocketFd socketFd = -1;             // Socket file descriptor
+    std::atomic<SocketFd> socketFd{-1}; // Socket file descriptor (atomic: read while disconnect() closes)
 
     // Diagnostics-only state (atomic to avoid extra locking in send threads)
     std::atomic<bool> diagSendInFlight{false};

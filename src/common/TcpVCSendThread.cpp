@@ -77,6 +77,7 @@ void TcpVCSendThread::replaceConnection(int slot, TcpConnectionSp conn,
             socketStatuses[slot] = status;
         if (static_cast<size_t>(slot) < lastRuntimeRefresh.size())
             lastRuntimeRefresh[slot] = std::chrono::steady_clock::now();
+        connGeneration.fetch_add(1, std::memory_order_release);
     }
     connAvailableCv.notify_one();
 }
@@ -159,17 +160,45 @@ void TcpVCSendThread::run()
     const bool hasResendConns = (numConns > VC_FIRST_RESEND_CONN_INDEX);
     const size_t numDataConns = hasResendConns ? static_cast<size_t>(VC_FIRST_RESEND_CONN_INDEX) : numConns;
 
-    // Scores are recomputed per packet but the storage is reused.
-    std::vector<int> scores(numDataConns);
+    // Scores are recomputed at most every SCORE_REFRESH_INTERVAL_MS (and whenever a
+    // slot is replaced). The storage is reused.
+    std::vector<int> scores(numDataConns, -1);
     // Indices sorted by score, reused across iterations.
     std::vector<size_t> order(numDataConns);
+    for (size_t i = 0; i < numDataConns; ++i)
+        order[i] = i;
+    // Reused by the backpressure wait below (only touched when a send fails).
+    std::vector<struct pollfd> waitFds(numDataConns);
+    int bestScore = -1;
+    bool uniformScores = true;
+    bool scoresInitialized = false;
+    auto lastScoreRefresh = std::chrono::steady_clock::time_point{};
 
     // Packet retained across iterations when all connections fail — avoids re-enqueuing
     // (which inflates approxSize and causes spurious drops).
     std::shared_ptr<std::vector<char>> pendingDataVec;
 
+    // Cached connection/stat snapshot. Refreshed only when replaceConnection() bumps
+    // connGeneration, instead of copying two 32-element vectors (and allocating) for
+    // every packet on the hot path.
+    std::vector<TcpConnectionSp> connSnap;
+    std::vector<std::shared_ptr<ConnSendStats>> statsSnap;
+    uint64_t cachedGeneration = static_cast<uint64_t>(-1);
+    auto refreshSnapshot = [&]() -> bool {
+        uint64_t gen = connGeneration.load(std::memory_order_acquire);
+        if (gen == cachedGeneration && !connSnap.empty())
+            return false;
+        std::lock_guard<std::mutex> lock(connectionsMutex);
+        connSnap = connections;
+        statsSnap = connSendStats;
+        cachedGeneration = gen;
+        return true;
+    };
+
     while (this->isRunning())
     {
+        const bool snapshotChanged = refreshSnapshot();
+
         // Priority: drain resend queue first (non-blocking), but batch-limit
         // to avoid starving normal sends when the resend queue is busy.
         // anyResendAlive is reused by the idle wait below to decide whether
@@ -180,15 +209,12 @@ void TcpVCSendThread::run()
             // Quick check: are ANY resend connections alive? If none are,
             // skip draining to avoid a hot re-enqueue loop while the
             // watchdog reconnects.
+            for (size_t i = VC_FIRST_RESEND_CONN_INDEX; i < connSnap.size(); i++)
             {
-                std::lock_guard<std::mutex> lock(connectionsMutex);
-                for (size_t i = VC_FIRST_RESEND_CONN_INDEX; i < connections.size(); i++)
+                if (connSnap[i] && connSnap[i]->isConnected())
                 {
-                    if (connections[i] && connections[i]->isConnected())
-                    {
-                        anyResendAlive = true;
-                        break;
-                    }
+                    anyResendAlive = true;
+                    break;
                 }
             }
 
@@ -200,11 +226,6 @@ void TcpVCSendThread::run()
                     auto resendData = resendQueue->tryDequeue();
                     if (!resendData)
                         break;
-                    std::vector<TcpConnectionSp> connSnap;
-                    {
-                        std::lock_guard<std::mutex> lock(connectionsMutex);
-                        connSnap = connections;
-                    }
                     sendOnResendConn(std::move(resendData), connSnap);
                     resendBatch++;
                 }
@@ -254,18 +275,7 @@ void TcpVCSendThread::run()
         if (!this->isRunning())
             break;
 
-        // Take a consistent snapshot of connections + stats under the mutex.
-        // This ensures replaceConnection() writes are visible for this packet —
-        // no stale pointers during scoring/sending.
-        std::vector<TcpConnectionSp> connSnap;
-        std::vector<std::shared_ptr<ConnSendStats>> statsSnap;
-        {
-            std::lock_guard<std::mutex> lock(connectionsMutex);
-            connSnap = connections;
-            statsSnap = connSendStats;
-        }
-
-        if (numDataConns == 0 || !connSnap[0])
+        if (numDataConns == 0 || connSnap.size() < numDataConns)
             continue;
 
         const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
@@ -273,30 +283,42 @@ void TcpVCSendThread::run()
 
         // Rate data connections only (indices 0..numDataConns-1).
         // Resend connections (VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1) are excluded.
-        int bestScore = -1;
-        bool uniformScores = true;
-        for (size_t i = 0; i < numDataConns; i++)
+        // Re-sampling every socket's TCP telemetry for every packet is expensive and
+        // pointless: the values cannot change meaningfully in a few hundred
+        // microseconds. Refresh on slot replacement or every
+        // SCORE_REFRESH_INTERVAL_MS, and reuse the ordering in between.
+        auto now = std::chrono::steady_clock::now();
+        if (snapshotChanged || !scoresInitialized ||
+            (now - lastScoreRefresh) >= std::chrono::milliseconds(SCORE_REFRESH_INTERVAL_MS))
         {
-            scores[i] = rateConnection(i, connSnap, statsSnap);
-            if (i > 0 && scores[i] != scores[0])
-                uniformScores = false;
-            if (scores[i] > bestScore)
-                bestScore = scores[i];
-        }
+            bestScore = -1;
+            uniformScores = true;
+            for (size_t i = 0; i < numDataConns; i++)
+            {
+                scores[i] = rateConnection(i, connSnap, statsSnap);
+                if (i > 0 && scores[i] != scores[0])
+                    uniformScores = false;
+                if (scores[i] > bestScore)
+                    bestScore = scores[i];
+            }
 
-        // Build an order of indices to try, best-scored first.
-        for (size_t i = 0; i < numDataConns; i++)
-            order[i] = i;
+            // Build an order of indices to try, best-scored first.
+            for (size_t i = 0; i < numDataConns; i++)
+                order[i] = i;
 
-        // Sort by score only when scores actually differ. On Windows TCP_INFO is
-        // unavailable, so every live connection scores identically and the sort would
-        // merely reproduce the natural order at O(N log N) per packet — pure
-        // hot-path overhead. When scores diverge (Linux/macOS, or a failing conn on
-        // any platform) the stable_sort orders best-first.
-        if (!uniformScores)
-        {
-            std::stable_sort(order.begin(), order.end(),
-                             [&](size_t a, size_t b) { return scores[a] > scores[b]; });
+            // Sort by score only when scores actually differ. On Windows TCP_INFO is
+            // unavailable, so every live connection scores identically and the sort
+            // would merely reproduce the natural order at O(N log N) per packet —
+            // pure hot-path overhead. When scores diverge (Linux/macOS, or a failing
+            // conn on any platform) the stable_sort orders best-first.
+            if (!uniformScores)
+            {
+                std::stable_sort(order.begin(), order.end(),
+                                 [&](size_t a, size_t b) { return scores[a] > scores[b]; });
+            }
+
+            scoresInitialized = true;
+            lastScoreRefresh = now;
         }
 
         // Fallback: if backoff eliminated all candidates, allow any connected socket.
@@ -343,12 +365,12 @@ void TcpVCSendThread::run()
             auto &conn = connSnap[idx];
 
             // No per-packet writability pre-poll. The socket is non-blocking, so
-            // SendTcpDirect returns immediately with SOCKET_ERROR_WOULD_BLOCK when
+            // sendDirect() returns immediately with SOCKET_ERROR_WOULD_BLOCK when
             // the kernel send buffer is full.
             conn->diagMarkSendStart(messageId);
 
-            // Use direct send — socket is already non-blocking.
-            ssize_t n = SendTcpDirect(conn->getSocketFd(), dataVec->data(), dataVec->size(), 0);
+            // sendDirect() serialises with disconnect() on the FD.
+            ssize_t n = conn->sendDirect(dataVec->data(), dataVec->size(), 0);
 
             conn->diagMarkSendEnd(messageId);
 
@@ -375,7 +397,7 @@ void TcpVCSendThread::run()
                 {
                     if (!conn->isConnected() || !this->isRunning())
                         break;
-                    if (!IsSocketWritable(conn->getSocketFd(), PARTIAL_SEND_POLL_MS))
+                    if (!conn->waitWritable(PARTIAL_SEND_POLL_MS))
                     {
                         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                              std::chrono::steady_clock::now() - partialStart)
@@ -384,8 +406,7 @@ void TcpVCSendThread::run()
                             break; // truly stuck — give up
                         continue;
                     }
-                    ssize_t r = SendTcpDirect(
-                        conn->getSocketFd(),
+                    ssize_t r = conn->sendDirect(
                         dataVec->data() + totalSent,
                         dataVec->size() - totalSent, 0);
                     if (r > 0)
@@ -467,22 +488,38 @@ void TcpVCSendThread::run()
         if (!sent)
         {
             // Retain the packet for the next iteration instead of re-enqueuing.
-            // Block until the watchdog reconnects a slot (signalled via
-            // connAvailableCv) or until the send/resend queues receive new
-            // work. This avoids burning CPU while no connections are available
-            // yet wakes instantly when one becomes usable.
+            // Wait until at least one data connection is writable instead of
+            // blind-sleeping: under backpressure (all kernel send buffers full)
+            // the old 50 ms connAvailableCv wait returned immediately because its
+            // predicate only checked "connected", turning this into a 100% CPU
+            // EAGAIN spin. poll(POLLOUT) also wakes as soon as capacity frees,
+            // so a drained socket is serviced without waiting for a timer tick.
             pendingDataVec = std::move(dataVec);
-            std::unique_lock<std::mutex> lock(connectionsMutex);
-            connAvailableCv.wait_for(lock, std::chrono::milliseconds(50), [&] {
-                if (!this->isRunning())
-                    return true;
-                for (size_t i = 0; i < numDataConns; i++)
-                {
-                    if (connections[i] && connections[i]->isConnected())
-                        return true;
-                }
-                return false;
-            });
+
+            bool anyConnected = false;
+            for (size_t i = 0; i < numDataConns; i++)
+            {
+                waitFds[i].fd = (connSnap[i] && connSnap[i]->isConnected())
+                                    ? connSnap[i]->getSocketFd()
+                                    : static_cast<SocketFd>(-1);
+                waitFds[i].events = POLLOUT;
+                waitFds[i].revents = 0;
+                anyConnected = anyConnected || (waitFds[i].fd != -1);
+            }
+
+            if (anyConnected)
+            {
+                SocketPollMany(waitFds.data(), numDataConns, 50);
+            }
+            else
+            {
+                // No live connection to poll: block until the watchdog swaps one
+                // in (connAvailableCv) or shutdown, with a 50 ms backstop.
+                std::unique_lock<std::mutex> lock(connectionsMutex);
+                connAvailableCv.wait_for(lock, std::chrono::milliseconds(50), [&] {
+                    return !this->isRunning() || connGeneration.load(std::memory_order_acquire) != cachedGeneration;
+                });
+            }
         }
     }
 
@@ -536,7 +573,7 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
 
         aliveCount++;
 
-        ssize_t n = SendTcpDirect(conn->getSocketFd(), data->data(), data->size(), 0);
+        ssize_t n = conn->sendDirect(data->data(), data->size(), 0);
 
         if (n > 0)
         {
@@ -548,7 +585,7 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
             {
                 if (!conn->isConnected() || !this->isRunning())
                     break;
-                if (!IsSocketWritable(conn->getSocketFd(), PARTIAL_SEND_POLL_MS))
+                if (!conn->waitWritable(PARTIAL_SEND_POLL_MS))
                 {
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                          std::chrono::steady_clock::now() - partialStart)
@@ -557,9 +594,9 @@ void TcpVCSendThread::sendOnResendConn(std::shared_ptr<std::vector<char>> data,
                         break;
                     continue;
                 }
-                ssize_t r = SendTcpDirect(conn->getSocketFd(),
-                                          data->data() + totalSent,
-                                          data->size() - totalSent, 0);
+                ssize_t r = conn->sendDirect(
+                    data->data() + totalSent,
+                    data->size() - totalSent, 0);
                 if (r > 0)
                 {
                     totalSent += static_cast<size_t>(r);

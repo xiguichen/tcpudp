@@ -16,15 +16,124 @@
 #include <format>
 #include <thread>
 
+namespace
+{
+// Owns the per-peer UDP socket and serialises send/recv/close. Without this,
+// the disconnect callback could close() the FD while the UDP receive thread was
+// blocked in recv() on it. On macOS close() does not wake a blocked recv(), so
+// the thread (and the VC it captures) leaked forever — and closing from another
+// thread also risks the FD being recycled mid-recv. A short poll timeout makes
+// Receive() observe Close() promptly on every platform.
+class UdpSocketHandle
+{
+  public:
+    explicit UdpSocketHandle(SocketFd socket) : fd(socket) {}
+
+    void Send(const char *data, size_t size, const struct sockaddr_in &addr)
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (fd == -1)
+            return;
+        ssize_t sent = sendto(fd, data, size, 0, (const struct sockaddr *)&addr, sizeof(addr));
+        if (sent < 0)
+            log_error("Failed to send data to UDP socket");
+        else
+            log_debug(std::format("Sent {} bytes to UDP socket", sent));
+    }
+
+    // Returns false when the socket has been closed (thread should exit).
+    // received == 0 means "nothing this cycle" (timeout/EINTR).
+    bool Receive(char *buffer, size_t size, ssize_t &received)
+    {
+        received = 0;
+
+        // Do NOT hold mtx across the readiness poll. The VC receive callback
+        // calls Send() on this same handle; holding the mutex for the full
+        // 250 ms poll timeout blocks that callback (and therefore the VC
+        // reorder thread) long enough for the per-connection receive queues to
+        // overflow and drop packets under load.
+        SocketFd polledFd;
+        uint64_t polledGeneration;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (fd == -1)
+                return false;
+            polledFd = fd;
+            polledGeneration = generation;
+        }
+
+        if (!IsSocketReadable(polledFd, 250))
+            return true;
+
+        std::lock_guard<std::mutex> lock(mtx);
+        // Close() may have run while we were polling; revalidate before touching
+        // the descriptor (or a recycled fd number).
+        if (fd != polledFd || generation != polledGeneration)
+            return fd != -1;
+        ssize_t n = recv(fd, buffer, size, 0);
+        if (n < 0)
+        {
+#ifdef _WIN32
+            int err = WSAGetLastError();
+            if (err == WSAEINTR || err == WSAEWOULDBLOCK)
+                return true;
+#else
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                return true;
+#endif
+            log_error("Failed to receive data from UDP socket");
+            return false;
+        }
+        received = n;
+        return true;
+    }
+
+    void Close()
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (fd == -1)
+            return;
+        SocketShutdown(fd, SHUT_RDWR);
+        SocketClose(fd);
+        fd = -1;
+        ++generation;
+    }
+
+  private:
+    std::mutex mtx;
+    SocketFd fd;
+    uint64_t generation = 0;
+};
+} // namespace
+
+void Server::stop()
+{
+    log_info("Stopping server...");
+    requestStop();
+    SocketFd fd = serverSocket.exchange(-1);
+    if (fd != -1)
+    {
+        SocketShutdown(fd, SHUT_RDWR);
+        SocketClose(fd);
+    }
+
+    // Stop all virtual channels (joins their IO/send/reorder threads and closes
+    // the peer UDP sockets) before the process tears down globals.
+    VcManager::getInstance().CloseAll();
+
+    SocketClearnup();
+}
+
 bool Server::Listen()
 {
 
-    serverSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
-    if (serverSocket == -1)
+    SocketFd listenSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
+    if (listenSocket == -1)
     {
         log_error("Failed to create socket");
         return false;
     }
+    serverSocket.store(listenSocket);
 
     auto port = ServerConfiguration::getInstance()->getPortNumber();
     log_info(std::format("Server listening on {}", port));
@@ -34,18 +143,20 @@ bool Server::Listen()
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(port);
-    SocketReuseAddress(serverSocket);
-    if (SocketBind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
+    SocketReuseAddress(listenSocket);
+    if (SocketBind(listenSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
     {
         log_error("Failed to bind socket");
-        SocketClose(serverSocket);
+        SocketClose(listenSocket);
+        serverSocket.store(-1);
         return false;
     }
 
-    if (SocketListen(serverSocket, SOMAXCONN) < 0)
+    if (SocketListen(listenSocket, SOMAXCONN) < 0)
     {
         log_error("Failed to listen on socket");
-        SocketClose(serverSocket);
+        SocketClose(listenSocket);
+        serverSocket.store(-1);
         return false;
     }
 
@@ -56,16 +167,38 @@ bool Server::Listen()
 void Server::AcceptConnections()
 {
     log_info("Waiting to accept a new connection...");
-    while (running)
+    while (running.load(std::memory_order_acquire))
     {
+        // Poll with a timeout instead of blocking in accept(): on macOS (and BSD)
+        // close() from another thread does not reliably wake a blocked accept(),
+        // so a blocking accept would make graceful shutdown hang forever. It also
+        // lets the loop observe running=false promptly.
+        SocketFd listenFd = serverSocket.load(std::memory_order_acquire);
+        if (listenFd == -1)
+            break;
+        if (!IsSocketReadable(listenFd, 250))
+            continue;
+
         sockaddr_in clientAddr{};
         socklen_t clientLen = sizeof(clientAddr);
 
-        // Accept connection blocking
-        SocketFd clientSocket = SocketAccept(serverSocket, (struct sockaddr *)&clientAddr, &clientLen);
+        SocketFd clientSocket = SocketAccept(listenFd, (struct sockaddr *)&clientAddr, &clientLen);
         if (clientSocket < 0)
         {
-            log_error("Failed to accept connection");
+            // EINTR/EAGAIN are expected (signal or a spurious readiness wake);
+            // anything else (EMFILE/ENFILE) must not spin the accept loop at 100% CPU.
+            bool transient = false;
+#ifdef _WIN32
+            int err = WSAGetLastError();
+            transient = (err == WSAEINTR || err == WSAEWOULDBLOCK || err == WSAECONNABORTED);
+#else
+            transient = (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED);
+#endif
+            if (!transient)
+            {
+                log_error("Failed to accept connection");
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
             continue;
         }
 
@@ -94,10 +227,21 @@ void Server::AcceptConnections()
         MsgBind bindMsg;
         std::vector<char> bindBuffer(sizeof(MsgBind));
 
+        // Bound the handshake read. The accept loop is single-threaded, so
+        // without a timeout one client that connects and never sends its MsgBind
+        // (or a half-open socket) stalls every other client indefinitely — they
+        // then time out and reconnect, amplifying the outage.
+        SocketSetReceiveTimeout(clientSocket, 5000);
         ssize_t received = RecvTcpDataWithSize(clientSocket, bindBuffer.data(), bindBuffer.size(), 0, sizeof(MsgBind));
-        if (received <= 0)
+        SocketSetReceiveTimeout(clientSocket, 0); // restore blocking for the VC path
+
+        if (received != static_cast<ssize_t>(sizeof(MsgBind)))
         {
-            log_error("Failed to receive client ID from client");
+            // A short read means the peer died mid-handshake. Treating it as
+            // success would parse zero/partial bytes as a client ID and bind the
+            // socket to the wrong peer.
+            log_error(std::format("Failed to receive full client ID from client ({} of {} bytes)",
+                                  received, sizeof(MsgBind)));
             SocketClose(clientSocket);
             continue;
         }
@@ -155,6 +299,7 @@ void Server::AcceptConnections()
                 int connIdSlot = -1;
                 if (bindMsg.connectionId != 0)
                 {
+                    std::lock_guard<std::mutex> mapLock(mapsMutex);
                     auto clientIt = clientConnSlots.find(clientId);
                     if (clientIt != clientConnSlots.end())
                     {
@@ -183,6 +328,7 @@ void Server::AcceptConnections()
                 // at this slot, then register the id the client just sent for it.
                 if (bindMsg.connectionId != 0)
                 {
+                    std::lock_guard<std::mutex> mapLock(mapsMutex);
                     auto &slotMap = clientConnSlots[clientId];
                     for (auto it = slotMap.begin(); it != slotMap.end();)
                     {
@@ -213,14 +359,17 @@ void Server::AcceptConnections()
         // the watchdog to force-close a specific connection by ID during reconnect.
         if (bindMsg.connectionId != 0)
         {
+            std::lock_guard<std::mutex> mapLock(mapsMutex);
             socketToConnId[clientSocket] = bindMsg.connectionId;
         }
 
         // New client — register peer and accumulate sockets until we have enough for a full VC.
         PeerManager::AddPeer(clientId);
 
-        // Get the peer and add the socket
-        Peer *peer = PeerManager::GetPeerById(clientId);
+        // Get the peer and add the socket. Keep a strong reference: a disconnect
+        // callback on another thread may remove the peer from the registry while
+        // we are still accumulating sockets for it.
+        auto peer = PeerManager::GetPeerShared(clientId);
         if (peer)
         {
             peer->AddSocket(clientSocket);
@@ -254,6 +403,7 @@ void Server::AcceptConnections()
             // The order of fds matches the VC's internal connections vector, so
             // fds[i] corresponds to slot i.
             {
+                std::lock_guard<std::mutex> mapLock(mapsMutex);
                 auto &slotMap = clientConnSlots[clientId];
                 for (size_t i = 0; i < fds.size(); i++)
                 {
@@ -271,8 +421,16 @@ void Server::AcceptConnections()
             if (udpSocket == -1)
             {
                 log_error("Failed to create UDP socket");
-                break;
+                VcManager::getInstance().Remove(clientId);
+                PeerManager::RemovePeer(clientId);
+                std::lock_guard<std::mutex> mapLock(mapsMutex);
+                clientConnSlots.erase(clientId);
+                continue;
             }
+
+            // Large receive buffer so a burst from the UDP target is not dropped
+            // by the kernel while the reorder thread is forwarding to the VC.
+            SocketSetReceiveBufferSize(udpSocket, 4 * 1024 * 1024);
 
             // Bind the UDP socket to an ephemeral port so recv() works immediately.
             // Without bind, recv() on Windows returns WSAEINVAL on unbound sockets.
@@ -284,7 +442,11 @@ void Server::AcceptConnections()
             {
                 log_error("Failed to bind UDP socket");
                 SocketClose(udpSocket);
-                break;
+                VcManager::getInstance().Remove(clientId);
+                PeerManager::RemovePeer(clientId);
+                std::lock_guard<std::mutex> mapLock(mapsMutex);
+                clientConnSlots.erase(clientId);
+                continue;
             }
 
             // Create a socket address for the UDP socket to send data to
@@ -296,20 +458,14 @@ void Server::AcceptConnections()
             peer->SetUdpSocket(udpSocket);
             peer->SetUdpAddress(udpAddr);
 
-            vc->setReceiveCallback([udpSocket, udpAddr](const char *data, size_t size) {
-                // Send data to the UDP socket
-                ssize_t sentBytes = sendto(udpSocket, data, size, 0, (struct sockaddr *)&udpAddr, sizeof(udpAddr));
-                if (sentBytes < 0)
-                {
-                    log_error("Failed to send data to UDP socket");
-                }
-                else
-                {
-                    log_debug(std::format("Sent {} bytes to UDP socket", sentBytes));
-                }
+            auto udpHandle = std::make_shared<UdpSocketHandle>(udpSocket);
+
+            vc->setReceiveCallback([udpHandle, udpAddr](const char *data, size_t size) {
+                udpHandle->Send(data, size, udpAddr);
             });
 
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([this, clientId, udpSocket]() {
+            std::weak_ptr<VirtualChannel> weakVc = vc;
+            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([this, clientId, udpHandle, weakVc]() {
                 // Remove VC from manager only if it exists to avoid double-removal
                 if (VcManager::getInstance().Exists(clientId)) {
                     VcManager::getInstance().Remove(clientId);
@@ -322,32 +478,38 @@ void Server::AcceptConnections()
                 PeerManager::RemovePeer(clientId);
                 // Close the UDP socket to unblock recv() in the UDP receive thread,
                 // allowing it to exit. The thread must not close it again after this.
-                SocketClose(udpSocket);
+                udpHandle->Close();
                 // Clear the connectionId→slot map — the VC is gone.
-                clientConnSlots.erase(clientId);
+                {
+                    std::lock_guard<std::mutex> mapLock(mapsMutex);
+                    clientConnSlots.erase(clientId);
+                }
+
+                // Removing the VC from VcManager drops the owner's reference, but the
+                // IO/send thread callbacks each hold a shared_ptr to the VC, so without
+                // close() the object (and its reorder thread, its four 4096-slot queues
+                // and the sent-data cache) leaked on every full disconnect. close()
+                // joins the VC threads, so it must NOT run on this callback's thread;
+                // a separate thread does the join while a strong reference keeps the
+                // VC alive until teardown completes.
+                if (auto vcToClose = weakVc.lock())
+                {
+                    std::thread([vcToClose]() { vcToClose->close(); }).detach();
+                }
             });
 
             // start a new thread to receive data from the UDP socket
-            std::thread([udpSocket, vc]() {
+            std::thread([udpHandle, vc]() {
                 char buffer[VC_MAX_DATA_PAYLOAD_SIZE + VC_MIN_DATA_PACKET_SIZE];
                 while (true)
                 {
-                    ssize_t receivedBytes = recv(udpSocket, buffer, sizeof(buffer), 0);
-                    if (receivedBytes < 0)
-                    {
-                        log_error("Failed to receive data from UDP socket");
+                    ssize_t receivedBytes = 0;
+                    if (!udpHandle->Receive(buffer, sizeof(buffer), receivedBytes))
                         break;
-                    }
-                    else if (receivedBytes == 0)
-                    {
-                        log_info("UDP socket closed");
-                        break;
-                    }
-                    else
-                    {
-                        log_debug(std::format("Received {} bytes from UDP socket", receivedBytes));
-                        vc->send(buffer, receivedBytes);
-                    }
+                    if (receivedBytes <= 0)
+                        continue;
+                    log_debug(std::format("Received {} bytes from UDP socket", receivedBytes));
+                    vc->send(buffer, receivedBytes);
                 }
                 // Socket is closed by the disconnect callback; do not close it here.
             }).detach();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -33,13 +34,13 @@ class Log
     // Get current log level
     LogLevel getCurrentLogLevel() const
     {
-        return currentLogLevel;
+        return currentLogLevel.load(std::memory_order_relaxed);
     }
 
     // Get current log level as string
     std::string getCurrentLogLevelString() const
     {
-        return getLogLevelString(currentLogLevel);
+        return getLogLevelString(getCurrentLogLevel());
     }
 
     // Specific log level functions
@@ -54,7 +55,7 @@ class Log
     Log(const Log &) = delete;
     Log &operator=(const Log &) = delete;
 
-    LogLevel currentLogLevel = LogLevel::LOG_INFO;
+    std::atomic<LogLevel> currentLogLevel{LogLevel::LOG_INFO};
     std::ofstream logFile;
     std::mutex logMutex;
 

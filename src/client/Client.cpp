@@ -22,6 +22,12 @@ bool Client::PrepareVC()
 
     for (int i = 0; i < VC_TCP_CONNECTIONS; i++)
     {
+        if (!running.load(std::memory_order_acquire))
+        {
+            TeardownVc();
+            return false;
+        }
+
         // Create TCP socket here
         SocketFd tcpSocket = SocketCreate(AF_INET, SOCK_STREAM, 0);
         if (tcpSocket == -1)
@@ -41,7 +47,11 @@ bool Client::PrepareVC()
         serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
         serverAddr.sin_port = htons(port);
 
-        if (SocketConnect(tcpSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
+        // Non-blocking connect with a bounded timeout. A blocking connect() can
+        // hang for the OS default (~75s on macOS) against a black-holed SYN,
+        // multiplying by 32 sockets and stalling startup/reconnect for minutes.
+        // It also ignores shutdown requests while blocked.
+        if (SocketConnectNonBlocking(tcpSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr), 3000) < 0)
         {
             log_error("Failed to connect to server");
             SocketClose(tcpSocket);
@@ -49,7 +59,16 @@ bool Client::PrepareVC()
             return false;
         }
 
+        if (!running.load(std::memory_order_acquire))
+        {
+            SocketClose(tcpSocket);
+            TeardownVc();
+            return false;
+        }
+
         SocketSetTcpNoDelay(tcpSocket, true);
+        // The bind send below must not block forever if the server stops reading.
+        SocketSetSendTimeout(tcpSocket, 3000);
         SocketSetReceiveBufferSize(tcpSocket, 512 * 1024);
         SocketSetSendBufferSize(tcpSocket, 128 * 1024);
         // Proactively detect half-open connections (common on macOS) so a silently
@@ -86,10 +105,21 @@ bool Client::PrepareVC()
         tcpSockets.push_back(tcpSocket);
         tcpConnectionIds.push_back(connId);
 
-        // Add delay between connections to give server time to process
+        // Add delay between connections to give server time to process.
+        // Sleep in short slices so Stop()/shutdown is observed promptly instead
+        // of blocking the whole startup path for half a second.
         if (i == 0) {
             log_info("Waiting 500ms before establishing second TCP connection...");
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            constexpr int WAIT_MS = 500;
+            constexpr int SLICE_MS = 50;
+            for (int waited = 0; waited < WAIT_MS && running.load(std::memory_order_acquire);
+                 waited += SLICE_MS) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(SLICE_MS));
+            }
+            if (!running.load(std::memory_order_acquire)) {
+                TeardownVc();
+                return false;
+            }
         }
     }
 
@@ -112,12 +142,18 @@ bool Client::PrepareVC()
     newVc->setReceiveCallback([this](const char *data, size_t size) {
         log_debug(std::format("Virtual channel received {} bytes of data", size));
 
-        auto remoteAddr = this->remoteUdpAddr;
+        struct sockaddr_in remoteAddr{};
+        {
+            std::lock_guard<std::mutex> lock(remoteUdpMutex);
+            remoteAddr = this->remoteUdpAddr;
+        }
 
         log_debug(std::format("Sending data to UDP address: {}:{}", inet_ntoa(remoteAddr.sin_addr), ntohs(remoteAddr.sin_port)));
 
         // send data to UDP socket
-        SendUdpData(udpSocket, data, size, 0, (struct sockaddr *)&remoteAddr, sizeof(remoteUdpAddr));
+        SocketFd fd = udpSocket.load();
+        if (fd != -1)
+            SendUdpData(fd, data, size, 0, (struct sockaddr *)&remoteAddr, sizeof(remoteAddr));
     });
 
     // Setup disconnect callback
@@ -160,17 +196,23 @@ bool Client::PrepareUdpSocket()
     log_info("Creating UDP socket...");
 
     // Create UDP socket here
-    udpSocket = SocketCreate(AF_INET, SOCK_DGRAM, 0);
-    if (udpSocket == -1)
+    SocketFd socket = SocketCreate(AF_INET, SOCK_DGRAM, 0);
+    if (socket == -1)
     {
         log_error("Failed to create UDP socket");
         return false;
     }
+    udpSocket.store(socket);
+
+    // A single 1400-byte datagram burst can overflow the default UDP receive
+    // buffer while this thread is forwarding to the VC; ask for a large buffer so
+    // the kernel applies backpressure instead of silently discarding packets.
+    SocketSetReceiveBufferSize(socket, 4 * 1024 * 1024);
 
     // Allow the local UDP port to be rebound immediately after a restart. Without this,
     // a quick reconnect cycle fails the bind with EADDRINUSE while the previous socket
     // lingers, which cascades into the failed-Start / reconnect storm.
-    SocketReuseAddress(udpSocket);
+    SocketReuseAddress(socket);
 
     // Prepare address structure for sending data
     struct sockaddr_in udpAddr{};
@@ -183,29 +225,43 @@ bool Client::PrepareUdpSocket()
     udpAddr.sin_port = htons(port);
 
     // bind the socket to the address
-    int bindResult = SocketBind(udpSocket, (struct sockaddr *)&udpAddr, sizeof(udpAddr));
+    int bindResult = SocketBind(socket, (struct sockaddr *)&udpAddr, sizeof(udpAddr));
     if (bindResult < 0)
     {
         log_error("Failed to bind UDP socket");
-        SocketClose(udpSocket);
+        SocketClose(socket);
+        udpSocket.store(-1);
         return false;
     }
 
     log_info("UDP socket created and bound successfully.");
 
-    // Start receiving data in a loop
-
+    // Start receiving data in a loop. Use a bounded poll instead of a blocking
+    // recvfrom(): on macOS/BSD close()/shutdown() from another thread does not
+    // reliably wake a blocked recv, so Stop() would leave the main thread (and
+    // the process) hung in this loop.
     char buffer[2500];
-    while (running)
+    while (running.load(std::memory_order_acquire))
     {
+        if (!IsSocketReadable(socket, 250))
+            continue;
+
         struct sockaddr_in srcAddr{};
         socklen_t srcAddrLen = sizeof(srcAddr);
-        ssize_t receivedBytes =
-            RecvUdpData(udpSocket, buffer, sizeof(buffer), 0, (struct sockaddr *)&srcAddr, &srcAddrLen);
+        ssize_t receivedBytes = 0;
+        {
+            std::lock_guard<std::mutex> lock(udpMutex);
+            // Stop() may have closed the socket while we were polling.
+            if (!running.load(std::memory_order_acquire) || udpSocket.load() != socket)
+                break;
+            receivedBytes =
+                RecvUdpData(socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&srcAddr, &srcAddrLen);
+        }
         if (receivedBytes < 0)
         {
-            log_warnning("UDP receive error, retrying in 10s...");
-            std::this_thread::sleep_for(std::chrono::seconds(10));
+            // Transient errors (EINTR/EWOULDBLOCK) must not trigger the old 10s
+            // stall; a dead socket is handled by the next poll returning false.
+            log_warnning("UDP receive error, continuing...");
             continue;
         }
         else if (receivedBytes == 0)
@@ -216,7 +272,10 @@ bool Client::PrepareUdpSocket()
         else
         {
             log_debug(std::format("Received {} bytes from UDP socket", receivedBytes));
-           this->remoteUdpAddr = srcAddr;
+            {
+                std::lock_guard<std::mutex> addrLock(remoteUdpMutex);
+                this->remoteUdpAddr = srcAddr;
+            }
             // send data to virtual channel
             {
                 std::lock_guard<std::mutex> lock(vcMutex);
@@ -224,6 +283,17 @@ bool Client::PrepareUdpSocket()
                     vc->send(buffer, receivedBytes);
                 }
             }
+        }
+    }
+
+    // Close the UDP socket on the way out (idempotent with Stop()).
+    {
+        std::lock_guard<std::mutex> lock(udpMutex);
+        SocketFd fd = udpSocket.exchange(-1);
+        if (fd != -1)
+        {
+            SocketShutdown(fd, SHUT_RDWR);
+            SocketClose(fd);
         }
     }
 
@@ -271,17 +341,47 @@ void Client::TeardownVc()
     tcpConnectionIds.clear();
 }
 
+void Client::requestStop()
+{
+    // Async-signal-safe path: atomics + shutdown() only. No logs, no mutexes,
+    // no thread joins (a signal may interrupt a thread holding those locks).
+    running.store(false, std::memory_order_release);
+    SocketFd fd = udpSocket.load(std::memory_order_acquire);
+    if (fd != -1)
+        SocketShutdown(fd, SHUT_RDWR);
+}
+
 void Client::Stop()
 {
     log_info("Client stopping...");
-    running = false;
+    running.store(false, std::memory_order_release);
+
+    // Wake the UDP receive poll promptly (and make recvfrom return) without
+    // closing the FD underneath the loop; the loop/teardown closes it below.
+    SocketFd fd = udpSocket.load(std::memory_order_acquire);
+    if (fd != -1)
+        SocketShutdown(fd, SHUT_RDWR);
 
     StopWatchdog();
 
-    std::lock_guard<std::mutex> lock(vcMutex);
-    if (vc != nullptr)
     {
-        vc->close();
+        std::lock_guard<std::mutex> lock(vcMutex);
+        if (vc != nullptr)
+        {
+            vc->close();
+        }
+    }
+
+    // Close the UDP socket exactly once. The receive loop does the same, guarded
+    // by udpMutex and an atomic exchange, so neither path can double-close.
+    {
+        std::lock_guard<std::mutex> lock(udpMutex);
+        SocketFd udpFd = udpSocket.exchange(-1);
+        if (udpFd != -1)
+        {
+            SocketShutdown(udpFd, SHUT_RDWR);
+            SocketClose(udpFd);
+        }
     }
 }
 
@@ -306,10 +406,12 @@ void Client::Start()
         // Start()/PrepareVC doesn't assign over a live watchdog thread (std::terminate)
         // or accumulate orphaned connections.
         TeardownVc();
-        if (udpSocket != -1)
+        std::lock_guard<std::mutex> lock(udpMutex);
+        SocketFd fd = udpSocket.exchange(-1);
+        if (fd != -1)
         {
-            SocketClose(udpSocket);
-            udpSocket = -1;
+            SocketShutdown(fd, SHUT_RDWR);
+            SocketClose(fd);
         }
         return;
     }
@@ -354,7 +456,10 @@ bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
 
         log_warnning(std::format("Waiting {}ms before reconnection attempt {}/{}...",
             delayMs, retryCount + 1, maxRetries));
-        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        // Interruptible wait: shutdown must not be delayed by the full backoff.
+        for (int waited = 0; waited < delayMs && running.load(std::memory_order_acquire); waited += 100) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(std::min(100, delayMs - waited)));
+        }
 
         // Try to reconnect
         if (PrepareVC()) {

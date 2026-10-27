@@ -11,13 +11,15 @@ using namespace Logger;
 
 Client client;
 
-void signalHandler(int signum)
-{
-    log_info(std::format("Received signal: {}", signum));
+// Only a plain flag is set from the handler. Calling Stop()/logging here is not
+// async-signal-safe: the signal can interrupt a thread holding the log mutex or
+// a std::mutex, deadlocking the process. The main loop performs the real stop.
+static volatile sig_atomic_t g_stopRequested = 0;
 
-    client.Stop();
-    SocketClearnup();
-    exit(0);
+void signalHandler(int /*signum*/)
+{
+    g_stopRequested = 1;
+    client.requestStop();
 }
 
 void printUsage(const char *programName)
@@ -81,23 +83,34 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    while (true)
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+#ifndef _WIN32
+    signal(SIGHUP, signalHandler);
+#endif
+
+    while (!g_stopRequested)
     {
         try
         {
             log_info("Starting Client");
             client.Start();
             log_info("Client Stopped");
+            if (g_stopRequested)
+                break;
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
         catch (const std::exception &)
         {
             log_error("Exception in main loop, restarting client...");
             client.Stop();
+            if (g_stopRequested)
+                break;
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
 
+    client.Stop();
     SocketClearnup();
 
     return 0;

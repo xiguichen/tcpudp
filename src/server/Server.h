@@ -1,7 +1,9 @@
 #pragma once
 #include <Log.h>
 #include <Socket.h>
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <unordered_map>
 
 class Server
@@ -24,28 +26,33 @@ class Server
         }
     }
 
-    void stop()
-    {
-        log_info("Stopping server...");
-        running = false;
-        if (serverSocket != -1)
-        {
-            SocketClose(serverSocket);
-            serverSocket = -1;
-        }
+    void stop();
 
-        SocketClearnup();
+    // Async-signal-friendly stop request: only atomics + shutdown(), no logging,
+    // locks, allocation or thread joins. Calling stop() directly from a signal
+    // handler can deadlock (the interrupted thread may hold the log/mutex lock)
+    // and is not async-signal-safe.
+    void requestStop()
+    {
+        running.store(false, std::memory_order_release);
+        SocketFd fd = serverSocket.load(std::memory_order_acquire);
+        if (fd != -1)
+            SocketShutdown(fd, SHUT_RDWR);
     }
 
-    bool isRunning() const;
+    bool isRunning() const { return running.load(std::memory_order_acquire); }
 
   private:
-    bool running = false;
+    std::atomic<bool> running{false};
 
     bool Listen();
     void AcceptConnections();
 
-    SocketFd serverSocket;
+    std::atomic<SocketFd> serverSocket{-1};
+
+    // Protects socketToConnId/clientConnSlots: the accept thread and the VC
+    // disconnect callbacks (which run on VC IO threads) both touch them.
+    std::mutex mapsMutex;
 
     // Maps socket FD → connectionId for sockets in the accumulation phase
     // (before the VC is created and slots are assigned).

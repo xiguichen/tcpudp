@@ -3,7 +3,7 @@
 #include "VcManager.h"
 #include <format>
 
-std::unordered_map<uint32_t, Peer> PeerManager::peers;
+std::unordered_map<uint32_t, std::shared_ptr<Peer>> PeerManager::peers;
 std::mutex PeerManager::peersMutex;
 
 uint32_t Peer::GetClientId() const
@@ -26,6 +26,7 @@ Peer &Peer::operator=(const Peer &other)
 void Peer::AddSocket(SocketFd socket)
 {
     std::lock_guard<std::mutex> lock(socketMutex);
+    lastActivity = std::chrono::steady_clock::now();
     if (sockets.size() >= VC_TCP_CONNECTIONS)
     {
         log_error(std::format("Peer {} already has {} sockets (max {}), closing excess socket {}",
@@ -52,10 +53,22 @@ void Peer::SetUdpAddress(const struct sockaddr_in &addr)
     udpAddress = addr;
 }
 
-const std::vector<SocketFd> &Peer::GetSockets()
+std::vector<SocketFd> Peer::GetSockets()
 {
     std::lock_guard<std::mutex> lock(socketMutex);
     return sockets;
+}
+
+std::chrono::steady_clock::time_point Peer::GetLastActivity() const
+{
+    std::lock_guard<std::mutex> lock(socketMutex);
+    return lastActivity;
+}
+
+void Peer::Touch()
+{
+    std::lock_guard<std::mutex> lock(socketMutex);
+    lastActivity = std::chrono::steady_clock::now();
 }
 
 SocketFd Peer::GetUdpSocket() const
@@ -81,9 +94,16 @@ Peer *PeerManager::GetPeerById(uint32_t clientId)
     auto it = peers.find(clientId);
     if (it != peers.end())
     {
-        return &it->second;
+        return it->second.get();
     }
     return nullptr;
+}
+
+std::shared_ptr<Peer> PeerManager::GetPeerShared(uint32_t clientId)
+{
+    std::lock_guard<std::mutex> lock(peersMutex);
+    auto it = peers.find(clientId);
+    return it != peers.end() ? it->second : nullptr;
 }
 
 void PeerManager::AddPeer(uint32_t clientId)
@@ -92,7 +112,7 @@ void PeerManager::AddPeer(uint32_t clientId)
     auto it = peers.find(clientId);
     if (it == peers.end())
     {
-        peers[clientId] = Peer(clientId);
+        peers[clientId] = std::make_shared<Peer>(clientId);
     }
     else
     {
@@ -103,8 +123,23 @@ void PeerManager::AddPeer(uint32_t clientId)
         if (VcManager::getInstance().Exists(clientId))
         {
             log_info(std::format("Peer {} reconnecting, flushing stale sockets", clientId));
-            it->second.RemoveAllSockets();
+            it->second->RemoveAllSockets();
         }
+        else
+        {
+            // The client vanished halfway through building its 32-socket channel
+            // (crash/network loss/restart). Those FDs are dead but would otherwise
+            // be spliced into the next channel, leaving it short of live slots and
+            // triggering the "initial connect while a VC exists" teardown loop.
+            static constexpr auto STALE_ACCUMULATION_TIMEOUT = std::chrono::seconds(30);
+            if (std::chrono::steady_clock::now() - it->second->GetLastActivity() >
+                STALE_ACCUMULATION_TIMEOUT)
+            {
+                log_info(std::format("Peer {} has stale half-built sockets, flushing", clientId));
+                it->second->RemoveAllSockets();
+            }
+        }
+        it->second->Touch();
     }
 }
 
@@ -119,13 +154,15 @@ void PeerManager::CloseAllSockets()
     std::lock_guard<std::mutex> lock(peersMutex);
     for (auto &pair : peers)
     {
-        Peer &peer = pair.second;
+        Peer &peer = *pair.second;
         for (SocketFd socket : peer.GetSockets())
         {
             log_info(std::format("Closing socket {} for peer with client ID {}", socket, peer.GetClientId()));
             SocketClose(socket);
         }
-        SocketClose(peer.GetUdpSocket());
+        SocketFd udp = peer.GetUdpSocket();
+        if (udp != -1)
+            SocketClose(udp);
     }
     peers.clear();
 }

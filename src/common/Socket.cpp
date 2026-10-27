@@ -11,9 +11,43 @@
 #include <cstring> // For strerror
 #include <errno.h> // For errno
 #include <sys/ioctl.h>
+#include <sys/select.h> // For FD_SETSIZE on macOS
 #endif
 
 using namespace Logger;
+
+namespace
+{
+// send() on a socket whose peer has gone away raises SIGPIPE on POSIX, which
+// terminates the process unless ignored. The executables ignore SIGPIPE today,
+// but library/test code paths do not — set SO_NOSIGPIPE where the platform offers
+// it (macOS/BSD) and pass MSG_NOSIGNAL where available (Linux) so a transient
+// disconnect can never kill the process. Both are no-ops elsewhere.
+int AddNoSigPipeFlag(int flags)
+{
+#if defined(MSG_NOSIGNAL)
+    flags |= MSG_NOSIGNAL;
+#endif
+    return flags;
+}
+
+#if defined(__APPLE__)
+// select() writes into fixed-size fd_set bitmaps. Passing an fd >= FD_SETSIZE
+// is undefined behaviour (out-of-bounds write -> memory corruption), and with
+// many peers a process can easily allocate fds above 1023. Detect that case and
+// fall back to poll() for the whole set. poll() is only avoided in the common
+// path because of its historical macOS TCP quirks, not because it is invalid.
+bool AnyFdExceedsSelectLimit(const struct pollfd *fds, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (fds[i].fd >= 0 && fds[i].fd >= FD_SETSIZE)
+            return true;
+    }
+    return false;
+}
+#endif
+} // namespace
 
 // Socket creation and configuration functions
 SocketFd SocketCreate(int domain, int type, int protocol) {
@@ -30,6 +64,17 @@ SocketFd SocketCreate(int domain, int type, int protocol) {
     if (socketFd < 0) {
         SocketLogLastError();
         return -1;
+    }
+#endif
+
+#if defined(__APPLE__)
+    // Do not let a write to a reset/closed peer raise SIGPIPE. This matters most
+    // for short-lived library/test use where the executable's signal setup may
+    // not apply, but also protects any future embedder.
+    if (type == SOCK_STREAM)
+    {
+        int one = 1;
+        setsockopt(socketFd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
     }
 #endif
 
@@ -91,6 +136,8 @@ bool IsSocketNonBlocking(SocketFd socketFd) {
 // Socket polling functions
 int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
 #ifdef _WIN32
+    if (socketFd == INVALID_SOCKET)
+        return 0;
     // Windows implementation using select
     fd_set readfds, writefds, exceptfds;
     FD_ZERO(&readfds);
@@ -131,8 +178,23 @@ int SocketPoll(SocketFd socketFd, int events, int timeoutMs) {
     }
     return result; // 0 for timeout, -1 for error
 #elif defined(__APPLE__)
+    if (socketFd < 0)
+        return 0;
     // macOS: select() is more reliable than poll() for TCP sockets.
-    // macOS poll() has known issues with socket fds.
+    // macOS poll() has known issues with socket fds. However, select() MUST NOT
+    // be given an fd >= FD_SETSIZE (it would corrupt memory), so fall back to
+    // poll() for those descriptors.
+    if (socketFd >= FD_SETSIZE)
+    {
+        struct pollfd pfd;
+        pfd.fd = socketFd;
+        pfd.events = static_cast<short>(events);
+        pfd.revents = 0;
+        int result = poll(&pfd, 1, timeoutMs);
+        if (result > 0)
+            return pfd.revents;
+        return result;
+    }
     fd_set readfds, writefds, exceptfds;
     FD_ZERO(&readfds);
     FD_ZERO(&writefds);
@@ -215,14 +277,25 @@ int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
     // WSAPoll fills revents directly (POLLRDNORM->POLLIN, POLLERR/POLLHUP/POLLNVAL).
     return result;
 #elif defined(__APPLE__)
+    // select() cannot represent fds >= FD_SETSIZE. On a busy server fd numbers
+    // routinely exceed 1023, so fall back to poll() rather than corrupt memory.
+    if (AnyFdExceedsSelectLimit(fds, count))
+    {
+        int result = poll(fds, count, timeoutMs);
+        if (result < 0 && (errno == EBADF || errno == EINTR))
+            return 0;
+        return result;
+    }
+
     fd_set readfds, writefds, exceptfds;
     FD_ZERO(&readfds);
     FD_ZERO(&writefds);
     FD_ZERO(&exceptfds);
-    int maxFd = 0;
+    int maxFd = -1;
     int validCount = 0;
     for (size_t i = 0; i < count; i++) {
-        if (fds[i].fd == -1) continue;
+        fds[i].revents = 0;
+        if (fds[i].fd < 0) continue;
         if (fds[i].events & POLLIN) FD_SET(fds[i].fd, &readfds);
         if (fds[i].events & POLLOUT) FD_SET(fds[i].fd, &writefds);
         FD_SET(fds[i].fd, &exceptfds);
@@ -240,7 +313,7 @@ int SocketPollMany(struct pollfd *fds, size_t count, int timeoutMs) {
     if (result > 0) {
         for (size_t i = 0; i < count; i++) {
             fds[i].revents = 0;
-            if (fds[i].fd == -1) continue;
+            if (fds[i].fd < 0) continue;
             if (FD_ISSET(fds[i].fd, &readfds)) fds[i].revents |= POLLIN;
             if (FD_ISSET(fds[i].fd, &writefds)) fds[i].revents |= POLLOUT;
             if (FD_ISSET(fds[i].fd, &exceptfds)) fds[i].revents |= POLLERR;
@@ -289,6 +362,7 @@ int SocketBytesAvailable(SocketFd socketFd)
 
 // Standard blocking I/O operations
 ssize_t SendTcpData(SocketFd socketFd, const void *data, size_t length, int flags) {
+    flags = AddNoSigPipeFlag(flags);
 #if defined(_WIN32)
     return send(socketFd, (const char *)data, length, flags);
 #else
@@ -335,6 +409,7 @@ ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flag
 
 ssize_t SendTcpDirect(SocketFd socketFd, const void *data, size_t length, int flags)
 {
+    flags = AddNoSigPipeFlag(flags);
 #if defined(_WIN32)
     ssize_t bytesSent = send(socketFd, (const char *)data, (int)length, flags);
 #else
@@ -440,8 +515,9 @@ int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr,
             }
         }
 #else
-        if (errno == EINPROGRESS) {
-            // Connection in progress, wait for it to complete
+        if (errno == EINPROGRESS || errno == EINTR) {
+            // Connection in progress, wait for it to complete. EINTR means the
+            // connect syscall was interrupted but the handshake continues.
             if (IsSocketWritable(socketFd, timeoutMs)) {
                 // Check if connection succeeded
                 int optval;
@@ -489,14 +565,29 @@ ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, 
     while (totalBytesRead < bytesToRead) {
         ssize_t bytesRead = recv(socketFd, bufPtr + totalBytesRead, bytesToRead - totalBytesRead, flags);
 
-        if (bytesRead < 0) {
-            SocketLogLastError();
-            return -1;
-        } else if (bytesRead == 0) {
+        if (bytesRead > 0) {
+            totalBytesRead += bytesRead;
+            continue;
+        }
+        if (bytesRead == 0) {
+            // Peer closed before the full message arrived.
             return totalBytesRead;
         }
 
-        totalBytesRead += bytesRead;
+#ifdef _WIN32
+        int error = WSAGetLastError();
+        if (error == WSAEINTR)
+            continue; // signal/interrupt: retry
+        if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT)
+            return -1; // SO_RCVTIMEO elapsed: caller closes the socket
+#else
+        if (errno == EINTR)
+            continue; // signal/interrupt: retry
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return -1; // SO_RCVTIMEO elapsed: caller closes the socket
+#endif
+        SocketLogLastError();
+        return -1;
     }
 
     return totalBytesRead;
@@ -632,5 +723,31 @@ void SocketReuseAddress(SocketFd socketFd)
     setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 #else
     setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
+}
+
+int SocketSetReceiveTimeout(SocketFd socketFd, int timeoutMs)
+{
+#if defined(_WIN32)
+    DWORD timeout = (timeoutMs > 0) ? static_cast<DWORD>(timeoutMs) : 0;
+    return setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
+#else
+    struct timeval timeout;
+    timeout.tv_sec = timeoutMs / 1000;
+    timeout.tv_usec = (timeoutMs % 1000) * 1000;
+    return setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+#endif
+}
+
+int SocketSetSendTimeout(SocketFd socketFd, int timeoutMs)
+{
+#if defined(_WIN32)
+    DWORD timeout = (timeoutMs > 0) ? static_cast<DWORD>(timeoutMs) : 0;
+    return setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout));
+#else
+    struct timeval timeout;
+    timeout.tv_sec = timeoutMs / 1000;
+    timeout.tv_usec = (timeoutMs % 1000) * 1000;
+    return setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 #endif
 }

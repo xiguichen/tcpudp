@@ -115,7 +115,8 @@ void TcpVirtualChannel::open()
     connReceiveQueues.clear();
     for (size_t i = 0; i < connections.size(); ++i)
     {
-        connReceiveQueues.push_back(std::make_unique<SpscQueue<DeliveryItem>>());
+        connReceiveQueues.push_back(
+            std::make_unique<SpscQueue<DeliveryItem, CONN_RECEIVE_QUEUE_CAPACITY>>());
     }
 
     connSendStats.clear();
@@ -156,8 +157,6 @@ void TcpVirtualChannel::open()
         disconnectCB
     );
 
-    ioThread->start();
-
     sendThread = std::make_shared<TcpVCSendThread>(
         connections,
         sendQueue,
@@ -167,8 +166,6 @@ void TcpVirtualChannel::open()
         socketStatuses,
         disconnectCB
     );
-
-    sendThread->start();
 
     // Default resendCallback: re-enqueue the original packet with its messageId onto the dedicated
     // resend queue so it is sent over the resend connections (VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1).
@@ -217,7 +214,14 @@ void TcpVirtualChannel::open()
         };
     }
 
-    opened = true;
+    // Publish "open" BEFORE the IO thread can observe a dead connection. Otherwise
+    // a connection that is already closed at open() time fires disconnectCB while
+    // opened is still false, the callback returns early, and the VC is then marked
+    // open with zero live connections — no full-disconnect notification ever fires.
+    opened.store(true);
+
+    ioThread->start();
+    sendThread->start();
 }
 
 void TcpVirtualChannel::send(const char *data, size_t size)
@@ -271,10 +275,13 @@ bool TcpVirtualChannel::isOpen() const
 
 void TcpVirtualChannel::close()
 {
-    bool wasOpen = opened.exchange(false);
+    // Idempotent and safe against concurrent calls. Previously the partial
+    // teardown below ran on every call (only the thread stop was guarded by
+    // opened.exchange), so a second close() from another thread could join an
+    // already-joined reorder/send/IO thread — undefined behaviour (terminate).
+    std::call_once(closeOnce, [this]() {
+        opened.store(false);
 
-    if (wasOpen)
-    {
         this->sendQueue->cancelWait();
         if (this->resendQueue)
             this->resendQueue->cancelWait();
@@ -304,26 +311,36 @@ void TcpVirtualChannel::close()
             if (conn && conn->isConnected())
                 conn->disconnect();
         }
-    }
 
-    reorderRunning.store(false);
-    reorderCv.notify_one();
-    if (reorderThread.joinable())
-    {
-        reorderThread.join();
-    }
+        reorderRunning.store(false);
+        reorderCv.notify_all();
+        if (reorderThread.joinable())
+        {
+            // close() can be reached from a VC callback running on the reorder
+            // thread (owner destruction). Never self-join; detach instead.
+            if (reorderThread.get_id() == std::this_thread::get_id())
+                reorderThread.detach();
+            else
+                reorderThread.join();
+        }
 
-    if (messageTracker)
-    {
-        messageTracker->clear();
-    }
+        if (messageTracker)
+        {
+            messageTracker->clear();
+        }
 
-    sentDataCache.clear();
+        sentDataCache.clear();
+    });
 }
 
 void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data,
                                               int sourceConnIndex)
 {
+    // The reorder thread is gone once close() has run; enqueuing would only grow
+    // the SPSC buffers until the connection objects are released.
+    if (!opened.load(std::memory_order_acquire))
+        return;
+
     if (sourceConnIndex >= 0 && static_cast<size_t>(sourceConnIndex) < connReceiveQueues.size())
     {
         bool enqueued = connReceiveQueues[sourceConnIndex]->try_enqueue({messageId, data, sourceConnIndex});
@@ -340,14 +357,14 @@ void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<
 
 void TcpVirtualChannel::processResendRequest(uint64_t messageId)
 {
-    log_info(std::format("[RESEND] Received resend request for messageId={}", messageId));
+    log_debug(std::format("[RESEND] Received resend request for messageId={}", messageId));
 
     if (messageTracker)
     {
         int connIndex = messageTracker->getConnectionIndex(messageId);
         if (connIndex >= 0 && static_cast<size_t>(connIndex) < socketStatuses.size())
         {
-            log_info(std::format("[RESEND] Marking conn={} as degraded for messageId={}", connIndex, messageId));
+            log_debug(std::format("[RESEND] Marking conn={} as degraded for messageId={}", connIndex, messageId));
             socketStatuses[connIndex]->markDegraded();
         }
     }
@@ -357,7 +374,7 @@ void TcpVirtualChannel::processResendRequest(uint64_t messageId)
     if (dataVec && resendCallback)
     {
         const VCDataPacket *packet = reinterpret_cast<const VCDataPacket *>(dataVec->data());
-        log_info(std::format("[RESEND] Resending messageId={}", messageId));
+        log_debug(std::format("[RESEND] Resending messageId={}", messageId));
         resendCallback(messageId, reinterpret_cast<const char *>(packet->data), packet->dataLength);
     }
     else if (!dataVec)
@@ -439,12 +456,32 @@ void TcpVirtualChannel::sendMissingNotifications()
         return;
     }
 
+    // Rate-limit the scan itself. This function is called from the reorder loop
+    // on every iteration; without this, once the initial interval elapsed it
+    // re-walked the whole gap for every incoming packet (O(gap) per packet).
+    if (now - lastNotifyTime < missingNotifyIntervalMs)
+    {
+        return;
+    }
+    lastNotifyTime = now;
+
+    // Bound the per-call work even when the gap is enormous. The missing-notify
+    // mechanism is a hint (the sender retries via pendingResendIds even if a
+    // notify is lost), so scanning a capped prefix is sufficient and prevents a
+    // pathological gap from pinning a core.
+    static constexpr size_t MAX_SCAN_IDS_PER_NOTIFY = 4096;
+
     std::vector<uint64_t> missingIds;
-    auto expected = nextMessageId.load();
+    const uint64_t expected = nextMessageId.load();
+    uint64_t scanFrom = expected;
+    size_t scanned = 0;
     for (const auto &kv : receivedDataMap)
     {
-        for (uint64_t id = expected; id < kv.first; ++id)
+        if (kv.first <= scanFrom)
+            continue;
+        for (uint64_t id = scanFrom; id < kv.first; ++id)
         {
+            ++scanned;
             if (notifiedMissingIds.find(id) == notifiedMissingIds.end())
             {
                 missingIds.push_back(id);
@@ -453,8 +490,11 @@ void TcpVirtualChannel::sendMissingNotifications()
                     break;
                 }
             }
+            if (scanned >= MAX_SCAN_IDS_PER_NOTIFY)
+                break;
         }
-        if (missingIds.size() >= VC_MAX_MISSING_IDS_PER_NOTIFY)
+        scanFrom = kv.first + 1;
+        if (missingIds.size() >= VC_MAX_MISSING_IDS_PER_NOTIFY || scanned >= MAX_SCAN_IDS_PER_NOTIFY)
         {
             break;
         }
@@ -484,15 +524,19 @@ std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDat
 {
     std::vector<DeliveryItem> items;
 
+    // This is the only writer of nextMessageId (the reorder thread). Advance a
+    // local copy and publish once instead of doing an atomic RMW per packet.
+    uint64_t expected = nextMessageId.load(std::memory_order_relaxed);
     std::map<uint64_t, ReceivedItem>::iterator it;
-    while ((it = receivedDataMap.find(nextMessageId)) != receivedDataMap.end())
+    while ((it = receivedDataMap.find(expected)) != receivedDataMap.end())
     {
         notifiedMissingIds.erase(it->first);
         lastDeliveredConnIndex = it->second.sourceConnIndex;
         items.push_back({it->first, std::move(it->second.data), it->second.sourceConnIndex});
         receivedDataMap.erase(it);
-        nextMessageId.fetch_add(1);
+        ++expected;
     }
+    nextMessageId.store(expected, std::memory_order_release);
 
     return items;
 }

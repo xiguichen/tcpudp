@@ -18,15 +18,15 @@ using namespace Logger;
 #ifndef EXCLUDE_MAIN
 Server server;
 
-void signalHandler(int signum)
-{
-    log_info(std::format("Received signal: {}", signum));
-    PeerManager::CloseAllSockets();
-    log_info("Sleep for 4 seconds to allow cleanup");
-    std::this_thread::sleep_for(std::chrono::milliseconds(4000));
-    server.stop();
+// Async-signal-safe: set a flag and shut the listener down so the accept poll
+// returns. Logging, PeerManager::CloseAllSockets() (mutexes + close on fds in
+// use by VC threads) and sleeping in a handler can deadlock or corrupt state.
+static volatile sig_atomic_t g_stopRequested = 0;
 
-    exit(0);
+void signalHandler(int /*signum*/)
+{
+    g_stopRequested = 1;
+    server.requestStop();
 }
 #endif
 
@@ -92,9 +92,9 @@ int main(int argc, char *argv[])
     catch (const std::exception &)
     {
         log_error("Exception caught in main, stopping server.");
-        server.stop();
     }
 
+    server.stop();
     return 0;
 }
 #endif

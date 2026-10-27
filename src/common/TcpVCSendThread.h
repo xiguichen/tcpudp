@@ -62,6 +62,11 @@ class TcpVCSendThread : public StopableThread
     // but busy connections as traffic grew — driving a reconnect/resend storm.
     static constexpr int PARTIAL_SEND_BUDGET_MS = 3000;
     static constexpr int PARTIAL_SEND_POLL_MS = 20;
+    // Recompute per-connection scores at most this often. The TCP telemetry
+    // (RTT/cwnd/bytes-in-flight) does not change meaningfully within a few
+    // milliseconds, and re-sampling 24+ sockets for every packet dominated the
+    // send hot path.
+    static constexpr int SCORE_REFRESH_INTERVAL_MS = 10;
 
     // Shared wake primitive for the idle wait. Held by both this thread and the
     // queues' enqueue notifiers via shared_ptr, so a queue can safely wake the
@@ -75,6 +80,10 @@ class TcpVCSendThread : public StopableThread
 
     std::function<void(TcpConnectionSp)> disconnectCallback;
     std::mutex connectionsMutex;
+    // Bumped whenever replaceConnection() changes a slot. run() keeps a cached
+    // snapshot and only copies the 32-element vectors when this changes, instead
+    // of allocating/copying them for every packet.
+    std::atomic<uint64_t> connGeneration{0};
     std::condition_variable connAvailableCv;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
