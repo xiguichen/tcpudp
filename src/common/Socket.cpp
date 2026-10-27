@@ -487,7 +487,14 @@ int SocketConnect(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t 
 }
 
 int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr, socklen_t destAddrLen, int timeoutMs) {
-    
+    // Actually switch the socket to non-blocking first. Without this the connect
+    // below is a blocking connect and the timeout is never honoured (on macOS a
+    // black-holed SYN blocks for the OS default ~75 s).
+    if (SetSocketNonBlocking(socketFd) != 0) {
+        SocketLogLastError();
+        return -1;
+    }
+
     // Attempt to connect
     int result = connect(socketFd, destAddr, destAddrLen);
     
@@ -538,8 +545,10 @@ int SocketConnectNonBlocking(SocketFd socketFd, const struct sockaddr *destAddr,
         }
 #endif
     }
-    
-    
+
+    // Restore blocking mode for the caller's bounded handshake write (SO_SNDTIMEO).
+    // TcpConnection switches the socket to non-blocking again for the VC data path.
+    SetSocketBlocking(socketFd);
     return result;
 }
 

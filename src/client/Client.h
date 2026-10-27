@@ -42,7 +42,7 @@ class Client
     std::vector<SocketFd> tcpSockets;
     std::vector<uint32_t> tcpConnectionIds; // maps slotIndex → unique connectionId
     std::atomic<uint32_t> nextConnectionId{1}; // incrementing counter for unique IDs
-    std::atomic<SocketFd> udpSocket{-1};
+    std::atomic<SocketFd> udpSocket{static_cast<SocketFd>(-1)};
     struct sockaddr_in udpAddr{};
     struct sockaddr_in remoteUdpAddr{};
     // Serialises UDP recv/send/close. Without it, Stop()/requestStop() closing

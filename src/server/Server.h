@@ -48,7 +48,7 @@ class Server
     bool Listen();
     void AcceptConnections();
 
-    std::atomic<SocketFd> serverSocket{-1};
+    std::atomic<SocketFd> serverSocket{static_cast<SocketFd>(-1)};
 
     // Protects socketToConnId/clientConnSlots: the accept thread and the VC
     // disconnect callbacks (which run on VC IO threads) both touch them.

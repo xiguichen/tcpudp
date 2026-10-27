@@ -124,7 +124,7 @@ class TcpConnection
     std::mutex disconnectMutex; // Per-instance mutex for disconnect (not static — avoids cross-instance deadlock)
     std::mutex fdMutex;         // Serialises syscalls against disconnect()/close()
     std::atomic<bool> connected{false}; // Connection state (atomic for thread safety)
-    std::atomic<SocketFd> socketFd{-1}; // Socket file descriptor (atomic: read while disconnect() closes)
+    std::atomic<SocketFd> socketFd{static_cast<SocketFd>(-1)}; // Socket file descriptor (atomic: read while disconnect() closes)
 
     // Diagnostics-only state (atomic to avoid extra locking in send threads)
     std::atomic<bool> diagSendInFlight{false};
