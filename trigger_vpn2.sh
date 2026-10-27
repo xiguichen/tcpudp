@@ -13,12 +13,13 @@
 #   6. Print the command for the user to run the client.
 #
 # Usage:
-#   ./trigger_vpn2.sh [--host HOST] [--server PATH] [--release TAG]
+#   ./trigger_vpn2.sh [--host HOST] [--server PATH] [--release TAG] [--update]
 #
 # Options (defaults in parentheses):
 #   --host HOST     SSH host/alias for vpn2        (vpn2)
 #   --server PATH   tcpudp server binary on vpn2   (~/tcpudp/server)
-#   --release TAG   GitHub release tag to download (v1.1.16)
+#   --release TAG   GitHub release tag to download (nightly)
+#   --update        Download and replace the server binary even if it exists
 #   --help          Show this message
 #
 # Prerequisites:
@@ -33,16 +34,18 @@ cd "$SCRIPT_DIR"
 
 HOST="vpn2"
 SERVER="~/tcpudp/server"
-RELEASE="v1.1.16"
+RELEASE="nightly"
 RUNDIR="~/tcpudp"
 LOCAL_RUN_DIR="github_run"
+FORCE_DOWNLOAD=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host) HOST="$2"; shift 2 ;;
         --server) SERVER="$2"; shift 2 ;;
         --release) RELEASE="$2"; shift 2 ;;
-        --help) sed -n '2,27p' "$0"; exit 0 ;;
+        --update|--download) FORCE_DOWNLOAD=true; shift ;;
+        --help) sed -n '2,29p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1"; echo "Run '$0 --help' for usage."; exit 1 ;;
     esac
 done
@@ -60,7 +63,7 @@ fi
 
 # ---- Step 1: restart server + tunnel on vpn2 ----
 echo "=== Step 1: Restarting server + cloudflared tunnel on $HOST ==="
-REMOTE_OUTPUT=$(SERVER="$SERVER" RELEASE="$RELEASE" RUNDIR="$RUNDIR" \
+REMOTE_OUTPUT=$(SERVER="$SERVER" RELEASE="$RELEASE" RUNDIR="$RUNDIR" FORCE_DOWNLOAD="$FORCE_DOWNLOAD" \
     ssh "$HOST" 'bash -s' <<'REMOTE_EOF'
 set -euo pipefail
 
@@ -68,7 +71,8 @@ RUNDIR="${RUNDIR:=$HOME/tcpudp}"
 SERVER="${SERVER:=$RUNDIR/server}"
 SERVER="${SERVER/#\~/$HOME}"
 RUNDIR="${RUNDIR/#\~/$HOME}"
-RELEASE="${RELEASE:-v1.1.16}"
+RELEASE="${RELEASE:-nightly}"
+FORCE_DOWNLOAD="${FORCE_DOWNLOAD:-false}"
 
 fail() {
     echo "ERROR: $1" >&2
@@ -76,15 +80,24 @@ fail() {
 }
 
 command -v cloudflared >/dev/null || fail "cloudflared not found on $(hostname)"
-mkdir -p "$RUNDIR"
+mkdir -p "$RUNDIR" "$(dirname "$SERVER")"
 
-if [ ! -x "$SERVER" ]; then
+if [ "$FORCE_DOWNLOAD" = "true" ] || [ ! -x "$SERVER" ]; then
+    # The nightly release is rebuilt from main. Use --update to refresh an
+    # existing binary; without it, keep reusing the installed build.
+    ARTIFACT_NAME="tcpudp-ubuntu-latest"
+    TMP_DIR=$(mktemp -d "$RUNDIR/.release.XXXXXX")
+    trap 'rm -rf "$TMP_DIR"' EXIT
     echo "  Downloading release $RELEASE..." >&2
-    cd "$RUNDIR"
-    curl -fsSL "https://github.com/xiguichen/tcpudp/releases/download/$RELEASE/tcpudp-ubuntu-latest.tar.gz" -o tcpudp-ubuntu-latest.tar.gz
-    tar xzf tcpudp-ubuntu-latest.tar.gz
-    cp tcpudp-ubuntu-latest/server "$SERVER"
-    chmod +x "$SERVER"
+    curl -fsSL "https://github.com/xiguichen/tcpudp/releases/download/$RELEASE/$ARTIFACT_NAME.tar.gz" \
+        -o "$TMP_DIR/$ARTIFACT_NAME.tar.gz"
+    tar xzf "$TMP_DIR/$ARTIFACT_NAME.tar.gz" -C "$TMP_DIR"
+    chmod +x "$TMP_DIR/$ARTIFACT_NAME/server"
+    # Rename on the same filesystem. A running server keeps its old inode, so
+    # this does not fail with ETXTBSY; the old process is stopped below.
+    mv -f "$TMP_DIR/$ARTIFACT_NAME/server" "$SERVER"
+else
+    echo "  Reusing existing server $SERVER (use --update to download $RELEASE)" >&2
 fi
 
 echo "  Restarting tcpudp server..." >&2
