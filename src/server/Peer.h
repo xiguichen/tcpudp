@@ -52,18 +52,17 @@ class Peer
     void SetUdpAddress(const struct sockaddr_in &addr);
 
     // <summary>
-    // Get a snapshot of the TCP sockets associated with the peer.
-    // Returned by value: a reference to the internal vector is invalidated by a
-    // concurrent AddSocket()/RemoveAllSockets() (accept thread vs. disconnect
-    // callback), which previously led to use-after-free during VC creation.
+    // Take ownership of the accumulated TCP sockets.
+    // Used when they become owned by a virtual channel; the peer must not close
+    // them afterwards. Returned by value so a concurrent AddSocket() cannot
+    // invalidate the caller's snapshot.
     // </summary>
-    std::vector<SocketFd> GetSockets();
+    std::vector<SocketFd> TakeSockets();
 
     // Timestamp of the last socket accumulation activity. Used to discard a
     // half-built peer whose client vanished mid-handshake and later reconnects
     // from scratch (otherwise stale FDs are spliced into the new VC).
     std::chrono::steady_clock::time_point GetLastActivity() const;
-    void Touch();
 
     // <summary>
     // Get the UDP socket associated with the peer

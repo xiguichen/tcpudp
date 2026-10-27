@@ -53,7 +53,11 @@ ssize_t RecvUdpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flag
 ssize_t RecvTcpData(SocketFd socketFd, void *buffer, size_t bufferSize, int flags);
 
 // Specialized receive functions
-ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int bytesToRead);
+// Reads exactly bytesToRead bytes unless the peer closes or the total deadline
+// expires. totalTimeoutMs bounds the whole read (<= 0 means no deadline), so a
+// peer trickling bytes cannot extend it by resetting a per-recv timeout.
+ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int bytesToRead,
+                            int totalTimeoutMs);
 
 // Socket control operations
 int SocketListen(SocketFd socketFd, int backlog);

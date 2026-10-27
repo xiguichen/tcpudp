@@ -36,7 +36,17 @@ class UdpSocketHandle
             return;
         ssize_t sent = sendto(fd, data, size, 0, (const struct sockaddr *)&addr, sizeof(addr));
         if (sent < 0)
-            log_error("Failed to send data to UDP socket");
+        {
+            // The socket is non-blocking so Close() never waits behind a full
+            // send buffer. A full buffer is normal backpressure: drop, don't spam.
+#ifdef _WIN32
+            if (WSAGetLastError() != WSAEWOULDBLOCK)
+                log_error("Failed to send data to UDP socket");
+#else
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+                log_error("Failed to send data to UDP socket");
+#endif
+        }
         else
             log_debug(std::format("Sent {} bytes to UDP socket", sent));
     }
@@ -178,6 +188,11 @@ void Server::AcceptConnections()
             break;
         if (!IsSocketReadable(listenFd, 250))
             continue;
+        // Stop() may have closed the listen fd while we were polling (it no
+        // longer shutdowns it from the signal path). Don't accept on a stale
+        // descriptor number that the OS may have reused.
+        if (!running.load(std::memory_order_acquire))
+            break;
 
         sockaddr_in clientAddr{};
         socklen_t clientLen = sizeof(clientAddr);
@@ -230,9 +245,13 @@ void Server::AcceptConnections()
         // Bound the handshake read. The accept loop is single-threaded, so
         // without a timeout one client that connects and never sends its MsgBind
         // (or a half-open socket) stalls every other client indefinitely — they
-        // then time out and reconnect, amplifying the outage.
-        SocketSetReceiveTimeout(clientSocket, 5000);
-        ssize_t received = RecvTcpDataWithSize(clientSocket, bindBuffer.data(), bindBuffer.size(), 0, sizeof(MsgBind));
+        // then time out and reconnect, amplifying the outage. The deadline is
+        // for the whole fixed-size message: a peer trickling one byte per second
+        // must not be able to hold the accept loop for minute-scale periods.
+        static constexpr int HANDSHAKE_TIMEOUT_MS = 5000;
+        SocketSetReceiveTimeout(clientSocket, HANDSHAKE_TIMEOUT_MS);
+        ssize_t received = RecvTcpDataWithSize(clientSocket, bindBuffer.data(), bindBuffer.size(), 0, sizeof(MsgBind),
+                                               HANDSHAKE_TIMEOUT_MS);
         SocketSetReceiveTimeout(clientSocket, 0); // restore blocking for the VC path
 
         if (received != static_cast<ssize_t>(sizeof(MsgBind)))
@@ -276,13 +295,13 @@ void Server::AcceptConnections()
                     log_info(std::format("[Server] Initial connect for clientId {} while a VC exists — "
                                          "tearing down stale VC and re-establishing",
                                          clientId));
-                    // close() synchronously disconnects all connections, which runs the VC
-                    // disconnect callback: removes the VC from VcManager, removes the peer,
-                    // closes the old UDP socket, and clears clientConnSlots. It is idempotent,
-                    // so the VC's later destruction won't re-fire it.
+                    // close() synchronously disconnects all connections and runs
+                    // the VC teardown callback: closes the old UDP socket, removes
+                    // the peer, clears clientConnSlots, and removes this VC from
+                    // VcManager. It is idempotent, so the VC's later destruction
+                    // won't re-fire it.
                     existingVc->close();
-                    if (VcManager::getInstance().Exists(clientId))
-                        VcManager::getInstance().Remove(clientId);
+                    VcManager::getInstance().RemoveIf(clientId, existingVc);
                     // Intentionally fall through to the fresh-accumulation path below.
                 }
                 else
@@ -322,7 +341,15 @@ void Server::AcceptConnections()
                     continue;
                 }
 
-                tcpVc->replaceConnection(targetSlot, clientSocket);
+                if (!tcpVc->replaceConnection(targetSlot, clientSocket))
+                {
+                    // The VC started closing while this socket was in flight;
+                    // replaceConnection() closed it. Do not register a mapping for
+                    // a slot that was not actually replaced.
+                    log_info(std::format("[Server] VC for clientId {} is closing; dropping slot {} replacement",
+                                         clientId, targetSlot));
+                    continue;
+                }
 
                 // Keep clientConnSlots consistent and bounded: drop any entries pointing
                 // at this slot, then register the id the client just sent for it.
@@ -388,8 +415,10 @@ void Server::AcceptConnections()
         if (peer->GetSocketCount() >= VC_TCP_CONNECTIONS)
         {
 
-            // Create the virtual channel
-            std::vector<SocketFd> fds = peer->GetSockets();
+            // Ownership moves to the VC. The peer must stay empty: otherwise a
+            // later full/stale flush (or CloseAllSockets) would close fds the VC
+            // already owns, potentially killing a reused fd number.
+            std::vector<SocketFd> fds = peer->TakeSockets();
             VirtualChannelSp vc = VirtualChannelFactory::create(fds);
 
             // Match client-side reorder timeout for WAN links.
@@ -428,6 +457,20 @@ void Server::AcceptConnections()
                 continue;
             }
 
+            // UdpSocketHandle::Send() holds its mutex across sendto(). Make the
+            // socket non-blocking so a full send buffer cannot block Close() (and
+            // therefore the reorder thread join) indefinitely.
+            if (SetSocketNonBlocking(udpSocket) != 0)
+            {
+                log_error("Failed to set UDP socket non-blocking");
+                SocketClose(udpSocket);
+                VcManager::getInstance().Remove(clientId);
+                PeerManager::RemovePeer(clientId);
+                std::lock_guard<std::mutex> mapLock(mapsMutex);
+                clientConnSlots.erase(clientId);
+                continue;
+            }
+
             // Large receive buffer so a burst from the UDP target is not dropped
             // by the kernel while the reorder thread is forwarding to the VC.
             SocketSetReceiveBufferSize(udpSocket, 4 * 1024 * 1024);
@@ -455,9 +498,8 @@ void Server::AcceptConnections()
             udpAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
             udpAddr.sin_port = htons(ServerConfiguration::getInstance()->getUdpTargetPort());
 
-            peer->SetUdpSocket(udpSocket);
-            peer->SetUdpAddress(udpAddr);
-
+            // The UdpSocketHandle owns the UDP fd; do not also publish it on the
+            // peer, or CloseAllSockets() could double-close the handle's fd.
             auto udpHandle = std::make_shared<UdpSocketHandle>(udpSocket);
 
             vc->setReceiveCallback([udpHandle, udpAddr](const char *data, size_t size) {
@@ -465,33 +507,48 @@ void Server::AcceptConnections()
             });
 
             std::weak_ptr<VirtualChannel> weakVc = vc;
-            ((TcpVirtualChannel *)vc.get())->setDisconnectCallback([this, clientId, udpHandle, weakVc]() {
-                // Remove VC from manager only if it exists to avoid double-removal
-                if (VcManager::getInstance().Exists(clientId)) {
-                    VcManager::getInstance().Remove(clientId);
-                }
-                // Do NOT call RemoveAllSockets here: TcpVirtualChannel::disconnectCB already
-                // closed the socket FDs via TcpConnection::disconnect(). Calling SocketClose
-                // again on the same FD integers would double-close them and risk closing
-                // a newly accepted socket that got the same FD number from the OS.
-                // Just remove the peer so the next AddPeer call gets a clean slate.
-                PeerManager::RemovePeer(clientId);
-                // Close the UDP socket to unblock recv() in the UDP receive thread,
-                // allowing it to exit. The thread must not close it again after this.
-                udpHandle->Close();
-                // Clear the connectionId→slot map — the VC is gone.
-                {
-                    std::lock_guard<std::mutex> mapLock(mapsMutex);
-                    clientConnSlots.erase(clientId);
-                }
 
-                // Removing the VC from VcManager drops the owner's reference, but the
-                // IO/send thread callbacks each hold a shared_ptr to the VC, so without
-                // close() the object (and its reorder thread, its four 4096-slot queues
-                // and the sent-data cache) leaked on every full disconnect. close()
-                // joins the VC threads, so it must NOT run on this callback's thread;
-                // a separate thread does the join while a strong reference keeps the
-                // VC alive until teardown completes.
+            // Teardown runs for every close path (all-connections-dead, explicit
+            // initial-connect replacement, and shutdown), not only when the VC
+            // decides to notify a disconnect. Keep the peer/VC mapping until the
+            // very end so the accept loop cannot start a new accumulation while
+            // cleanup is still in progress.
+            vc->setTeardownCallback([this, clientId, udpHandle, weakVc]() {
+                auto self = weakVc.lock();
+                auto current = VcManager::getInstance().Get(clientId);
+                bool ownsClient = !current || current == self;
+
+                // Always close this channel's UDP socket, even if a newer VC
+                // has replaced it. This unblocks the UDP receive thread.
+                udpHandle->Close();
+
+                if (ownsClient)
+                {
+                    // Do NOT call RemoveAllSockets here: TcpVirtualChannel::close
+                    // already closed the socket FDs via TcpConnection::disconnect().
+                    // Calling SocketClose again on the same FD integers would
+                    // double-close them and risk closing a newly accepted socket
+                    // that got the same FD number from the OS.
+                    PeerManager::RemovePeer(clientId);
+                    {
+                        std::lock_guard<std::mutex> mapLock(mapsMutex);
+                        clientConnSlots.erase(clientId);
+                    }
+                    // Remove the registry entry last: until it is gone, a new
+                    // initial connection blocks in close() instead of racing us.
+                    if (self)
+                        VcManager::getInstance().RemoveIf(clientId, self);
+                }
+            });
+
+            vc->setDisconnectCallback([weakVc]() {
+                // Removing the VC from VcManager drops the owner's reference, but
+                // the IO/send thread callbacks each hold a shared_ptr to the VC.
+                // Without close() the object (and its reorder thread, its queues
+                // and the sent-data cache) leaked on every full disconnect.
+                // close() joins the VC threads, so it must NOT run on this
+                // callback's thread; a separate thread does the join while a
+                // strong reference keeps the VC alive until teardown completes.
                 if (auto vcToClose = weakVc.lock())
                 {
                     std::thread([vcToClose]() { vcToClose->close(); }).detach();

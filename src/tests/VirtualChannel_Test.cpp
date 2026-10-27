@@ -2,11 +2,14 @@
 #include "Socket.h"
 #include "TcpVirtualChannel.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <gtest/gtest.h>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 // Test fixture for TcpVirtualChannel
 class TcpVirtualChannelTest : public ::testing::Test
@@ -568,6 +571,103 @@ TEST(PartialSendTest, NonBlockingSendCanReturnPartial)
 }
 
 // ---------------------------------------------------------------------------
+// Teardown is distinct from disconnect: close() must always run server-side
+// cleanup, even when it is invoked explicitly (reconnect/shutdown) rather than
+// by the all-connections-dead notification.
+TEST_F(TcpVirtualChannelTest, CloseInvokesTeardownCallbackExactlyOnce)
+{
+    std::atomic<int> teardownCount{0};
+    serverChannel->setTeardownCallback([&] { teardownCount.fetch_add(1); });
+
+    serverChannel->open();
+    serverChannel->close();
+    serverChannel->close();
+
+    EXPECT_EQ(teardownCount.load(), 1)
+        << "teardown must run when close() is explicit, and only once";
+}
+
+// close() must not leave the worker callback objects holding a strong self
+// reference after teardown, or the VC and its own thread objects form a cycle.
+TEST_F(TcpVirtualChannelTest, CloseReleasesChannelOwnership)
+{
+    serverChannel->open();
+    std::weak_ptr<TcpVirtualChannel> weak = serverChannel;
+
+    serverChannel->close();
+    serverChannel.reset();
+
+    EXPECT_TRUE(weak.expired()) << "close() must release the worker callbacks' self references";
+}
+
+// close() invoked from the reorder/receive thread must not try to join or
+// destroy that same worker. It defers teardown to a fresh thread.
+TEST_F(TcpVirtualChannelTest, CloseFromReceiveCallbackIsDeferredSafely)
+{
+    std::atomic<int> teardownCount{0};
+    std::mutex doneMutex;
+    std::condition_variable doneCv;
+
+    serverChannel->setTeardownCallback([&] {
+        teardownCount.fetch_add(1);
+        doneCv.notify_all();
+    });
+    serverChannel->setReceiveCallback([this](const char *, size_t) { serverChannel->close(); });
+
+    serverChannel->open();
+    clientChannel->open();
+
+    const char payload[] = "close-from-callback";
+    clientChannel->send(payload, sizeof(payload));
+
+    std::unique_lock<std::mutex> lock(doneMutex);
+    ASSERT_TRUE(doneCv.wait_for(lock, std::chrono::seconds(5), [&] { return teardownCount.load() > 0; }))
+        << "teardown never completed after close() from the receive thread";
+    EXPECT_EQ(teardownCount.load(), 1);
+}
+
+// The dangerous path is the IO thread, not just the reorder thread. Use the
+// disconnect callback (which runs on the IO thread when the only connection
+// dies) to call close(), and prove close() returned before teardown ran.
+TEST_F(TcpVirtualChannelTest, CloseFromIoThreadIsDeferred)
+{
+    std::atomic<int> teardownCount{0};
+    std::atomic<bool> closeReturned{false};
+    std::atomic<bool> teardownSawCloseReturn{false};
+    std::mutex gateMutex;
+    std::condition_variable gateCv;
+
+    serverChannel->setTeardownCallback([&] {
+        std::unique_lock<std::mutex> lock(gateMutex);
+        bool sawReturn = gateCv.wait_for(lock, std::chrono::seconds(2), [&] { return closeReturned.load(); });
+        teardownSawCloseReturn.store(sawReturn);
+        teardownCount.fetch_add(1);
+        gateCv.notify_all();
+    });
+    serverChannel->setDisconnectCallback([&] {
+        serverChannel->close();
+        {
+            std::lock_guard<std::mutex> lock(gateMutex);
+            closeReturned.store(true);
+        }
+        gateCv.notify_all();
+    });
+
+    serverChannel->open();
+    clientChannel->open();
+
+    // Shut down (not close) the client socket so the server IO thread observes
+    // EOF and fires the all-connections-dead disconnect path.
+    ASSERT_EQ(SocketShutdown(clientSocket, SHUT_RDWR), 0);
+
+    std::unique_lock<std::mutex> lock(gateMutex);
+    ASSERT_TRUE(gateCv.wait_for(lock, std::chrono::seconds(5), [&] { return teardownCount.load() > 0; }))
+        << "teardown never completed after close() from the IO thread";
+    EXPECT_EQ(teardownCount.load(), 1);
+    EXPECT_TRUE(teardownSawCloseReturn.load())
+        << "close() blocked on its own IO thread instead of deferring teardown";
+}
+
 // Partial-disconnect tests: one connection drops, VC continues; replace works
 // ---------------------------------------------------------------------------
 

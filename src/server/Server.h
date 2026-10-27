@@ -28,17 +28,13 @@ class Server
 
     void stop();
 
-    // Async-signal-friendly stop request: only atomics + shutdown(), no logging,
-    // locks, allocation or thread joins. Calling stop() directly from a signal
-    // handler can deadlock (the interrupted thread may hold the log/mutex lock)
-    // and is not async-signal-safe.
-    void requestStop()
-    {
-        running.store(false, std::memory_order_release);
-        SocketFd fd = serverSocket.load(std::memory_order_acquire);
-        if (fd != -1)
-            SocketShutdown(fd, SHUT_RDWR);
-    }
+    // Async-signal-friendly stop request: one atomic store, no logging, locks,
+    // allocation, thread joins or fd access. Calling stop() directly from a
+    // signal handler can deadlock (the interrupted thread may hold the log/mutex
+    // lock) and is not async-signal-safe. The accept loop polls with a 250ms
+    // timeout, so it observes the flag without a cross-thread shutdown() on an
+    // fd number that stop() may have already closed and the OS reused.
+    void requestStop() { running.store(false, std::memory_order_release); }
 
     bool isRunning() const { return running.load(std::memory_order_acquire); }
 

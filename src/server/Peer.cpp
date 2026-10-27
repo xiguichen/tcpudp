@@ -26,7 +26,6 @@ Peer &Peer::operator=(const Peer &other)
 void Peer::AddSocket(SocketFd socket)
 {
     std::lock_guard<std::mutex> lock(socketMutex);
-    lastActivity = std::chrono::steady_clock::now();
     if (sockets.size() >= VC_TCP_CONNECTIONS)
     {
         log_error(std::format("Peer {} already has {} sockets (max {}), closing excess socket {}",
@@ -35,6 +34,9 @@ void Peer::AddSocket(SocketFd socket)
         return;
     }
     sockets.push_back(socket);
+    // Only successful accumulation counts as activity. Refreshing this on a
+    // rejected socket would keep a stale peer alive forever.
+    lastActivity = std::chrono::steady_clock::now();
 }
 
 size_t Peer::GetSocketCount()
@@ -53,22 +55,18 @@ void Peer::SetUdpAddress(const struct sockaddr_in &addr)
     udpAddress = addr;
 }
 
-std::vector<SocketFd> Peer::GetSockets()
+std::vector<SocketFd> Peer::TakeSockets()
 {
     std::lock_guard<std::mutex> lock(socketMutex);
-    return sockets;
+    auto taken = std::move(sockets);
+    sockets.clear();
+    return taken;
 }
 
 std::chrono::steady_clock::time_point Peer::GetLastActivity() const
 {
     std::lock_guard<std::mutex> lock(socketMutex);
     return lastActivity;
-}
-
-void Peer::Touch()
-{
-    std::lock_guard<std::mutex> lock(socketMutex);
-    lastActivity = std::chrono::steady_clock::now();
 }
 
 SocketFd Peer::GetUdpSocket() const
@@ -125,6 +123,16 @@ void PeerManager::AddPeer(uint32_t clientId)
             log_info(std::format("Peer {} reconnecting, flushing stale sockets", clientId));
             it->second->RemoveAllSockets();
         }
+        else if (it->second->GetSocketCount() >= VC_TCP_CONNECTIONS)
+        {
+            // A full accumulation with no VC means the previous channel's sockets
+            // never became a live VC (e.g. an explicit close raced the accept
+            // loop). Keeping them would reject every socket of the next channel.
+            // The accept loop is single-threaded, so a normal in-progress
+            // accumulation cannot be full here without having created its VC.
+            log_info(std::format("Peer {} has a full accumulation with no VC, flushing", clientId));
+            it->second->RemoveAllSockets();
+        }
         else
         {
             // The client vanished halfway through building its 32-socket channel
@@ -139,7 +147,6 @@ void PeerManager::AddPeer(uint32_t clientId)
                 it->second->RemoveAllSockets();
             }
         }
-        it->second->Touch();
     }
 }
 
@@ -155,7 +162,7 @@ void PeerManager::CloseAllSockets()
     for (auto &pair : peers)
     {
         Peer &peer = *pair.second;
-        for (SocketFd socket : peer.GetSockets())
+        for (SocketFd socket : peer.TakeSockets())
         {
             log_info(std::format("Closing socket {} for peer with client ID {}", socket, peer.GetClientId()));
             SocketClose(socket);

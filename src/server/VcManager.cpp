@@ -15,6 +15,16 @@ void VcManager::Remove(uint32_t clientId)
     vcs.erase(clientId);
 }
 
+bool VcManager::RemoveIf(uint32_t clientId, const VirtualChannelSp &vc)
+{
+    std::lock_guard<std::mutex> lock(vcsMutex);
+    auto it = vcs.find(clientId);
+    if (it == vcs.end() || it->second != vc)
+        return false;
+    vcs.erase(it);
+    return true;
+}
+
 bool VcManager::Exists(uint32_t clientId)
 {
     std::lock_guard<std::mutex> lock(vcsMutex);

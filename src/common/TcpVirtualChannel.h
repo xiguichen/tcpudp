@@ -88,7 +88,8 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     // Hot-swaps the connection at slotIndex with a new socket fd.
     // The IO and send threads pick up the new connection on their next iteration.
-    void replaceConnection(int slotIndex, SocketFd newFd);
+    // Returns false (and closes newFd) when the channel is already closing.
+    bool replaceConnection(int slotIndex, SocketFd newFd);
 
     std::shared_ptr<MessageTracker> getMessageTracker() const { return messageTracker; }
 
@@ -119,6 +120,13 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     std::shared_ptr<TcpVCIoThread> ioThread;
     std::shared_ptr<TcpVCSendThread> sendThread;
+    // Protects replacement of the worker pointers. close() resets them only after
+    // joining both workers, breaking the callbacks' shared_ptr cycles; a concurrent
+    // close() may still be checking isCurrentThread() while the first one resets.
+    std::mutex workerThreadsMutex;
+    // Serializes replaceConnection() against close() so a slot swap cannot
+    // propagate into worker objects that close() is joining/destroying.
+    std::mutex replaceMutex;
     std::vector<TcpConnectionSp> connections;
     BlockingQueueSp sendQueue;
     BlockingQueueSp resendQueue; // dedicated queue for resend traffic (conns VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1)
@@ -139,6 +147,7 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     mutable std::mutex disconnectMutex;
 
     std::thread reorderThread;
+    std::atomic<std::thread::id> reorderThreadId{}; // safe own-thread check for close()
     std::atomic<bool> reorderRunning{false};
     void reorderThreadFunc();
 

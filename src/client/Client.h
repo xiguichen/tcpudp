@@ -23,8 +23,8 @@ class Client
     // </Summary>
     void Stop();
 
-    // Async-signal-friendly: sets the stop flag and shuts the UDP socket down
-    // (no logging/locking/joins). The main thread then calls Stop() normally.
+    // Async-signal-friendly: only stores the stop flag (no logging/locking/joins
+    // and no fd access). The main thread then calls Stop() normally.
     void requestStop();
 
     // <Summary>
@@ -45,14 +45,26 @@ class Client
     std::atomic<SocketFd> udpSocket{static_cast<SocketFd>(-1)};
     struct sockaddr_in udpAddr{};
     struct sockaddr_in remoteUdpAddr{};
-    // Serialises UDP recv/send/close. Without it, Stop()/requestStop() closing
-    // the socket concurrently with the receive loop could recv() on a recycled FD
-    // (on macOS close() does not wake a blocked recv() either).
+    // Serialises UDP recv/send/close. Without it, Stop() closing the socket
+    // concurrently with the receive loop could recv()/send() on a recycled FD
+    // (on macOS close() does not wake a blocked recv() either). The socket is
+    // non-blocking so a send cannot hold this lock across Stop()'s close.
     std::mutex udpMutex;
     std::mutex remoteUdpMutex;
 
     VirtualChannelSp vc = nullptr;
     std::mutex vcMutex;
+
+    // Serializes the Stop() cleanup with the start of a new Start(). The setup
+    // itself is not held under this lock: Stop() must be able to set running=false
+    // and cancel an in-progress 32-socket connect.
+    std::mutex lifecycleMutex;
+
+    // Start() and a detached ReconnectVC() may both try to rebuild the channel.
+    // Recursive because PrepareVC() holds it and calls TeardownVc(), which must
+    // take it too when called directly from Start()'s failure paths. This is the
+    // single lock that keeps clear() from running between socket pushes.
+    std::recursive_mutex prepareMutex;
 
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning{false};

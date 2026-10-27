@@ -1,5 +1,6 @@
 #include "Socket.h"
 #include <gtest/gtest.h>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstring>
@@ -106,6 +107,51 @@ void ForceReset(SocketFd fd)
 }
 
 } // namespace
+
+class SocketRecvDeadlineTest : public ::testing::Test
+{
+  protected:
+    void SetUp() override { SocketInit(); }
+    void TearDown() override { SocketClearnup(); }
+};
+
+// A peer that trickles one byte per interval must not be able to extend the
+// handshake deadline indefinitely. The bound applies to the whole fixed-size
+// read, not to each individual recv().
+TEST_F(SocketRecvDeadlineTest, TotalDeadlineBoundsTrickleRead)
+{
+    auto pair = MakeConnectedPair();
+    SocketFd reader = pair.first;
+    SocketFd writer = pair.second;
+
+    // Deliberately long per-recv timeout: the total deadline must win.
+    ASSERT_EQ(SocketSetReceiveTimeout(reader, 1000), 0);
+
+    constexpr int kBytes = 12;
+    std::atomic<bool> stop{false};
+    std::thread sender([&] {
+        const char byte = 'x';
+        for (int i = 0; i < kBytes && !stop.load(); ++i)
+        {
+            SendTcpData(writer, &byte, 1, 0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+
+    char buffer[kBytes];
+    auto start = std::chrono::steady_clock::now();
+    ssize_t rc = RecvTcpDataWithSize(reader, buffer, sizeof(buffer), 0, kBytes, 200);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    stop.store(true);
+    sender.join();
+    SocketClose(reader);
+    SocketClose(writer);
+
+    EXPECT_EQ(rc, -1) << "a trickling peer must hit the total read deadline";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1000))
+        << "deadline is applied per recv() instead of to the whole message";
+}
 
 class SocketDirectErrorTest : public ::testing::Test
 {

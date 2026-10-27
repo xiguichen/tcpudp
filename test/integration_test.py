@@ -211,10 +211,12 @@ def run_perf_test(test_sock, server_addr, client_port,
     stop_rx.set()
     rx_thread.join(timeout=1.0)
     recv_end = time.monotonic()
-    recv_duration = recv_end - recv_start
 
     # ---- Results ----
-    recv_count = len(latencies)
+    # Count unique validated sequences, not latency samples: duplicate echoes
+    # are still one delivered packet, and packets without a valid RTT sample
+    # must not inflate the delivered count.
+    recv_count = len(received_seqs)
     lost = max(0, packet_count - recv_count - corrupted - send_errors)
 
     print(f"\n--- Performance Results ---")
@@ -239,7 +241,14 @@ def run_perf_test(test_sock, server_addr, client_port,
     p95 = latencies[int(len(latencies) * 0.95)]
     p99 = latencies[int(len(latencies) * 0.99)]
     loss_pct = (lost / packet_count) * 100.0
-    goodput_mbps = (recv_count * packet_size * 8) / recv_duration / 1e6 if recv_duration > 0 else 0.0
+    # Use the whole send+receive window, but stop at the last datagram actually
+    # received. recv_end includes up to 3s of quiet-tail waiting on a lossy run,
+    # which understates goodput without adding any delivered bytes. Measuring
+    # only after the send phase made goodput exceed the send rate (impossible
+    # for a loopback echo); max(last_rx, send_end) keeps the lower bound.
+    transfer_end = max(last_rx[0], send_end)
+    transfer_duration = transfer_end - send_start
+    goodput_mbps = (recv_count * packet_size * 8) / transfer_duration / 1e6 if transfer_duration > 0 else 0.0
 
     print(f"  Latency (ms): min={min_lat:.2f} avg={avg_lat:.2f} max={max_lat:.2f} "
           f"p50={p50:.2f} p95={p95:.2f} p99={p99:.2f}")

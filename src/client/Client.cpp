@@ -11,6 +11,10 @@
 
 bool Client::PrepareVC()
 {
+    // Serialize setup attempts from Start() and a detached ReconnectVC().
+    // Stop() does not take this lock; it cancels the attempt via running=false.
+    std::lock_guard<std::recursive_mutex> prepareLock(prepareMutex);
+
     log_info("Preparing virtual channel...");
 
     // Start from a clean slate. A previous attempt (e.g. a Start() where PrepareVC
@@ -150,7 +154,10 @@ bool Client::PrepareVC()
 
         log_debug(std::format("Sending data to UDP address: {}:{}", inet_ntoa(remoteAddr.sin_addr), ntohs(remoteAddr.sin_port)));
 
-        // send data to UDP socket
+        // Send under the same lock that Stop()/the receive loop use to close the
+        // UDP socket. Loading the fd and sending without it lets close() run in
+        // between, so the send can hit a recycled descriptor.
+        std::lock_guard<std::mutex> udpLock(udpMutex);
         SocketFd fd = udpSocket.load();
         if (fd != -1)
             SendUdpData(fd, data, size, 0, (struct sockaddr *)&remoteAddr, sizeof(remoteAddr));
@@ -176,14 +183,30 @@ bool Client::PrepareVC()
         }).detach();
     });
 
-    // Publish the fully-configured VC under the lock so the watchdog / reconnect paths
-    // never observe a half-built channel or race on the shared_ptr.
+    // Publish and open under the lock. Publishing first let a concurrent Stop()
+    // close the VC before open() ran; open() then restarted the threads on a
+    // channel whose closeOnce was already consumed, leaking them and risking
+    // null thread resets. Stop() now either sees no VC or a fully-open one.
+    bool started = false;
     {
         std::lock_guard<std::mutex> lock(vcMutex);
-        vc = newVc;
+        if (running.load(std::memory_order_acquire))
+        {
+            vc = newVc;
+            vc->open();
+            started = true;
+        }
     }
-
-    vc->open();
+    if (!started)
+    {
+        // Stop() won the race during the 32-socket setup. Do not publish a
+        // channel that nobody owns. close() already closed the owned TCP fds,
+        // so clear our bookkeeping to keep TeardownVc() from double-closing them.
+        newVc->close();
+        tcpSockets.clear();
+        tcpConnectionIds.clear();
+        return false;
+    }
 
     StartWatchdog();
 
@@ -202,7 +225,17 @@ bool Client::PrepareUdpSocket()
         log_error("Failed to create UDP socket");
         return false;
     }
-    udpSocket.store(socket);
+
+    // The VC receive callback sends on this socket while holding udpMutex. A
+    // blocking sendto() under buffer pressure would hold that lock across Stop()'s
+    // close() and prevent the VC threads from being joined. Under backpressure,
+    // drop the datagram instead.
+    if (SetSocketNonBlocking(socket) != 0)
+    {
+        log_error("Failed to set UDP socket non-blocking");
+        SocketClose(socket);
+        return false;
+    }
 
     // A single 1400-byte datagram burst can overflow the default UDP receive
     // buffer while this thread is forwarding to the VC; ask for a large buffer so
@@ -230,7 +263,25 @@ bool Client::PrepareUdpSocket()
     {
         log_error("Failed to bind UDP socket");
         SocketClose(socket);
-        udpSocket.store(-1);
+        return false;
+    }
+
+    // Do not publish the fd until it is fully bound. If Stop() won the race while
+    // we were binding, close the local socket instead of leaving an fd that no
+    // thread owns.
+    bool stored = false;
+    {
+        std::lock_guard<std::mutex> lock(udpMutex);
+        if (running.load(std::memory_order_acquire))
+        {
+            udpSocket.store(socket);
+            stored = true;
+        }
+    }
+    if (!stored)
+    {
+        log_info("Client stopped while preparing UDP socket");
+        SocketClose(socket);
         return false;
     }
 
@@ -312,6 +363,11 @@ void Client::StopWatchdog()
 
 void Client::TeardownVc()
 {
+    // Serialize the whole teardown with PrepareVC(). Without this, Start()'s
+    // failure cleanup could clear tcpSockets while a detached ReconnectVC() was
+    // between its socket pushes, leaving the new VC with missing/dead slots.
+    std::lock_guard<std::recursive_mutex> prepareLock(prepareMutex);
+
     // Stop the watchdog first so it can't touch the VC while we tear it down, and so a
     // subsequent StartWatchdog() never assigns over a still-joinable std::thread (which
     // would call std::terminate()).
@@ -343,24 +399,22 @@ void Client::TeardownVc()
 
 void Client::requestStop()
 {
-    // Async-signal-safe path: atomics + shutdown() only. No logs, no mutexes,
-    // no thread joins (a signal may interrupt a thread holding those locks).
+    // Async-signal-safe path: an atomic store only. Do not touch the UDP fd
+    // here: the signal may interrupt Stop() after it closed (and the OS reused)
+    // that fd number, in which case shutdown() would hit an unrelated socket.
+    // The receive loop uses a 250ms poll, so it observes this flag promptly.
     running.store(false, std::memory_order_release);
-    SocketFd fd = udpSocket.load(std::memory_order_acquire);
-    if (fd != -1)
-        SocketShutdown(fd, SHUT_RDWR);
 }
 
 void Client::Stop()
 {
     log_info("Client stopping...");
-    running.store(false, std::memory_order_release);
 
-    // Wake the UDP receive poll promptly (and make recvfrom return) without
-    // closing the FD underneath the loop; the loop/teardown closes it below.
-    SocketFd fd = udpSocket.load(std::memory_order_acquire);
-    if (fd != -1)
-        SocketShutdown(fd, SHUT_RDWR);
+    // Wait for a previous Stop() to finish before a new Start() can initialize
+    // resources. The setup paths are deliberately not held under this lock so
+    // this Stop can still cancel an in-progress connect via running=false.
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex);
+    running.store(false, std::memory_order_release);
 
     StopWatchdog();
 
@@ -387,7 +441,13 @@ void Client::Stop()
 
 void Client::Start()
 {
-    running = true;
+    {
+        // Do not begin a new session while a detached Stop() is still joining
+        // threads or closing fds. Release the lock before setup: Stop() must be
+        // able to set running=false to cancel the 32-socket connect.
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex);
+        running.store(true, std::memory_order_release);
+    }
     // Client logic to connect to server would go here
     // For example, create socket, connect, etc.
     log_info("Client started.");
@@ -436,20 +496,28 @@ bool Client::ReconnectVC(int maxRetries, int initialBackoffMs)
     int delayMs = 3000;
 
     while (running && retryCount < maxRetries) {
-        // Close existing VC
+        // Take prepareMutex across the close/clear block. PrepareVC() holds it for
+        // the entire 32-socket push sequence, so a clear() cannot drop half of a
+        // channel that is currently being built (which produced a zero-connection
+        // VC in the old bug).
         {
-            std::lock_guard<std::mutex> lock(vcMutex);
-            if (vc) {
-                vc->close();
-                vc = nullptr;
-            }
-        }
+            std::lock_guard<std::recursive_mutex> prepareLock(prepareMutex);
 
-        // Clear TCP sockets — they were already closed by vc->close() →
-        // TcpConnection::disconnect().  SocketClose again would be a double-close:
-        // the OS may have reassigned the FD numbers, silently killing new sockets.
-        tcpSockets.clear();
-        tcpConnectionIds.clear();
+            // Close existing VC
+            {
+                std::lock_guard<std::mutex> lock(vcMutex);
+                if (vc) {
+                    vc->close();
+                    vc = nullptr;
+                }
+            }
+
+            // Clear TCP sockets — they were already closed by vc->close() →
+            // TcpConnection::disconnect().  SocketClose again would be a double-close:
+            // the OS may have reassigned the FD numbers, silently killing new sockets.
+            tcpSockets.clear();
+            tcpConnectionIds.clear();
+        }
 
         // Wait before reconnect (gives server time to clean up)
         if (!running) break;
@@ -675,7 +743,17 @@ bool Client::ReconnectSingleSlot(int slotIndex)
         tcpConnectionIds[slotIndex] = newConnId;
     }
 
-    static_cast<TcpVirtualChannel *>(vc.get())->replaceConnection(slotIndex, tcpSocket);
+    if (!static_cast<TcpVirtualChannel *>(vc.get())->replaceConnection(slotIndex, tcpSocket))
+    {
+        // The channel started closing between the isOpen() check above and the
+        // swap. replaceConnection() closed tcpSocket; don't leave a stale fd in
+        // the bookkeeping vector for TeardownVc()/the next reconnect to reuse.
+        if (static_cast<size_t>(slotIndex) < tcpSockets.size())
+            tcpSockets[slotIndex] = -1;
+        log_info(std::format("Watchdog: slot {} reconnect aborted (VC closing).", slotIndex));
+        return false;
+    }
+
     log_info(std::format("Watchdog: slot {} reconnected successfully.", slotIndex));
     return true;
 }

@@ -567,11 +567,41 @@ int SocketShutdown(SocketFd socketFd, int how) {
 }
 
 // Specialized receive functions
-ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int bytesToRead) {
+ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, int flags, int bytesToRead,
+                            int totalTimeoutMs) {
+    if (bytesToRead <= 0)
+        return 0;
+    if (static_cast<size_t>(bytesToRead) > bufferSize)
+        bytesToRead = static_cast<int>(bufferSize);
+
     char *bufPtr = static_cast<char *>(buffer);
     ssize_t totalBytesRead = 0;
+    const auto deadline = totalTimeoutMs > 0
+                              ? std::chrono::steady_clock::now() + std::chrono::milliseconds(totalTimeoutMs)
+                              : std::chrono::steady_clock::time_point::max();
 
     while (totalBytesRead < bytesToRead) {
+        if (totalTimeoutMs > 0) {
+            // Poll for data with only the time left in the whole-read budget.
+            // Checking readiness before recv() also keeps a blocking socket from
+            // consuming another full SO_RCVTIMEO for every trickled byte.
+            auto remainingMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now())
+                    .count();
+            if (remainingMs <= 0)
+                return -1;
+            int waitMs = remainingMs > 1000000 ? 1000000 : static_cast<int>(remainingMs);
+            if (!IsSocketReadable(socketFd, waitMs))
+            {
+                // A false result can also mean EINTR (the poll helper maps an
+                // interrupted wait to 0). Retry while the total budget remains;
+                // only treat expiry as a timeout.
+                if (std::chrono::steady_clock::now() >= deadline)
+                    return -1;
+                continue;
+            }
+        }
+
         ssize_t bytesRead = recv(socketFd, bufPtr + totalBytesRead, bytesToRead - totalBytesRead, flags);
 
         if (bytesRead > 0) {
@@ -586,14 +616,20 @@ ssize_t RecvTcpDataWithSize(SocketFd socketFd, void *buffer, size_t bufferSize, 
 #ifdef _WIN32
         int error = WSAGetLastError();
         if (error == WSAEINTR)
-            continue; // signal/interrupt: retry
-        if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT)
-            return -1; // SO_RCVTIMEO elapsed: caller closes the socket
+            continue; // signal/interrupt: retry (deadline is checked next loop)
+        if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT) {
+            if (totalTimeoutMs > 0)
+                continue; // readiness raced; poll again within the deadline
+            return -1;    // SO_RCVTIMEO elapsed: caller closes the socket
+        }
 #else
         if (errno == EINTR)
-            continue; // signal/interrupt: retry
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return -1; // SO_RCVTIMEO elapsed: caller closes the socket
+            continue; // signal/interrupt: retry (deadline is checked next loop)
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (totalTimeoutMs > 0)
+                continue; // readiness raced; poll again within the deadline
+            return -1;    // SO_RCVTIMEO elapsed: caller closes the socket
+        }
 #endif
         SocketLogLastError();
         return -1;

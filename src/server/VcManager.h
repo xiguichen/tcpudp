@@ -22,6 +22,11 @@ public:
 
     void Remove(uint32_t clientId);
 
+    // Remove the mapping only if it still points at `vc`. Returns true when it
+    // was removed. This prevents a teardown of an old channel from deleting a
+    // newer channel that has already replaced it.
+    bool RemoveIf(uint32_t clientId, const VirtualChannelSp &vc);
+
     // Check if a VC exists for the given client
     bool Exists(uint32_t clientId);
 

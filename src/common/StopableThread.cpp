@@ -14,7 +14,7 @@ void StopableThread::stop()
     if (_thread.joinable())
     {
         // If called from a different thread, join to ensure clean termination
-        if (_thread.get_id() != std::this_thread::get_id())
+        if (!isCurrentThread())
         {
             log_info("Waiting for thread to join...");
             try
@@ -40,7 +40,11 @@ void StopableThread::stop()
 }
 void StopableThread::start()
 {
-    _thread = std::thread(&StopableThread::run, this);
+    _thread = std::thread([this]() {
+        _threadId.store(std::this_thread::get_id(), std::memory_order_release);
+        run();
+        _threadId.store(std::thread::id{}, std::memory_order_release);
+    });
 }
 bool StopableThread::isRunning()
 {
@@ -58,7 +62,7 @@ StopableThread::~StopableThread()
     // externally (e.g. via setRunning(false)) without being joined.
     if (_thread.joinable())
     {
-        if (_thread.get_id() == std::this_thread::get_id())
+        if (isCurrentThread())
         {
             // Destructor called from within the thread itself (e.g. the owning
             // object is destroyed from a callback executing on this thread).
@@ -107,7 +111,7 @@ void StopableThread::joinThread()
         // Never join ourselves: std::thread::join() on the current thread throws
         // std::system_error (EDEADLK) and can terminate. This happens when a
         // callback running on the thread triggers owner teardown.
-        if (_thread.get_id() == std::this_thread::get_id())
+        if (isCurrentThread())
         {
             log_debug("joinThread called from owning thread; detaching instead");
             _thread.detach();

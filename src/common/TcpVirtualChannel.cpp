@@ -149,23 +149,26 @@ void TcpVirtualChannel::open()
         selfGuard->processMissingNotify(missingIds);
     };
 
-    ioThread = std::make_shared<TcpVCIoThread>(
-        connections,
-        dataCb,
-        resendReqCb,
-        missingNotifyCb,
-        disconnectCB
-    );
+    {
+        std::lock_guard<std::mutex> lock(workerThreadsMutex);
+        ioThread = std::make_shared<TcpVCIoThread>(
+            connections,
+            dataCb,
+            resendReqCb,
+            missingNotifyCb,
+            disconnectCB
+        );
 
-    sendThread = std::make_shared<TcpVCSendThread>(
-        connections,
-        sendQueue,
-        resendQueue,
-        connSendStats,
-        messageTracker,
-        socketStatuses,
-        disconnectCB
-    );
+        sendThread = std::make_shared<TcpVCSendThread>(
+            connections,
+            sendQueue,
+            resendQueue,
+            connSendStats,
+            messageTracker,
+            socketStatuses,
+            disconnectCB
+        );
+    }
 
     // Default resendCallback: re-enqueue the original packet with its messageId onto the dedicated
     // resend queue so it is sent over the resend connections (VC_FIRST_RESEND_CONN_INDEX..VC_TCP_CONNECTIONS-1).
@@ -275,6 +278,35 @@ bool TcpVirtualChannel::isOpen() const
 
 void TcpVirtualChannel::close()
 {
+    // A VC callback can call close() from the send/IO/reorder thread. Joining
+    // that same thread from close() (or destroying its thread object while it
+    // is still executing) is undefined behaviour. Defer the whole teardown to
+    // a fresh thread that owns a strong reference; the callback then returns and
+    // its worker can be joined safely.
+    if (auto self = weak_from_this().lock())
+    {
+        // Copy the worker pointers under the lock: another close() may reset them
+        // after it joins the workers, while this caller is still checking whether
+        // it is running on one of them.
+        std::shared_ptr<TcpVCSendThread> send;
+        std::shared_ptr<TcpVCIoThread> io;
+        {
+            std::lock_guard<std::mutex> lock(workerThreadsMutex);
+            send = sendThread;
+            io = ioThread;
+        }
+
+        const auto selfId = std::this_thread::get_id();
+        const bool onOwnThread = (send && send->isCurrentThread()) ||
+                                 (io && io->isCurrentThread()) ||
+                                 reorderThreadId.load(std::memory_order_acquire) == selfId;
+        if (onOwnThread)
+        {
+            std::thread([self]() { self->close(); }).detach();
+            return;
+        }
+    }
+
     // Idempotent and safe against concurrent calls. Previously the partial
     // teardown below ran on every call (only the thread stop was guarded by
     // opened.exchange), so a second close() from another thread could join an
@@ -288,48 +320,81 @@ void TcpVirtualChannel::close()
 
         log_debug("Closing TcpVirtualChannel connections");
 
-        if (sendThread)
+        // Hold replaceMutex for the whole teardown. A slot replacement that
+        // passed its isOpen() check just before opened became false must either
+        // finish before we snapshot/destroy the worker state, or observe
+        // opened == false and close its new fd without installing it.
         {
-            log_debug("Stopping and joining send thread");
-            sendThread->stop();
-            sendThread->joinThread();
-            sendThread.reset();
-            log_debug("Send thread stopped and joined");
+            std::lock_guard<std::mutex> replaceLock(replaceMutex);
+
+            if (sendThread)
+            {
+                log_debug("Stopping and joining send thread");
+                sendThread->stop();
+                sendThread->joinThread();
+                log_debug("Send thread stopped and joined");
+            }
+
+            if (ioThread)
+            {
+                log_debug("Stopping and joining IO thread");
+                ioThread->stop();
+                ioThread->joinThread();
+                log_debug("IO thread stopped and joined");
+            }
+
+            for (auto &conn : connections)
+            {
+                if (conn && conn->isConnected())
+                    conn->disconnect();
+            }
+
+            reorderRunning.store(false);
+            reorderCv.notify_all();
+            if (reorderThread.joinable())
+            {
+                // close() can be reached from a VC callback running on the reorder
+                // thread (owner destruction). Never self-join; detach instead.
+                if (reorderThread.get_id() == std::this_thread::get_id())
+                    reorderThread.detach();
+                else
+                    reorderThread.join();
+            }
+
+            if (messageTracker)
+            {
+                messageTracker->clear();
+            }
+
+            sentDataCache.clear();
+
+            // The worker objects hold callbacks that capture a strong self
+            // reference. Both workers have been joined, so release them now or
+            // the VC and its thread objects form a permanent cycle.
+            {
+                std::lock_guard<std::mutex> lock(workerThreadsMutex);
+                sendThread.reset();
+                ioThread.reset();
+            }
         }
 
-        if (ioThread)
+        // Owner-side cleanup must run for every close path, not only the
+        // all-connections-dead notification. Move the callback out first so
+        // destroying it cannot invalidate the object while it is running.
+        auto teardown = std::move(teardownCallback);
+        if (teardown)
         {
-            log_debug("Stopping and joining IO thread");
-            ioThread->stop();
-            ioThread->joinThread();
-            ioThread.reset();
-            log_debug("IO thread stopped and joined");
+            try
+            {
+                teardown();
+            }
+            catch (...)
+            {
+                // A throwing callback must not leave closeOnce half-completed
+                // (or terminate the process if close() came from a destructor).
+                log_error("Virtual channel teardown callback threw an exception");
+            }
         }
-
-        for (auto &conn : connections)
-        {
-            if (conn && conn->isConnected())
-                conn->disconnect();
-        }
-
-        reorderRunning.store(false);
-        reorderCv.notify_all();
-        if (reorderThread.joinable())
-        {
-            // close() can be reached from a VC callback running on the reorder
-            // thread (owner destruction). Never self-join; detach instead.
-            if (reorderThread.get_id() == std::this_thread::get_id())
-                reorderThread.detach();
-            else
-                reorderThread.join();
-        }
-
-        if (messageTracker)
-        {
-            messageTracker->clear();
-        }
-
-        sentDataCache.clear();
     });
 }
 
@@ -543,6 +608,7 @@ std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDat
 
 void TcpVirtualChannel::reorderThreadFunc()
 {
+    reorderThreadId.store(std::this_thread::get_id(), std::memory_order_release);
     log_info("Reorder thread started");
 
     uint64_t lastProcessedSeq = 0;
@@ -845,6 +911,7 @@ void TcpVirtualChannel::reorderThreadFunc()
         }
     }
 
+    reorderThreadId.store(std::thread::id{}, std::memory_order_release);
     log_info("Reorder thread stopped");
 }
 
@@ -860,17 +927,28 @@ std::vector<int> TcpVirtualChannel::getDeadSlots() const
     return dead;
 }
 
-void TcpVirtualChannel::replaceConnection(int slotIndex, SocketFd newFd)
+bool TcpVirtualChannel::replaceConnection(int slotIndex, SocketFd newFd)
 {
     if (slotIndex < 0 || static_cast<size_t>(slotIndex) >= connections.size())
     {
         log_error(std::format("[VC] replaceConnection: invalid slotIndex {}", slotIndex));
-        return;
+        SocketClose(newFd);
+        return false;
     }
 
     auto newConn = std::make_shared<TcpConnection>(newFd);
     auto newStats = std::make_shared<ConnSendStats>();
     auto newStatus = std::make_shared<SocketStatus>();
+
+    // Serialize the swap with close(). If close() has already started, it has
+    // set opened=false and will join the workers; installing newConn here would
+    // either leak the fd or touch worker objects after they were destroyed.
+    std::lock_guard<std::mutex> replaceLock(replaceMutex);
+    if (!opened.load(std::memory_order_acquire))
+    {
+        log_info(std::format("[VC] replaceConnection: channel closing, rejecting slot {}", slotIndex));
+        return false; // newConn's destructor closes newFd
+    }
 
     // Update VC's own connections vector under disconnectMutex so getDeadSlots() and
     // disconnectCB see a consistent view of which connections are alive.
@@ -892,6 +970,7 @@ void TcpVirtualChannel::replaceConnection(int slotIndex, SocketFd newFd)
         sendThread->replaceConnection(slotIndex, newConn, newStats, newStatus);
 
     log_info(std::format("[VC] Replaced connection at slot {}", slotIndex));
+    return true;
 }
 
 NetworkScore TcpVirtualChannel::getNetworkScore() const

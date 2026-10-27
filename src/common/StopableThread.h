@@ -18,6 +18,10 @@ class StopableThread
     // Join the thread (for cleanup in derived classes)
     void joinThread();
 
+    // True when called from this object's own worker thread. Uses an atomic id
+    // so callers can safely test before the thread is joined/reset.
+    bool isCurrentThread() const { return _threadId.load(std::memory_order_acquire) == std::this_thread::get_id(); }
+
     // Set the running state of the thread (public to allow external signaling)
     virtual void setRunning(bool running);
 
@@ -29,6 +33,7 @@ class StopableThread
 
   private:
     std::thread _thread; // Thread for execution
+    std::atomic<std::thread::id> _threadId{}; // id while the worker runs; avoids racing on _thread
     std::atomic<bool> running{true}; // Flag to control the thread execution (atomic for thread safety)
     std::mutex stopMutex; // Mutex for thread safety
 };
