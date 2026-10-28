@@ -61,7 +61,7 @@ run.py             # Helper run script
 - Each VC uses multiple TCP connections (default: 32, defined as `VC_TCP_CONNECTIONS` in `VcProtocol.h`) for reliability and throughput
 - Message-based protocol (VCDataPacket) with sequence IDs and max payload of 2000 bytes
 - Managed by singleton `VcManager` to track active channels by client ID
-- Incoming UDP packets are dropped when any send queue exceeds `SEND_QUEUE_DROP_THRESHOLD` (500) to prevent unbounded memory growth
+- Incoming UDP packets are dropped at ingress when the send queue exceeds `SEND_QUEUE_DROP_THRESHOLD` (1000) to prevent unbounded memory growth. Receive-side per-connection queues express overflow as TCP backpressure (the IO thread stops reading that socket) instead of dropping already-accepted message IDs
 
 **Non-Blocking I/O**
 - All socket operations use non-blocking I/O with configurable timeouts
@@ -78,7 +78,7 @@ run.py             # Helper run script
 **VC Protocol** (`VcProtocol.h`)
 - Binary protocol using packed structures (`#pragma pack(push, 1)`)
 - `VCHeader` contains packet type and message ID; `VCDataPacket` includes data length and payload
-- Constants: `VC_MAX_DATA_PAYLOAD_SIZE` = 2000, `VC_TCP_CONNECTIONS` = 32, `SEND_QUEUE_DROP_THRESHOLD` = 500
+- Constants: `VC_MAX_DATA_PAYLOAD_SIZE` = 2000, `VC_TCP_CONNECTIONS` = 32, `SEND_QUEUE_DROP_THRESHOLD` = 1000
 
 **UVT Protocol** (`Protocol.h`)
 - Higher-level UDP-over-TCP framing protocol ("UVT" = UDP over TCP)

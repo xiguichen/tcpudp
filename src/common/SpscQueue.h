@@ -39,6 +39,17 @@ class SpscQueue
         return readPos.load(std::memory_order_acquire) == writePos.load(std::memory_order_acquire);
     }
 
+    /// True when try_enqueue() would fail because the queue has reached
+    /// Capacity - 1 entries (one slot is reserved to distinguish full from empty).
+    /// Only the producer thread should rely on the return value for a
+    /// check-then-enqueue decision; the consumer can always make it less full.
+    bool isFull() const
+    {
+        auto w = writePos.load(std::memory_order_relaxed);
+        auto nextW = (w + 1) % Capacity;
+        return nextW == readPos.load(std::memory_order_acquire);
+    }
+
   private:
     alignas(64) std::atomic<size_t> writePos{0};
     alignas(64) std::atomic<size_t> readPos{0};

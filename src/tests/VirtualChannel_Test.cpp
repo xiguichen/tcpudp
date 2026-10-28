@@ -428,6 +428,85 @@ TEST_F(TcpVirtualChannelTest, ReorderTimeoutResetsAfterGapFilled)
     ASSERT_EQ(callbackCount.load(), 4);
 }
 
+// Regression test for the per-connection receive-queue overflow that used to
+// discard packets ("connReceiveQueue[N] full, dropping messageId=...") and
+// then stall the whole channel until the reorder timeout.
+//
+// The consumer is blocked long enough for the 4096-slot queue to fill. A
+// correct receiver stops reading the socket (TCP backpressure) and resumes; it
+// must not drop any packet that already has a message id. Drops at the sender's
+// ingress are fine: those packets never enter the ordered stream.
+TEST_F(TcpVirtualChannelTest, ReceiveQueueBackpressureDropsNoPackets)
+{
+    std::atomic<int> received{0};
+    std::atomic<bool> firstCallbackEntered{false};
+    std::atomic<bool> releaseCallback{false};
+    std::mutex callbackMutex;
+    std::condition_variable callbackCv;
+
+    auto recvCallback = [&](const char *, size_t) {
+        int n = received.fetch_add(1) + 1;
+        if (n == 1)
+        {
+            {
+                std::lock_guard<std::mutex> lock(callbackMutex);
+                firstCallbackEntered.store(true);
+            }
+            callbackCv.notify_all();
+            std::unique_lock<std::mutex> lock(callbackMutex);
+            callbackCv.wait(lock, [&] { return releaseCallback.load(); });
+        }
+    };
+
+    serverChannel->setReceiveCallback(recvCallback);
+    // Keep the recovery window short so a skipped packet fails the test fast.
+    serverChannel->setReorderTimeout(std::chrono::milliseconds(500));
+    serverChannel->open();
+    clientChannel->open();
+
+    const char payload[64] = {};
+    clientChannel->send(payload, sizeof(payload));
+
+    // Wait until the reorder thread is parked inside the callback: everything
+    // received from now on must queue up behind it.
+    {
+        std::unique_lock<std::mutex> lock(callbackMutex);
+        ASSERT_TRUE(callbackCv.wait_for(lock, std::chrono::seconds(5),
+                                        [&] { return firstCallbackEntered.load(); }))
+            << "first packet was never delivered";
+    }
+
+    // Flood while the consumer is stalled. More than the receive-queue capacity
+    // is offered; the sender may drop at ingress (no message id assigned), but
+    // the channel must never drop an id it already accepted.
+    auto floodStart = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - floodStart < std::chrono::milliseconds(800))
+    {
+        clientChannel->send(payload, sizeof(payload));
+        std::this_thread::yield();
+    }
+    const uint64_t accepted = clientChannel->getSentMessageCount();
+
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex);
+        releaseCallback.store(true);
+    }
+    callbackCv.notify_all();
+
+    // Wait for the backlog to drain. With no loss this is much faster than the
+    // 500 ms reorder timeout that a skipped id would incur.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline &&
+           static_cast<uint64_t>(received.load()) < accepted)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_GT(accepted, 4096ULL) << "test did not offer enough packets to fill the receive queue";
+    EXPECT_EQ(static_cast<uint64_t>(received.load()), accepted)
+        << "the channel lost packets it had already accepted (receive queue overflow)";
+}
+
 // Test that send path handles partial TCP writes correctly.
 // With non-blocking sockets and small send buffers, send() can return fewer bytes
 // than requested. If the send thread doesn't retry the remaining bytes, the receiver

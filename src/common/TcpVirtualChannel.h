@@ -62,7 +62,15 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     virtual void close();
 
-    void processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex);
+    // Returns false when the packet could not be queued because the reorder
+    // thread has not drained this connection's queue yet. The IO thread treats
+    // that as backpressure and retries later; it must not discard the packet.
+    bool processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex);
+
+    // True when there is room in the per-connection receive queue. The IO
+    // thread consults this before reading a socket so a full queue is expressed
+    // as TCP backpressure instead of packet loss.
+    bool canAcceptFromConnection(int connIndex) const;
 
     void processResendRequest(uint64_t messageId);
 
@@ -92,6 +100,10 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     bool replaceConnection(int slotIndex, SocketFd newFd);
 
     std::shared_ptr<MessageTracker> getMessageTracker() const { return messageTracker; }
+
+    // Number of message ids assigned by send(), i.e. packets accepted into the
+    // ordered stream. Exposed for diagnostics and tests.
+    uint64_t getSentMessageCount() const { return lastSendMessageId.load(std::memory_order_relaxed); }
 
     std::vector<std::shared_ptr<SocketStatus>> getSocketStatuses() const { return socketStatuses; }
 
@@ -133,9 +145,11 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
 
     std::vector<std::shared_ptr<ConnSendStats>> connSendStats;
 
-    // Capacity is a safety margin, not the normal operating point: the reorder
-    // thread drains these continuously. 1024 slots overflowed when a callback
-    // stalled for a few hundred ms on a busy 1 Gbps link; 4096 absorbs that.
+    // Jitter buffer between the IO thread and the reorder thread. Overflow does
+    // not drop data: the IO thread stops reading that connection until the
+    // reorder thread frees a slot, so the backlog is expressed as TCP
+    // backpressure. 4096 absorbs a stalled receive callback (~46 ms at 1 Gbps)
+    // without pausing the socket; 1024 overflowed on a busy link.
     static constexpr size_t CONN_RECEIVE_QUEUE_CAPACITY = 4096;
     std::vector<std::unique_ptr<SpscQueue<DeliveryItem, CONN_RECEIVE_QUEUE_CAPACITY>>> connReceiveQueues;
     std::atomic<uint64_t> reorderEnqueueSeq{0};
@@ -163,6 +177,18 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     int lastDeliveredConnIndex{-1};
     std::chrono::steady_clock::time_point lastHealthLogTime;
     std::chrono::milliseconds reorderTimeoutMs{4000};
+
+    // Defensive fallback only: with backpressure a failed enqueue should not
+    // happen. Aggregate instead of logging one flushed line per packet so a
+    // storm cannot slow the producer thread further.
+    uint64_t droppedRxPackets{0};
+    std::chrono::steady_clock::time_point lastRxDropLogTime{};
+
+    // Ingress drops are normal overload behaviour for a UDP tunnel, but logging
+    // one flushed line per packet turns a drop burst into a log-I/O stall that
+    // makes the overload worse. Report the aggregate once per interval.
+    uint64_t droppedSendPackets{0};
+    std::chrono::steady_clock::time_point lastSendDropLogTime{};
 
     std::vector<uint64_t> lastRxMessageId;
     std::vector<std::chrono::steady_clock::time_point> lastRxTime;

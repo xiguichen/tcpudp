@@ -14,11 +14,19 @@
 class TcpVCIoThread : public StopableThread
 {
   public:
+    // dataCallback returns false when the destination cannot accept the packet
+    // right now. The IO thread then leaves the packet in its read buffer and
+    // stops reading that socket until canAcceptCallback reports room again.
+    // That is TCP-level backpressure: it must NOT be treated as a lost packet.
+    using DataCallback = std::function<bool(uint64_t, std::shared_ptr<std::vector<char>>, int)>;
+    using CanAcceptCallback = std::function<bool(int)>;
+
     TcpVCIoThread(std::vector<TcpConnectionSp> connections,
-                  std::function<void(uint64_t, std::shared_ptr<std::vector<char>>, int)> dataCallback,
+                  DataCallback dataCallback,
                   std::function<void(uint64_t)> resendRequestCallback,
                   std::function<void(const std::vector<uint64_t> &)> missingNotifyCallback,
-                  std::function<void(TcpConnectionSp)> disconnectCallback);
+                  std::function<void(TcpConnectionSp)> disconnectCallback,
+                  CanAcceptCallback canAcceptCallback = {});
 
     virtual ~TcpVCIoThread();
 
@@ -51,7 +59,19 @@ class TcpVCIoThread : public StopableThread
         }
     };
 
-    void readFromConnection(int connIndex, TcpConnectionSp conn);
+    // Reads and parses whatever the socket has. Returns false when parsing
+    // stopped because the destination queue is full (the connection is
+    // "paused" and must not be polled until canAcceptCallback clears).
+    bool readFromConnection(int connIndex, TcpConnectionSp conn);
+
+    // Parses complete packets already held in buf. Returns false if a DATA
+    // packet was left unconsumed because the destination is full.
+    bool parseBufferedPackets(int connIndex, TcpConnectionSp conn, ReadBuffer &buf);
+
+    bool canAccept(int connIndex) const
+    {
+        return !canAcceptCallback || canAcceptCallback(connIndex);
+    }
 
     std::mutex connectionsMutex;
     std::vector<TcpConnectionSp> connections;
@@ -61,8 +81,9 @@ class TcpVCIoThread : public StopableThread
     std::atomic<uint64_t> connGeneration{0};
     std::vector<ReadBuffer> readBuffers;
 
-    std::function<void(uint64_t, std::shared_ptr<std::vector<char>>, int)> dataCallback;
+    DataCallback dataCallback;
     std::function<void(uint64_t)> resendRequestCallback;
     std::function<void(const std::vector<uint64_t> &)> missingNotifyCallback;
     std::function<void(TcpConnectionSp)> disconnectCallback;
+    CanAcceptCallback canAcceptCallback;
 };

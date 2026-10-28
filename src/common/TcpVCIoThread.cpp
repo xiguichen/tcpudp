@@ -7,17 +7,23 @@
 using namespace Logger;
 
 static constexpr int IO_POLL_TIMEOUT_MS = 50;
+// While a connection is paused on a full receive queue, poll in short slices so
+// reading resumes promptly once the reorder thread frees a slot. This is only
+// used under overload; the normal path keeps the 50 ms timeout.
+static constexpr int PAUSED_POLL_TIMEOUT_MS = 5;
 
 TcpVCIoThread::TcpVCIoThread(std::vector<TcpConnectionSp> connections_,
-                              std::function<void(uint64_t, std::shared_ptr<std::vector<char>>, int)> dataCallback_,
+                              DataCallback dataCallback_,
                               std::function<void(uint64_t)> resendRequestCallback_,
                               std::function<void(const std::vector<uint64_t> &)> missingNotifyCallback_,
-                              std::function<void(TcpConnectionSp)> disconnectCallback_)
+                              std::function<void(TcpConnectionSp)> disconnectCallback_,
+                              CanAcceptCallback canAcceptCallback_)
     : connections(std::move(connections_)),
       dataCallback(std::move(dataCallback_)),
       resendRequestCallback(std::move(resendRequestCallback_)),
       missingNotifyCallback(std::move(missingNotifyCallback_)),
-      disconnectCallback(std::move(disconnectCallback_))
+      disconnectCallback(std::move(disconnectCallback_)),
+      canAcceptCallback(std::move(canAcceptCallback_))
 {
     readBuffers.resize(connections.size());
     for (auto &conn : connections)
@@ -54,6 +60,10 @@ void TcpVCIoThread::run()
     // Track per-slot fd values so we can detect when a connection is replaced
     // and clear the stale read buffer before the new connection's data arrives.
     std::vector<SocketFd> prevFds(numConns, -1);
+    // True while a slot is not being read because its receive queue is full.
+    // Leaving the bytes in the socket lets TCP flow control slow the sender
+    // down instead of discarding packets and creating a sequence gap.
+    std::vector<bool> paused(numConns, false);
 
     // Cached connection snapshot, refreshed only when replaceConnection() bumps
     // connGeneration. Copying 32 shared_ptrs (plus the mutex lock) every poll cycle
@@ -74,6 +84,7 @@ void TcpVCIoThread::run()
             cachedGen = gen;
         }
 
+        bool anyPaused = false;
         for (size_t i = 0; i < numConns; i++)
         {
             SocketFd currFd = (snapshot[i] && snapshot[i]->isConnected()) ? snapshot[i]->getSocketFd() : -1;
@@ -82,23 +93,55 @@ void TcpVCIoThread::run()
             {
                 readBuffers[i] = ReadBuffer{};
                 prevFds[i] = currFd;
+                paused[i] = false;
             }
 
-            if (currFd != -1)
+            if (currFd == -1)
+            {
+                paused[i] = false;
+                pollfds[i].fd = -1;
+                pollfds[i].events = 0;
+                pollfds[i].revents = 0;
+                continue;
+            }
+
+            if (!canAccept(static_cast<int>(i)))
+            {
+                // The reorder thread has not drained this slot's queue yet.
+                // Do not recv(): keeping the data in the socket is the
+                // backpressure signal, and dropping it would create a hole in
+                // the ordered stream.
+                paused[i] = true;
+            }
+            else if (paused[i])
+            {
+                // Room is available again. Bytes read on an earlier iteration
+                // may still be sitting in the local read buffer; poll() will
+                // not report those, so parse them now before polling.
+                paused[i] = false;
+                if (readBuffers[i].available() > 0 && !readFromConnection(static_cast<int>(i), snapshot[i]))
+                    paused[i] = true;
+            }
+
+            if (paused[i])
+            {
+                anyPaused = true;
+                pollfds[i].fd = -1;
+                pollfds[i].events = 0;
+                pollfds[i].revents = 0;
+            }
+            else
             {
                 pollfds[i].fd = currFd;
                 pollfds[i].events = POLLIN;
                 pollfds[i].revents = 0;
             }
-            else
-            {
-                pollfds[i].fd = -1;
-                pollfds[i].events = 0;
-                pollfds[i].revents = 0;
-            }
         }
 
-        int ready = SocketPollMany(pollfds.data(), numConns, IO_POLL_TIMEOUT_MS);
+        // A paused slot must be retried soon after the consumer frees space;
+        // there is no fd event to wake us for that transition.
+        int timeoutMs = anyPaused ? PAUSED_POLL_TIMEOUT_MS : IO_POLL_TIMEOUT_MS;
+        int ready = SocketPollMany(pollfds.data(), numConns, timeoutMs);
         if (ready < 0)
         {
             log_error("SocketPollMany failed");
@@ -122,7 +165,8 @@ void TcpVCIoThread::run()
                 {
                     continue;
                 }
-                readFromConnection(static_cast<int>(i), snapshot[i]);
+                if (!readFromConnection(static_cast<int>(i), snapshot[i]))
+                    paused[i] = true;
                 if (!this->isRunning()) return;
             }
         }
@@ -133,50 +177,8 @@ void TcpVCIoThread::run()
     log_info("TcpVCIoThread stopped");
 }
 
-void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
+bool TcpVCIoThread::parseBufferedPackets(int connIndex, TcpConnectionSp conn, ReadBuffer &buf)
 {
-    if (!conn || !conn->isConnected()) return;
-
-    auto &buf = readBuffers[connIndex];
-
-    char temp[4096];
-
-    // Drain socket using direct recv (socket is already non-blocking; poll() already confirmed POLLIN).
-    // conn->recvDirect() holds the FD lock so disconnect() cannot close/recycle
-    // the descriptor between the liveness check and recv().
-    while (this->isRunning())
-    {
-        ssize_t n = conn->recvDirect(temp, sizeof(temp), 0);
-        if (n > 0)
-        {
-            buf.data.insert(buf.data.end(), temp, temp + n);
-        }
-        else if (n == SOCKET_ERROR_CLOSED)
-        {
-            log_info("Connection closed");
-            conn->disconnect();  // marks connected=false before VC-level callback counts alive conns
-            if (disconnectCallback)
-                disconnectCallback(conn);
-            return;
-        }
-        else if (n == SOCKET_ERROR_WOULD_BLOCK || n == SOCKET_ERROR_TIMEOUT ||
-                 n == SOCKET_ERROR_INTERRUPTED)
-        {
-            // Transient: no data right now, or recv was interrupted by a signal.
-            // poll() will re-fire POLLIN on the next iteration. EINTR must NOT
-            // tear the connection down — it is recoverable.
-            break;
-        }
-        else
-        {
-            log_error("Read error on connection");
-            conn->disconnect();  // same: mark dead before callback
-            if (disconnectCallback)
-                disconnectCallback(conn);
-            return;
-        }
-    }
-
     // Parse packets using a read-offset to avoid O(N) erase-from-front on every packet.
     while (buf.available() >= VC_MIN_DATA_PACKET_SIZE)
     {
@@ -186,7 +188,7 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
         case VcPacketType::DATA:
         {
             if (buf.available() < sizeof(VCDataPacket))
-                return;
+                return true;
             VCDataPacket *pkt = reinterpret_cast<VCDataPacket *>(buf.begin());
             if (pkt->dataLength > VC_MAX_DATA_PAYLOAD_SIZE)
             {
@@ -198,22 +200,31 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
                 conn->disconnect();
                 if (disconnectCallback)
                     disconnectCallback(conn);
-                return;
+                return true;
             }
             size_t totalSize = sizeof(VCDataPacket) + pkt->dataLength;
             if (buf.available() < totalSize)
-                return;
+                return true;
+
+            // One recv() can carry many packets, so the destination queue may
+            // have filled while this buffer was being parsed. Stop before
+            // copying the payload; the packet stays in the read buffer.
+            if (dataCallback && !canAccept(connIndex))
+                return false;
 
             auto data = std::make_shared<std::vector<char>>(pkt->data, pkt->data + pkt->dataLength);
-            if (dataCallback)
-                dataCallback(pkt->header.messageId, data, connIndex);
+            // Do NOT consume the bytes when the consumer is full: the packet is
+            // retried after the reorder thread drains a slot. Dropping it here
+            // would leave an unrecoverable hole in an otherwise reliable stream.
+            if (dataCallback && !dataCallback(pkt->header.messageId, data, connIndex))
+                return false;
             buf.consume(totalSize);
             break;
         }
         case VcPacketType::RESEND_REQUEST:
         {
             if (buf.available() < sizeof(VCResendRequest))
-                return;
+                return true;
             VCResendRequest *req = reinterpret_cast<VCResendRequest *>(buf.begin());
             if (resendRequestCallback)
                 resendRequestCallback(req->missingMessageId);
@@ -223,7 +234,7 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
         case VcPacketType::MISSING_NOTIFY:
         {
             if (buf.available() < sizeof(VCHeader) + 1)
-                return;
+                return true;
             VCMissingNotify *notify = reinterpret_cast<VCMissingNotify *>(buf.begin());
 
             // Reject malformed packet: count must not exceed the fixed-size array in the struct.
@@ -240,12 +251,12 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
                 conn->disconnect();
                 if (disconnectCallback)
                     disconnectCallback(conn);
-                return;
+                return true;
             }
 
             size_t expectedSize = sizeof(VCHeader) + 1 + notify->count * sizeof(uint64_t);
             if (buf.available() < expectedSize)
-                return;
+                return true;
 
             std::vector<uint64_t> missingIds(notify->missingIds, notify->missingIds + notify->count);
             if (missingNotifyCallback)
@@ -262,7 +273,68 @@ void TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
             conn->disconnect();
             if (disconnectCallback)
                 disconnectCallback(conn);
-            return;
+            return true;
         }
     }
+    return true;
+}
+
+bool TcpVCIoThread::readFromConnection(int connIndex, TcpConnectionSp conn)
+{
+    if (!conn || !conn->isConnected()) return true;
+
+    auto &buf = readBuffers[connIndex];
+
+    // Parse anything already buffered first (including the packet left behind
+    // when this slot was paused on a full queue).
+    if (!parseBufferedPackets(connIndex, conn, buf))
+        return false;
+
+    char temp[4096];
+
+    // Drain socket using direct recv (socket is already non-blocking; poll() already confirmed POLLIN).
+    // conn->recvDirect() holds the FD lock so disconnect() cannot close/recycle
+    // the descriptor between the liveness check and recv().
+    while (this->isRunning())
+    {
+        // Do not read ahead of the consumer. TCP flow control will slow the
+        // peer instead of us discarding data that cannot be queued.
+        if (!canAccept(connIndex))
+            return false;
+
+        ssize_t n = conn->recvDirect(temp, sizeof(temp), 0);
+        if (n > 0)
+        {
+            buf.data.insert(buf.data.end(), temp, temp + n);
+        }
+        else if (n == SOCKET_ERROR_CLOSED)
+        {
+            log_info("Connection closed");
+            conn->disconnect();  // marks connected=false before VC-level callback counts alive conns
+            if (disconnectCallback)
+                disconnectCallback(conn);
+            return true;
+        }
+        else if (n == SOCKET_ERROR_WOULD_BLOCK || n == SOCKET_ERROR_TIMEOUT ||
+                 n == SOCKET_ERROR_INTERRUPTED)
+        {
+            // Transient: no data right now, or recv was interrupted by a signal.
+            // poll() will re-fire POLLIN on the next iteration. EINTR must NOT
+            // tear the connection down — it is recoverable.
+            break;
+        }
+        else
+        {
+            log_error("Read error on connection");
+            conn->disconnect();  // same: mark dead before callback
+            if (disconnectCallback)
+                disconnectCallback(conn);
+            return true;
+        }
+
+        if (!parseBufferedPackets(connIndex, conn, buf))
+            return false;
+    }
+
+    return true;
 }

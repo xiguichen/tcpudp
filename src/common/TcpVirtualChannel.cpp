@@ -140,7 +140,7 @@ void TcpVirtualChannel::open()
     reorderThread = std::thread(&TcpVirtualChannel::reorderThreadFunc, this);
 
     auto dataCb = [selfGuard](const uint64_t messageId, std::shared_ptr<std::vector<char>> data, int sourceConnIndex) {
-        selfGuard->processReceivedData(messageId, data, sourceConnIndex);
+        return selfGuard->processReceivedData(messageId, data, sourceConnIndex);
     };
     auto resendReqCb = [selfGuard](uint64_t messageId) {
         selfGuard->processResendRequest(messageId);
@@ -151,12 +151,14 @@ void TcpVirtualChannel::open()
 
     {
         std::lock_guard<std::mutex> lock(workerThreadsMutex);
+        auto canAcceptCb = [selfGuard](int connIndex) { return selfGuard->canAcceptFromConnection(connIndex); };
         ioThread = std::make_shared<TcpVCIoThread>(
             connections,
             dataCb,
             resendReqCb,
             missingNotifyCb,
-            disconnectCB
+            disconnectCB,
+            canAcceptCb
         );
 
         sendThread = std::make_shared<TcpVCSendThread>(
@@ -245,9 +247,17 @@ void TcpVirtualChannel::send(const char *data, size_t size)
         auto quesize = this->sendQueue->approxSize();
         if (quesize > SEND_QUEUE_DROP_THRESHOLD)
         {
-            log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}. "
-                "Dropping UDP packet to apply backpressure.",
-                quesize, SEND_QUEUE_DROP_THRESHOLD));
+            ++droppedSendPackets;
+            auto now = std::chrono::steady_clock::now();
+            if (lastSendDropLogTime.time_since_epoch().count() == 0 ||
+                now - lastSendDropLogTime >= std::chrono::seconds(1))
+            {
+                log_info(std::format("[PERF-DIAG] Send queue depth {} exceeds threshold {}. "
+                                     "Dropped {} UDP packet(s) at ingress in the last interval.",
+                                     quesize, SEND_QUEUE_DROP_THRESHOLD, droppedSendPackets));
+                droppedSendPackets = 0;
+                lastSendDropLogTime = now;
+            }
             return;
         }
 
@@ -398,26 +408,51 @@ void TcpVirtualChannel::close()
     });
 }
 
-void TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data,
-                                              int sourceConnIndex)
+bool TcpVirtualChannel::canAcceptFromConnection(int connIndex) const
 {
-    // The reorder thread is gone once close() has run; enqueuing would only grow
-    // the SPSC buffers until the connection objects are released.
-    if (!opened.load(std::memory_order_acquire))
-        return;
+    if (connIndex < 0 || static_cast<size_t>(connIndex) >= connReceiveQueues.size())
+        return true;
+    return !connReceiveQueues[connIndex]->isFull();
+}
 
-    if (sourceConnIndex >= 0 && static_cast<size_t>(sourceConnIndex) < connReceiveQueues.size())
+bool TcpVirtualChannel::processReceivedData(uint64_t messageId, std::shared_ptr<std::vector<char>> data,
+                                             int sourceConnIndex)
+{
+    // The reorder thread is gone once close() has run. Report the packet as
+    // consumed so the IO thread can discard it and finish shutting down.
+    if (!opened.load(std::memory_order_acquire))
+        return true;
+
+    if (sourceConnIndex < 0 || static_cast<size_t>(sourceConnIndex) >= connReceiveQueues.size())
+        return true;
+
+    bool enqueued = connReceiveQueues[sourceConnIndex]->try_enqueue({messageId, data, sourceConnIndex});
+    if (!enqueued)
     {
-        bool enqueued = connReceiveQueues[sourceConnIndex]->try_enqueue({messageId, data, sourceConnIndex});
-        if (!enqueued)
+        // The IO thread checks canAcceptFromConnection() before reading and
+        // before each parse step, and it is the only producer for this queue.
+        // The consumer can only free slots, so a failure here means the caller
+        // bypassed that check. Treat it as "call me again" (backpressure),
+        // never as a reason to lose the packet.
+        ++droppedRxPackets;
+        auto now = std::chrono::steady_clock::now();
+        if (lastRxDropLogTime.time_since_epoch().count() == 0 ||
+            now - lastRxDropLogTime >= std::chrono::seconds(1))
         {
-            log_warnning(
-                std::format("[VC] connReceiveQueue[{}] full, dropping messageId={}", sourceConnIndex, messageId));
-            return;
+            log_warnning(std::format(
+                "[VC] connReceiveQueue[{}] unexpectedly full, {} packet(s) deferred (latest messageId={})",
+                sourceConnIndex, droppedRxPackets, messageId));
+            droppedRxPackets = 0;
+            lastRxDropLogTime = now;
         }
-        reorderEnqueueSeq.fetch_add(1, std::memory_order_release);
+        // Wake the consumer so it drains this queue and makes room for the retry.
+        reorderCv.notify_one();
+        return false;
     }
+
+    reorderEnqueueSeq.fetch_add(1, std::memory_order_release);
     reorderCv.notify_one();
+    return true;
 }
 
 void TcpVirtualChannel::processResendRequest(uint64_t messageId)
@@ -617,6 +652,13 @@ void TcpVirtualChannel::reorderThreadFunc()
     {
         bool gotAny = false;
 
+        // Snapshot the producer sequence BEFORE draining. If the IO thread
+        // enqueues between the drain and the wait below, the sequence is then
+        // already greater than this snapshot and the wait predicate stays true.
+        // Taking the snapshot after draining loses that wakeup — and with the
+        // IO thread paused on a full queue, nothing would ever wake us again.
+        lastProcessedSeq = reorderEnqueueSeq.load(std::memory_order_acquire);
+
         for (size_t i = 0; i < connReceiveQueues.size(); i++)
         {
             DeliveryItem item;
@@ -637,7 +679,6 @@ void TcpVirtualChannel::reorderThreadFunc()
                 gotAny = true;
             }
         }
-        lastProcessedSeq = reorderEnqueueSeq.load(std::memory_order_acquire);
 
         auto itemsToDeliver = drainReceivedDataMap();
 
