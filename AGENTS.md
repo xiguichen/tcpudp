@@ -225,6 +225,7 @@ TEST(SuiteName, TestName) {
 1. **Before changes**: Ensure tests compile in target environment
 2. **After changes**: `python build.py` → `python test.py` (runs unit + integration) → open PR
 3. **PR content**: Include justification (why, not just what)
+4. **Always push when done**: Once the work is complete and verified, commit and push it to `origin/main` without asking for confirmation. The user has explicitly requested this.
 
 ### Quick Verification
 ```bash
