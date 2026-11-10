@@ -1,11 +1,11 @@
 {
-  "ip": "48.221.153.201",
-  "city": "San Antonio",
-  "region": "Texas",
+  "ip": "172.182.244.2",
+  "city": "Phoenix",
+  "region": "Arizona",
   "country": "US",
-  "loc": "29.4241,-98.4936",
+  "loc": "33.4484,-112.0740",
   "org": "AS8075 Microsoft Corporation",
-  "postal": "78205",
-  "timezone": "America/Chicago",
+  "postal": "85003",
+  "timezone": "America/Phoenix",
   "readme": "https://ipinfo.io/missingauth"
 }
