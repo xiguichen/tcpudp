@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname gardening-corporation-inner-lucky.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname icq-critical-computers-tray.trycloudflare.com
