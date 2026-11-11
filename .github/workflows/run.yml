@@ -86,7 +86,38 @@ jobs:
     - name: Install Wireguard
       if: env.SKIP != 'true'
       run: |
-        sudo apt-get install -y wireguard
+        set -x
+        echo "=== DNS before ==="
+        cat /etc/resolv.conf || true
+        resolvectl status 2>/dev/null | head -40 || true
+        getent ahostsv4 archive.ubuntu.com || echo "default resolver FAILED for archive.ubuntu.com"
+
+        # The default (Azure/systemd-resolved) resolver intermittently fails to
+        # resolve archive.ubuntu.com / security.ubuntu.com, which makes
+        # `apt-get install` die with exit code 100. Try Cloudflare DNS instead.
+        IFACE=$(ip route show default | awk '{print $5; exit}')
+        sudo cp -L /etc/resolv.conf /tmp/resolv.conf.default 2>/dev/null || true
+        sudo resolvectl dns "${IFACE:-eth0}" 1.1.1.1 8.8.8.8 2>/dev/null || true
+        sudo resolvectl flush-caches 2>/dev/null || true
+        sleep 2
+
+        if ! getent ahostsv4 archive.ubuntu.com >/dev/null 2>&1; then
+          echo "resolvectl did not help; replacing /etc/resolv.conf"
+          sudo rm -f /etc/resolv.conf
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions timeout:2 attempts:3\n' | sudo tee /etc/resolv.conf
+          sleep 2
+        fi
+
+        echo "=== DNS after ==="
+        cat /etc/resolv.conf || true
+        if getent ahostsv4 archive.ubuntu.com; then
+          echo "DNS OK via 1.1.1.1"
+        else
+          echo "1.1.1.1 also failed - restoring default resolver and hoping for the best"
+          sudo cp /tmp/resolv.conf.default /etc/resolv.conf 2>/dev/null || true
+        fi
+
+        sudo apt-get -o Acquire::Retries=5 install -y wireguard
     - name: Configure Wireguard
       if: env.SKIP != 'true'
       run: |
