@@ -1,11 +1,11 @@
 {
-  "ip": "51.57.145.202",
-  "city": "Atlanta",
-  "region": "Georgia",
+  "ip": "40.124.102.130",
+  "city": "San Antonio",
+  "region": "Texas",
   "country": "US",
-  "loc": "33.7490,-84.3880",
+  "loc": "29.4241,-98.4936",
   "org": "AS8075 Microsoft Corporation",
-  "postal": "30303",
-  "timezone": "America/New_York",
+  "postal": "78205",
+  "timezone": "America/Chicago",
   "readme": "https://ipinfo.io/missingauth"
 }
