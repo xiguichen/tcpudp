@@ -1,1 +1,1 @@
-cloudflared access tcp --url tcp://localhost:7001 --hostname andy-bracelets-frequently-patient.trycloudflare.com
+cloudflared access tcp --url tcp://localhost:7001 --hostname gem-shoe-professionals-bars.trycloudflare.com
