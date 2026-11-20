@@ -23,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # Opt-in: set the repository variable SKIP_BAD_REGIONS=true to restore the
+      # old "skip known-bad regions" behaviour. Default is to accept any region.
+      SKIP_BAD_REGIONS: ${{ vars.SKIP_BAD_REGIONS }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
@@ -45,19 +49,22 @@ jobs:
         mkdir -p github_run
         echo "$REGION_INFO" > github_run/region.json
 
-        # Blacklist: known-bad regions — skip and commit signal
-        BAD_REGIONS=("Virginia", "Arizona", "Wyoming")
-        for bad in "${BAD_REGIONS[@]}"; do
-          if [ "$REGION" = "$bad" ]; then
-            echo "SKIP=true" >> $GITHUB_ENV
-            echo "BAD REGION: $CITY, $REGION — skipping server, committing signal"
-            git add github_run/region.json
-            git commit -m "Auto-update: bad region ($CITY, $REGION)" || true
-            git pull --rebase origin run || true
-            git push origin run
-            exit 0
-          fi
-        done
+        # Blacklist: known-bad regions — skip and commit signal.
+        # Only active when the repository variable SKIP_BAD_REGIONS=true.
+        if [ "${SKIP_BAD_REGIONS:-false}" = "true" ]; then
+          BAD_REGIONS=("Virginia", "Arizona", "Wyoming")
+          for bad in "${BAD_REGIONS[@]}"; do
+            if [ "$REGION" = "$bad" ]; then
+              echo "SKIP=true" >> $GITHUB_ENV
+              echo "BAD REGION: $CITY, $REGION — skipping server, committing signal"
+              git add github_run/region.json
+              git commit -m "Auto-update: bad region ($CITY, $REGION)" || true
+              git pull --rebase origin run || true
+              git push origin run
+              exit 0
+            fi
+          done
+        fi
 
         # Whitelist: known-good regions
         IS_KNOWN=false
@@ -81,8 +88,30 @@ jobs:
       run: |
         wget https://github.com/cloudflare/cloudflared/releases/download/2026.7.1/cloudflared-linux-amd64.deb
         sudo dpkg -i cloudflared-linux-amd64.deb
+    - name: Tune Network for Low Latency
+      if: env.SKIP != 'true'
+      run: |
+        # Cloudflare relays the tunnel for us; the runner's only job is to hand
+        # bytes to the edge as soon as possible. CUBIC (the default) fills the
+        # bottleneck queue before backing off, which turns every burst into
+        # added delay. BBR + fq keeps that queue short.
+        sudo modprobe tcp_bbr 2>/dev/null || true
+        sudo sysctl -w net.core.default_qdisc=fq || true
+        if ! sudo sysctl -w net.ipv4.tcp_congestion_control=bbr; then
+          echo "WARNING: BBR is unavailable in this kernel; keeping the default congestion control"
+        fi
+        # Do not accumulate unsent bytes in the socket: flush small writes now.
+        sudo sysctl -w net.ipv4.tcp_notsent_lowat=16384 || true
+        # Keep a small packet from being merged into a later write.
+        sudo sysctl -w net.ipv4.tcp_autocorking=0 || true
+        # Do not restart from a tiny congestion window after each idle gap.
+        sudo sysctl -w net.ipv4.tcp_slow_start_after_idle=0 || true
         sudo sysctl -w net.core.rmem_max=7500000
         sudo sysctl -w net.core.wmem_max=7500000
+        echo "=== Effective network settings ==="
+        sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc \
+               net.ipv4.tcp_notsent_lowat net.ipv4.tcp_autocorking \
+               net.ipv4.tcp_slow_start_after_idle || true
     - name: Install Wireguard
       if: env.SKIP != 'true'
       run: |
@@ -226,7 +255,7 @@ jobs:
           if $SHOULD_RESTART; then
             # Truncate old log so grep works on fresh output
             : > cloudflare.log
-            cloudflared tunnel --url http://localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
+            cloudflared tunnel --url tcp://localhost:7001 --logfile cloudflare.log </dev/null >/dev/null 2>&1 &
             CF_PID=$!
             echo "$CF_PID" > /tmp/cloudflared_pid
             date +%s > /tmp/cloudflared_start

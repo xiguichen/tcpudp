@@ -12,7 +12,10 @@
 # might be blocked).
 #
 # Usage:
-#   ./trigger_run.sh [--timeout SECONDS] [--no-wait]
+#   ./trigger_run.sh [--timeout SECONDS] [--no-wait] [--check-region]
+#
+#   --check-region  Retry when the GitHub runner lands in a known-bad region.
+#                   Off by default: any runner region is accepted.
 #
 # After completion:
 #   ./run_github.sh    # start the client in GitHub-run mode
@@ -22,11 +25,13 @@ set -euo pipefail
 
 TIMEOUT=${TIMEOUT:-300}
 NO_WAIT=false
+CHECK_REGION=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --timeout) TIMEOUT="$2"; shift 2 ;;
         --no-wait) NO_WAIT=true; shift ;;
+        --check-region) CHECK_REGION=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -122,25 +127,29 @@ while [ $ATTEMPT -lt $MAX_RETRIES ]; do
     echo "=== Fetching cloudflare tunnel info ==="
     git pull origin run
 
-    # ---- Check for bad region ----
-    IS_BAD=false
-    if [ -f github_run/region.json ]; then
-        REGION=$(grep -o '"region"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
-        CITY=$(grep -o '"city"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
-        COUNTRY=$(grep -o '"country"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
+    # ---- Optionally reject known-bad regions ----
+    # Region retry is opt-in: most of the time any runner region is usable,
+    # and re-triggering just adds delay.
+    if $CHECK_REGION; then
+        IS_BAD=false
+        if [ -f github_run/region.json ]; then
+            REGION=$(grep -o '"region"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
+            CITY=$(grep -o '"city"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
+            COUNTRY=$(grep -o '"country"[[:space:]]*:[[:space:]]*"[^"]*"' github_run/region.json 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
 
-        BAD_REGIONS=("Virginia")
-        for bad in "${BAD_REGIONS[@]}"; do
-            if [ "$REGION" = "$bad" ]; then
-                IS_BAD=true
-                break
-            fi
-        done
-    fi
+            BAD_REGIONS=("Virginia")
+            for bad in "${BAD_REGIONS[@]}"; do
+                if [ "$REGION" = "$bad" ]; then
+                    IS_BAD=true
+                    break
+                fi
+            done
+        fi
 
-    if $IS_BAD; then
-        echo "  Bad region: $CITY, $REGION, $COUNTRY — re-triggering (attempt $ATTEMPT/$MAX_RETRIES)..."
-        continue
+        if $IS_BAD; then
+            echo "  Bad region: $CITY, $REGION, $COUNTRY — re-triggering (attempt $ATTEMPT/$MAX_RETRIES)..."
+            continue
+        fi
     fi
 
     FOUND=true
@@ -149,7 +158,11 @@ done
 
 if ! $FOUND; then
     echo ""
-    echo "ERROR: All $MAX_RETRIES attempts landed in bad regions. Giving up."
+    if $CHECK_REGION; then
+        echo "ERROR: All $MAX_RETRIES attempts landed in bad regions. Giving up."
+    else
+        echo "ERROR: Could not get a usable run."
+    fi
     echo "Check: https://github.com/xiguichen/tcpudp/actions"
     exit 1
 fi

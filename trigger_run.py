@@ -16,7 +16,10 @@ On Windows, DNS pinning (modifying the hosts file) requires running as
 Administrator; otherwise the script will print the line to add manually.
 
 Usage:
-    python trigger_run.py [--timeout SECONDS] [--no-wait]
+    python trigger_run.py [--timeout SECONDS] [--no-wait] [--check-region]
+
+    --check-region  Retry when the GitHub runner lands in a known-bad region.
+                    Off by default: any runner region is accepted.
 
 After completion:
     ./run_github.sh   # Linux/macOS
@@ -51,7 +54,7 @@ HOSTS_FILE = (
     if IS_WINDOWS else "/etc/hosts"
 )
 
-BAD_REGIONS   = {"Virginia"}
+BAD_REGIONS   = {"Virginia"}  # only used when --check-region is passed
 MAX_RETRIES   = 5
 POLL_INTERVAL = 10
 
@@ -392,6 +395,11 @@ def main():
         "--no-wait", action="store_true",
         help="Trigger the run but don't wait for completion",
     )
+    parser.add_argument(
+        "--check-region", action="store_true",
+        help="Retry when the runner lands in a known-bad region "
+             "(default: accept any region)",
+    )
     args = parser.parse_args()
 
     ensure_run_branch()
@@ -418,7 +426,7 @@ def main():
         print("=== Fetching cloudflare tunnel info ===")
         git("pull", "origin", "run", capture=False)
 
-        if is_bad_region():
+        if args.check_region and is_bad_region():
             continue
 
         found = True
@@ -426,7 +434,10 @@ def main():
 
     if not found:
         print()
-        print(f"ERROR: All {MAX_RETRIES} attempts landed in bad regions. Giving up.")
+        if args.check_region:
+            print(f"ERROR: All {MAX_RETRIES} attempts landed in bad regions. Giving up.")
+        else:
+            print("ERROR: Could not get a usable run.")
         print("Check: https://github.com/xiguichen/tcpudp/actions")
         return 1
 
