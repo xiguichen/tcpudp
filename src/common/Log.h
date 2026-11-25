@@ -37,6 +37,14 @@ class Log
         return currentLogLevel.load(std::memory_order_relaxed);
     }
 
+    // Cheap level check used by the log macros. Keeping the (potentially
+    // expensive) message construction inside the branch means filtered-out
+    // levels cost one relaxed atomic load instead of a full std::format.
+    bool isEnabled(LogLevel level) const
+    {
+        return level >= currentLogLevel.load(std::memory_order_relaxed);
+    }
+
     // Get current log level as string
     std::string getCurrentLogLevelString() const
     {
@@ -67,11 +75,36 @@ class Log
 
 #define ENABLE_LOGGING
 #ifdef ENABLE_LOGGING
-#define log_info(message) Logger::Log::getInstance().info(std::string(__FILE__), std::to_string(__LINE__), message)
+// The message is only evaluated when the level is enabled, so per-packet
+// log_debug(std::format(...)) call sites are free when DEBUG is filtered out.
+#define log_info(message)                                                                                              \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        auto &loggerInstance_ = Logger::Log::getInstance();                                                            \
+        if (loggerInstance_.isEnabled(Logger::LogLevel::LOG_INFO))                                                     \
+            loggerInstance_.info(std::string(__FILE__), std::to_string(__LINE__), message);                            \
+    } while (0)
 #define log_warnning(message)                                                                                          \
-    Logger::Log::getInstance().warning(std::string(__FILE__), std::to_string(__LINE__), message)
-#define log_error(message) Logger::Log::getInstance().error(std::string(__FILE__), std::to_string(__LINE__), message)
-#define log_debug(message) Logger::Log::getInstance().debug(std::string(__FILE__), std::to_string(__LINE__), message)
+    do                                                                                                                 \
+    {                                                                                                                  \
+        auto &loggerInstance_ = Logger::Log::getInstance();                                                            \
+        if (loggerInstance_.isEnabled(Logger::LogLevel::LOG_WARN))                                                     \
+            loggerInstance_.warning(std::string(__FILE__), std::to_string(__LINE__), message);                         \
+    } while (0)
+#define log_error(message)                                                                                             \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        auto &loggerInstance_ = Logger::Log::getInstance();                                                            \
+        if (loggerInstance_.isEnabled(Logger::LogLevel::LOG_ERROR))                                                    \
+            loggerInstance_.error(std::string(__FILE__), std::to_string(__LINE__), message);                           \
+    } while (0)
+#define log_debug(message)                                                                                             \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        auto &loggerInstance_ = Logger::Log::getInstance();                                                            \
+        if (loggerInstance_.isEnabled(Logger::LogLevel::LOG_DEBUG))                                                    \
+            loggerInstance_.debug(std::string(__FILE__), std::to_string(__LINE__), message);                           \
+    } while (0)
 #else
 #define log_info(message)
 #define log_warnning(message)

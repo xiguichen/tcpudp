@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -25,21 +26,47 @@ class MessageTracker
     {
         std::mutex mutex;
         std::unordered_map<uint64_t, int> messageToConn;
+        std::deque<uint64_t> insertionOrder; // oldest first, for O(1) eviction
     };
 
   public:
     MessageTracker() = default;
-    explicit MessageTracker(size_t numShards) : shards(numShards) {}
+    explicit MessageTracker(size_t numShards, size_t capacityPerShard = 128)
+        : shards(numShards), capacityPerShard(capacityPerShard)
+    {
+    }
 
     void recordMessage(uint64_t messageId, int connectionIndex)
     {
+        if (capacityPerShard == 0 || shards.empty())
+            return;
+
         size_t idx = messageId % shards.size();
         std::lock_guard<std::mutex> lock(shards[idx].mutex);
-        shards[idx].messageToConn[messageId] = connectionIndex;
+        auto &shard = shards[idx];
+
+        auto [it, inserted] = shard.messageToConn.try_emplace(messageId, connectionIndex);
+        if (!inserted)
+        {
+            it->second = connectionIndex;
+            return;
+        }
+
+        // Keep the map bounded: a long-lived VC sends an unbounded number of
+        // messages, but only recent ones are still resendable (SentDataCache
+        // retains the same window), so older entries can never be looked up.
+        shard.insertionOrder.push_back(messageId);
+        while (shard.insertionOrder.size() > capacityPerShard)
+        {
+            shard.messageToConn.erase(shard.insertionOrder.front());
+            shard.insertionOrder.pop_front();
+        }
     }
 
     int getConnectionIndex(uint64_t messageId)
     {
+        if (shards.empty())
+            return -1;
         size_t idx = messageId % shards.size();
         std::lock_guard<std::mutex> lock(shards[idx].mutex);
         auto it = shards[idx].messageToConn.find(messageId);
@@ -48,6 +75,8 @@ class MessageTracker
 
     void removeMessage(uint64_t messageId)
     {
+        if (shards.empty())
+            return;
         size_t idx = messageId % shards.size();
         std::lock_guard<std::mutex> lock(shards[idx].mutex);
         shards[idx].messageToConn.erase(messageId);
@@ -59,11 +88,13 @@ class MessageTracker
         {
             std::lock_guard<std::mutex> lock(shard.mutex);
             shard.messageToConn.clear();
+            shard.insertionOrder.clear();
         }
     }
 
   private:
     std::vector<Shard> shards;
+    size_t capacityPerShard{128};
 };
 
 struct SocketStatus

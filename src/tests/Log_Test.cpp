@@ -45,3 +45,21 @@ TEST_F(LogTest, TestCurrentLogLevel) {
     EXPECT_EQ(Logger::Log::getInstance().getCurrentLogLevel(), Logger::LogLevel::LOG_WARN);
     EXPECT_EQ(Logger::Log::getInstance().getCurrentLogLevelString(), "WARNING");
 }
+
+// Hot paths call log_debug(std::format(...)). The argument must not be
+// evaluated when DEBUG is filtered out, otherwise every packet pays for the
+// format/string construction even though nothing is logged.
+TEST_F(LogTest, FilteredDebugMessageIsNotEvaluated) {
+    Logger::Log::getInstance().setLogLevel(Logger::LogLevel::LOG_INFO);
+
+    int evaluations = 0;
+    auto message = [&evaluations]() {
+        ++evaluations;
+        return std::string("expensive debug message");
+    };
+
+    log_debug(message());
+
+    EXPECT_EQ(evaluations, 0)
+        << "log_debug must not evaluate its argument when DEBUG is filtered out";
+}

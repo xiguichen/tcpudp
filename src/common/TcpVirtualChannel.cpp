@@ -136,6 +136,8 @@ void TcpVirtualChannel::open()
         socketStatuses.push_back(status);
     }
 
+    reorderBuffer.clear();
+    deliveryScratch.clear();
     reorderRunning = true;
     reorderThread = std::thread(&TcpVirtualChannel::reorderThreadFunc, this);
 
@@ -377,6 +379,9 @@ void TcpVirtualChannel::close()
             }
 
             sentDataCache.clear();
+            reorderBuffer.clear();
+            deliveryScratch.clear();
+            deliveryScratch.shrink_to_fit();
 
             // The worker objects hold callbacks that capture a strong self
             // reference. Both workers have been joined, so release them now or
@@ -545,7 +550,7 @@ void TcpVirtualChannel::processMissingNotify(const std::vector<uint64_t> &missin
 
 void TcpVirtualChannel::sendMissingNotifications()
 {
-    if (receivedDataMap.empty() || !gapTimerActive)
+    if (reorderBuffer.empty() || !gapTimerActive)
     {
         return;
     }
@@ -572,14 +577,15 @@ void TcpVirtualChannel::sendMissingNotifications()
     static constexpr size_t MAX_SCAN_IDS_PER_NOTIFY = 4096;
 
     std::vector<uint64_t> missingIds;
-    const uint64_t expected = nextMessageId.load();
-    uint64_t scanFrom = expected;
+    uint64_t scanFrom = reorderBuffer.nextId();
     size_t scanned = 0;
-    for (const auto &kv : receivedDataMap)
-    {
-        if (kv.first <= scanFrom)
-            continue;
-        for (uint64_t id = scanFrom; id < kv.first; ++id)
+    bool limitReached = false;
+
+    reorderBuffer.forEach([&](uint64_t bufferedId, const std::shared_ptr<std::vector<char>> &, int) {
+        if (limitReached || bufferedId <= scanFrom)
+            return;
+
+        for (uint64_t id = scanFrom; id < bufferedId; ++id)
         {
             ++scanned;
             if (notifiedMissingIds.find(id) == notifiedMissingIds.end())
@@ -587,18 +593,18 @@ void TcpVirtualChannel::sendMissingNotifications()
                 missingIds.push_back(id);
                 if (missingIds.size() >= VC_MAX_MISSING_IDS_PER_NOTIFY)
                 {
+                    limitReached = true;
                     break;
                 }
             }
             if (scanned >= MAX_SCAN_IDS_PER_NOTIFY)
+            {
+                limitReached = true;
                 break;
+            }
         }
-        scanFrom = kv.first + 1;
-        if (missingIds.size() >= VC_MAX_MISSING_IDS_PER_NOTIFY || scanned >= MAX_SCAN_IDS_PER_NOTIFY)
-        {
-            break;
-        }
-    }
+        scanFrom = bufferedId + 1;
+    });
 
     if (!missingIds.empty())
     {
@@ -620,25 +626,16 @@ void TcpVirtualChannel::sendMissingNotifications()
     }
 }
 
-std::vector<TcpVirtualChannel::DeliveryItem> TcpVirtualChannel::drainReceivedDataMap()
+void TcpVirtualChannel::drainReceivedDataMap()
 {
-    std::vector<DeliveryItem> items;
+    const size_t firstNewItem = deliveryScratch.size();
+    reorderBuffer.drain(deliveryScratch);
 
-    // This is the only writer of nextMessageId (the reorder thread). Advance a
-    // local copy and publish once instead of doing an atomic RMW per packet.
-    uint64_t expected = nextMessageId.load(std::memory_order_relaxed);
-    std::map<uint64_t, ReceivedItem>::iterator it;
-    while ((it = receivedDataMap.find(expected)) != receivedDataMap.end())
+    for (size_t i = firstNewItem; i < deliveryScratch.size(); ++i)
     {
-        notifiedMissingIds.erase(it->first);
-        lastDeliveredConnIndex = it->second.sourceConnIndex;
-        items.push_back({it->first, std::move(it->second.data), it->second.sourceConnIndex});
-        receivedDataMap.erase(it);
-        ++expected;
+        notifiedMissingIds.erase(deliveryScratch[i].messageId);
+        lastDeliveredConnIndex = deliveryScratch[i].sourceConnIndex;
     }
-    nextMessageId.store(expected, std::memory_order_release);
-
-    return items;
 }
 
 void TcpVirtualChannel::reorderThreadFunc()
@@ -672,17 +669,17 @@ void TcpVirtualChannel::reorderThreadFunc()
                     lastRxValid[item.sourceConnIndex] = true;
                 }
 
-                if (item.messageId < nextMessageId)
-                    continue;
-
-                receivedDataMap.try_emplace(item.messageId, ReceivedItem{item.data, item.sourceConnIndex});
+                // insert() rejects ids below nextId() (already delivered) and
+                // duplicates, matching the previous map lookup.
+                reorderBuffer.insert(item.messageId, std::move(item.data), item.sourceConnIndex);
                 gotAny = true;
             }
         }
 
-        auto itemsToDeliver = drainReceivedDataMap();
+        deliveryScratch.clear();
+        drainReceivedDataMap();
 
-        if (!receivedDataMap.empty())
+        if (!reorderBuffer.empty())
         {
             if (!gapTimerActive)
             {
@@ -694,18 +691,38 @@ void TcpVirtualChannel::reorderThreadFunc()
                 auto elapsed = std::chrono::steady_clock::now() - gapFirstSeen;
                 if (elapsed >= reorderTimeoutMs)
                 {
-                    auto firstIt = receivedDataMap.begin();
-                    auto lastIt = std::prev(receivedDataMap.end());
-                    auto skipTo = firstIt->first;
-                    auto missingStart = nextMessageId.load();
+                    // Collect the first/last buffered ids and the per-connection
+                    // distribution in one ascending pass. This only runs on the
+                    // slow timeout-recovery path.
+                    uint64_t firstBuf = 0;
+                    uint64_t lastBuf = 0;
+                    int firstBufConn = -1;
+                    int lastBufConn = -1;
+                    bool haveBuffered = false;
+                    std::vector<size_t> bufByConn(connections.size(), 0);
+                    size_t bufUnknown = 0;
+                    reorderBuffer.forEach(
+                        [&](uint64_t id, const std::shared_ptr<std::vector<char>> &, int connIdx) {
+                            if (!haveBuffered)
+                            {
+                                firstBuf = id;
+                                firstBufConn = connIdx;
+                                haveBuffered = true;
+                            }
+                            lastBuf = id;
+                            lastBufConn = connIdx;
+                            if (connIdx >= 0 && static_cast<size_t>(connIdx) < bufByConn.size())
+                                bufByConn[connIdx]++;
+                            else
+                                bufUnknown++;
+                        });
+
+                    auto skipTo = firstBuf;
+                    auto missingStart = reorderBuffer.nextId();
                     auto missingEnd = (skipTo > 0) ? (skipTo - 1) : 0ULL;
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-                    auto mapSize = receivedDataMap.size();
+                    auto mapSize = reorderBuffer.size();
                     auto lastDelivConn = lastDeliveredConnIndex;
-                    auto firstBuf = firstIt->first;
-                    auto firstBufConn = firstIt->second.sourceConnIndex;
-                    auto lastBuf = lastIt->first;
-                    auto lastBufConn = lastIt->second.sourceConnIndex;
 
                     auto now = std::chrono::steady_clock::now();
 
@@ -727,23 +744,10 @@ void TcpVirtualChannel::reorderThreadFunc()
                         }
                     }
 
-                    std::vector<size_t> bufByConn(connections.size(), 0);
-                    size_t bufUnknown = 0;
-                    for (const auto &kv : receivedDataMap)
-                    {
-                        int connIdx = kv.second.sourceConnIndex;
-                        if (connIdx >= 0 && static_cast<size_t>(connIdx) < bufByConn.size())
-                            bufByConn[connIdx]++;
-                        else
-                            bufUnknown++;
-                    }
-
-                    nextMessageId.store(skipTo);
+                    reorderBuffer.skipTo(skipTo);
                     notifiedMissingIds.clear(); // skipped IDs are no longer relevant
                     gapTimerActive = false;
-                    auto moreItems = drainReceivedDataMap();
-                    itemsToDeliver.insert(itemsToDeliver.end(), std::make_move_iterator(moreItems.begin()),
-                                          std::make_move_iterator(moreItems.end()));
+                    drainReceivedDataMap(); // appends to deliveryScratch
 
                     int suspectPendingBytes = -1;
                     if (suspectConn >= 0 && static_cast<size_t>(suspectConn) < connections.size() &&
@@ -848,7 +852,7 @@ void TcpVirtualChannel::reorderThreadFunc()
 
         sendMissingNotifications();
 
-        for (auto &item : itemsToDeliver)
+        for (auto &item : deliveryScratch)
         {
             if (receiveCallback)
             {
@@ -919,8 +923,8 @@ void TcpVirtualChannel::reorderThreadFunc()
 
                 auto netScore = getNetworkScore();
                 log_info(std::format("[VC] Health: nextMsgId={} buffered={} queueDepth={} gap={}, {}, {}",
-                                     nextMessageId.load(),
-                                     receivedDataMap.size(),
+                                     reorderBuffer.nextId(),
+                                     reorderBuffer.size(),
                                      sendQueue->size(),
                                      gapTimerActive ? "active" : "none",
                                      rxInfo,

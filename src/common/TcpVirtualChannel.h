@@ -2,6 +2,7 @@
 
 #include "BlockingQueue.h"
 #include "NetworkScore.h"
+#include "ReorderBuffer.h"
 #include "Socket.h"
 #include "SpscQueue.h"
 #include "TcpVCIoThread.h"
@@ -13,7 +14,6 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -113,20 +113,11 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     NetworkScore getNetworkScore() const;
 
   private:
-    struct ReceivedItem
-    {
-        std::shared_ptr<std::vector<char>> data;
-        int sourceConnIndex{-1};
-    };
+    using DeliveryItem = ReorderBuffer::Item;
 
-    struct DeliveryItem
-    {
-        uint64_t messageId{0};
-        std::shared_ptr<std::vector<char>> data;
-        int sourceConnIndex{-1};
-    };
-
-    std::vector<DeliveryItem> drainReceivedDataMap();
+    // Appends consecutively deliverable packets to deliveryScratch, which the
+    // reorder thread reuses to avoid allocating a vector per iteration.
+    void drainReceivedDataMap();
 
     void sendMissingNotifications();
 
@@ -156,7 +147,8 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     std::mutex reorderMutex;
     std::condition_variable reorderCv;
 
-    std::map<uint64_t, ReceivedItem> receivedDataMap;
+    ReorderBuffer reorderBuffer;
+    std::vector<DeliveryItem> deliveryScratch;
 
     mutable std::mutex disconnectMutex;
 
@@ -171,7 +163,6 @@ class TcpVirtualChannel : public VirtualChannel, public std::enable_shared_from_
     // behaviour (std::system_error/terminate), so the teardown runs exactly once.
     std::once_flag closeOnce;
     std::atomic<uint64_t> lastSendMessageId{0}; // uint64_t: long is 32-bit on Windows (MSVC)
-    std::atomic<uint64_t> nextMessageId{0};
     std::chrono::steady_clock::time_point gapFirstSeen;
     bool gapTimerActive{false};
     int lastDeliveredConnIndex{-1};
